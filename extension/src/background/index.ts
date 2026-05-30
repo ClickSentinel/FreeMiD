@@ -2,12 +2,16 @@
  * FreeMiD — Background Service Worker
  *
  * Responsibilities:
- *  1. Maintain a WebSocket connection directly to Discord's local RPC server (127.0.0.1:6463-6472)
+ *  1. Inject the discord-bridge content script into a discord.com tab
  *  2. Register per-domain content scripts (activities) dynamically
- *  3. Relay activity data from content scripts to Discord via the RPC protocol
+ *  3. Relay activity data from content scripts to Discord via the bridge
  *  4. Instantly clear the Discord status when the active tab leaves a known domain
  *
- * No native host is required — the extension communicates with Discord directly.
+ * The bridge content script (src/discord-bridge/index.ts) holds the actual
+ * WebSocket to Discord's local RPC server. Because it runs inside discord.com,
+ * the connection carries Origin: https://discord.com which Discord's RPC
+ * server accepts. The background itself cannot open that WebSocket directly
+ * (chrome-extension:// origin is rejected).
  */
 
 import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
@@ -18,15 +22,16 @@ import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
  */
 const CLIENT_ID: string = import.meta.env.VITE_DISCORD_CLIENT_ID as string;
 if (!CLIENT_ID) console.error('[FreeMiD] VITE_DISCORD_CLIENT_ID is not set — Rich Presence will not work.');
-/** Discord runs its local RPC WebSocket server on one of these ports */
-const DISCORD_RPC_PORTS = [6463, 6464, 6465, 6466, 6467, 6468, 6469, 6470, 6471, 6472];
-const RECONNECT_DELAY_MS = 5000;
 
-// ── Auth state ────────────────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────────────────────
 
+/** tabId of the discord.com tab running the bridge content script, or null */
+let bridgeTabId: number | null = null;
+/** True when the bridge's WebSocket to Discord RPC is open */
+let bridgeConnected = false;
 /** True once AUTHENTICATE has been confirmed by Discord RPC */
 let rpcAuthenticated = false;
-/** True when we are waiting for the user to complete the OAuth2 flow */
+/** True when we need the user to complete the OAuth2 flow */
 let needsAuth = false;
 
 // ── PKCE helpers ──────────────────────────────────────────────────────────────
@@ -108,7 +113,7 @@ async function attemptTokenRefresh(refreshTok: string): Promise<string | null> {
 /**
  * Opens Discord's OAuth2 consent page via chrome.identity.launchWebAuthFlow
  * (PKCE — no client secret required). On success, stores tokens and
- * calls sendAuthenticate() so the RPC session becomes active immediately.
+ * calls checkAuthAndProceed() so the RPC session becomes active immediately.
  */
 async function initiateOAuthFlow(): Promise<void> {
   if (!CLIENT_ID) {
@@ -188,19 +193,81 @@ async function initiateOAuthFlow(): Promise<void> {
   });
 
   needsAuth = false;
-  sendAuthenticate(json.access_token);
+  void checkAuthAndProceed();
+}
+
+// ── Bridge management ─────────────────────────────────────────────────────────
+
+/**
+ * Inject the bridge content script into tabId and record it.
+ */
+async function injectBridge(tabId: number): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['discord-bridge/index.js'],
+    });
+    bridgeTabId = tabId;
+    console.log(`[FreeMiD] Bridge injected into tab ${tabId}`);
+  } catch (err) {
+    console.error('[FreeMiD] Failed to inject bridge:', err);
+  }
+}
+
+/**
+ * Ensure a bridge is running. Ping the current bridge tab; if it's gone, find
+ * another discord.com tab or open one silently in the background.
+ */
+async function ensureBridge(): Promise<void> {
+  if (bridgeTabId !== null) {
+    try {
+      await chrome.tabs.sendMessage(bridgeTabId, { type: 'FREEMID_BRIDGE_PING' });
+      return; // still alive
+    } catch {
+      bridgeTabId = null;
+      bridgeConnected = false;
+      rpcAuthenticated = false;
+    }
+  }
+
+  const tabs = await chrome.tabs.query({ url: 'https://discord.com/*' });
+  if (tabs.length > 0 && tabs[0].id != null) {
+    await injectBridge(tabs[0].id);
+    return;
+  }
+
+  // No discord.com tab open — open one silently.
+  // The tabs.onUpdated listener injects the bridge once it finishes loading.
+  console.log('[FreeMiD] No discord.com tab found — opening one in background');
+  chrome.tabs.create({ url: 'https://discord.com/channels/@me', active: false });
+}
+
+/**
+ * Send a raw Discord RPC payload to Discord via the bridge.
+ * Returns true if delivered, false if the bridge was unavailable.
+ */
+async function sendToBridge(payload: object): Promise<boolean> {
+  if (bridgeTabId === null) {
+    void ensureBridge();
+    return false;
+  }
+  try {
+    const resp = await chrome.tabs.sendMessage(bridgeTabId, {
+      type: 'FREEMID_RPC_SEND',
+      payload,
+    }) as { ok: boolean } | undefined;
+    return resp?.ok === true;
+  } catch {
+    bridgeTabId = null;
+    bridgeConnected = false;
+    rpcAuthenticated = false;
+    broadcastStatus({ connected: false, authRequired: needsAuth });
+    void ensureBridge();
+    return false;
+  }
 }
 
 // ── Discord RPC authentication ─────────────────────────────────────────────────
-
-function sendAuthenticate(token: string): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({
-    cmd: 'AUTHENTICATE',
-    nonce: crypto.randomUUID(),
-    args: { access_token: token },
-  }));
-}
 
 async function checkAuthAndProceed(): Promise<void> {
   const token = await loadValidToken();
@@ -209,119 +276,44 @@ async function checkAuthAndProceed(): Promise<void> {
     broadcastStatus({ connected: false, authRequired: true });
     return;
   }
-  sendAuthenticate(token);
-}
-
-// ── WebSocket management ───────────────────────────────────────────────────────
-
-let ws: WebSocket | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let portIndex = 0;
-
-function connectToDiscord(): void {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
-
-  const port = DISCORD_RPC_PORTS[portIndex % DISCORD_RPC_PORTS.length];
-
-  try {
-    ws = new WebSocket(`ws://127.0.0.1:${port}/?v=1&client_id=${CLIENT_ID}`);
-  } catch {
-    advancePortAndReconnect();
-    return;
-  }
-
-  ws.onopen = () => {
-    console.log(`[FreeMiD] Connected to Discord RPC on port ${port}`);
-  };
-
-  ws.onmessage = (event) => {
-    try {
-      const msg = JSON.parse(event.data as string) as { evt?: string; cmd?: string };
-
-      if (msg.evt === 'READY') {
-        console.log('[FreeMiD] Discord RPC ready — checking auth');
-        void checkAuthAndProceed();
-        return;
-      }
-
-      if (msg.cmd === 'AUTHENTICATE') {
-        if (msg.evt === 'ERROR') {
-          console.warn('[FreeMiD] AUTHENTICATE rejected — clearing stored token');
-          rpcAuthenticated = false;
-          needsAuth = true;
-          void chrome.storage.local.remove(['discord_access_token', 'discord_token_expiry', 'discord_refresh_token']);
-          broadcastStatus({ connected: false, authRequired: true });
-        } else {
-          rpcAuthenticated = true;
-          needsAuth = false;
-          console.log('[FreeMiD] Authenticated with Discord RPC');
-          broadcastStatus({ connected: true, authRequired: false });
-        }
-      }
-    } catch {
-      // ignore malformed frames
-    }
-  };
-
-  ws.onclose = () => {
-    rpcAuthenticated = false;
-    ws = null;
-    console.log('[FreeMiD] Disconnected from Discord RPC');
-    broadcastStatus({ connected: false, authRequired: needsAuth });
-    advancePortAndReconnect();
-  };
-
-  ws.onerror = () => {
-    ws?.close();
-  };
-}
-
-function advancePortAndReconnect(): void {
-  portIndex = (portIndex + 1) % DISCORD_RPC_PORTS.length;
-  scheduleReconnect();
-}
-
-function scheduleReconnect(): void {
-  if (reconnectTimer !== null) return;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connectToDiscord();
-  }, RECONNECT_DELAY_MS);
+  needsAuth = false;
+  void sendToBridge({
+    cmd: 'AUTHENTICATE',
+    nonce: crypto.randomUUID(),
+    args: { access_token: token },
+  });
 }
 
 /**
- * Send a Discord RPC SET_ACTIVITY command.
+ * Send a Discord RPC SET_ACTIVITY command via the bridge.
  * Strips FreeMiD-internal fields (application_id, name) that don't belong in the RPC payload.
  */
 export function setActivity(activity: object): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN || !rpcAuthenticated) {
-    connectToDiscord();
+  if (!rpcAuthenticated) {
+    void ensureBridge();
     return;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { application_id, name, ...discordActivity } = activity as Record<string, unknown>;
 
-  ws.send(JSON.stringify({
+  void sendToBridge({
     cmd: 'SET_ACTIVITY',
     args: { pid: 1, activity: discordActivity },
     nonce: crypto.randomUUID(),
-  }));
+  });
 }
 
 /**
  * Send a Discord RPC SET_ACTIVITY command with a null activity to clear the status.
  */
 export function clearActivity(): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN || !rpcAuthenticated) return;
-
-  ws.send(JSON.stringify({
+  if (!rpcAuthenticated) return;
+  void sendToBridge({
     cmd: 'SET_ACTIVITY',
     args: { pid: 1, activity: null },
     nonce: crypto.randomUUID(),
-  }));
+  });
 }
 
 // ── Activity registry & content script injection ───────────────────────────────
@@ -412,8 +404,11 @@ async function handleTabNavigation(tabId: number, url: string): Promise<void> {
 // ── Chrome event listeners ─────────────────────────────────────────────────────
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url) {
-    void handleTabNavigation(tabId, tab.url);
+  if (changeInfo.status !== 'complete' || !tab.url) return;
+  void handleTabNavigation(tabId, tab.url);
+  // Inject bridge into discord.com tabs (handles both existing tabs and ones we open)
+  if (tab.url.startsWith('https://discord.com/') && bridgeTabId === null) {
+    void injectBridge(tabId);
   }
 });
 
@@ -431,10 +426,17 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     activeActivityTabs.delete(tabId);
     clearActivity();
   }
+  if (tabId === bridgeTabId) {
+    bridgeTabId = null;
+    bridgeConnected = false;
+    rpcAuthenticated = false;
+    broadcastStatus({ connected: false, authRequired: needsAuth });
+    void ensureBridge();
+  }
 });
 
-// Messages from injected activity scripts
-chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+// Messages from injected activity scripts and the bridge content script
+chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   const msg = message as Record<string, unknown>;
 
   if (msg.type === 'FREEMID_SET_ACTIVITY' && typeof msg.data === 'object') {
@@ -455,19 +457,56 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   // Popup requesting connection status — respond synchronously with current state
   if (msg.type === 'GET_STATUS') {
     sendResponse({
-      connected: !!(ws && ws.readyState === WebSocket.OPEN && rpcAuthenticated),
+      connected: bridgeConnected && rpcAuthenticated,
       authRequired: needsAuth,
     });
     return true;
   }
+
+  // Bridge WebSocket status update
+  if (msg.type === 'FREEMID_BRIDGE_STATUS') {
+    if (sender.tab?.id != null) bridgeTabId = sender.tab.id;
+    bridgeConnected = msg.connected as boolean;
+    if (!bridgeConnected) {
+      rpcAuthenticated = false;
+      broadcastStatus({ connected: false, authRequired: needsAuth });
+    }
+    return;
+  }
+
+  // Message relayed from Discord via the bridge
+  if (msg.type === 'FREEMID_BRIDGE_MSG') {
+    const data = msg.data as { evt?: string; cmd?: string };
+
+    if (data.evt === 'READY') {
+      console.log('[FreeMiD] Discord RPC ready — checking auth');
+      void checkAuthAndProceed();
+      return;
+    }
+
+    if (data.cmd === 'AUTHENTICATE') {
+      if (data.evt === 'ERROR') {
+        console.warn('[FreeMiD] AUTHENTICATE rejected — clearing stored token');
+        rpcAuthenticated = false;
+        needsAuth = true;
+        void chrome.storage.local.remove(['discord_access_token', 'discord_token_expiry', 'discord_refresh_token']);
+        broadcastStatus({ connected: false, authRequired: true });
+      } else {
+        rpcAuthenticated = true;
+        needsAuth = false;
+        console.log('[FreeMiD] Authenticated with Discord RPC');
+        broadcastStatus({ connected: true, authRequired: false });
+      }
+    }
+    return;
+  }
 });
 
-// Keep service worker alive with a periodic alarm while connected.
-// This prevents Chrome from terminating it and dropping the WS connection.
+// Keep the service worker alive and verify the bridge is healthy.
 chrome.alarms.create('freemid-keepalive', { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'freemid-keepalive') {
-    connectToDiscord();
+    void ensureBridge();
   }
 });
 
@@ -481,4 +520,4 @@ function broadcastStatus(status: { connected: boolean; authRequired?: boolean })
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
-connectToDiscord();
+void ensureBridge();
