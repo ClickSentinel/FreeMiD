@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write  # required for Sigstore OIDC keyless signing
 
 jobs:
   build:
@@ -17,36 +16,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      - name: Install system dependencies
+      - name: Install dependencies
+        run: cd extension && npm ci
+
+      - name: Build extension
+        run: cd extension && npm run build
+
+      - name: Package extension
         run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libgtk-3-dev libayatana-appindicator3-dev
-
-      - name: Build native host
-        run: cargo build --release
-
-      - name: Rename release binary
-        run: cp target/release/freemid freemid-linux-x86_64
-
-      - name: Generate checksum
-        run: sha256sum freemid-linux-x86_64 > freemid-linux-x86_64.sha256
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Sign binary (Sigstore keyless)
-        run: |
-          cosign sign-blob --yes \
-            freemid-linux-x86_64 \
-            --bundle freemid-linux-x86_64.bundle
+          cd extension/dist
+          zip -r ../../freemid-extension.zip .
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            freemid-linux-x86_64
-            freemid-linux-x86_64.sha256
-            freemid-linux-x86_64.bundle
+          files: freemid-extension.zip

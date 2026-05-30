@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "FreeMiD",
-  "version": "0.1.0",
-  "description": "Free, open-source Discord Rich Presence for the web. No paywalls, no bullshit.",
+  "version": "0.2.0",
+  "description": "Free, open-source Discord Rich Presence for YouTube and YouTube Music.",
 
   "permissions": [
     "tabs",

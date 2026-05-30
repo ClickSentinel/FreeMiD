@@ -2,13 +2,11 @@
 
 A fully free, open-source Discord Rich Presence bridge for web browsing — no subscription, no paywalled features.
 
-> **Key difference from PreMiD:** FreeMiD clears your Discord status *instantly* when you close a tab. PreMiD charges a monthly fee to unlock the same behaviour.
-
 ---
 
 ## Features
 
-- Live Rich Presence for YouTube Music, YouTube, Twitch, and Netflix
+- Live Rich Presence for YouTube Music and YouTube
 - Graphical progress bar for music (start + end timestamps via Discord's Listening activity type)
 - Album art pulled directly from YouTube's image CDN — no asset uploads required
 - "Listen on YT Music" button linking to the current song

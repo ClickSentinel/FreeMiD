@@ -6,7 +6,6 @@
  *  2. Register per-domain content scripts (activities) dynamically
  *  3. Relay activity data from content scripts to Discord via the RPC protocol
  *  4. Instantly clear the Discord status when the active tab leaves a known domain
- *     (free, unlike PreMiD's 20-minute paywall "feature")
  *
  * No native host is required — the extension communicates with Discord directly.
  */
@@ -176,7 +175,7 @@ async function handleTabNavigation(tabId: number, url: string): Promise<void> {
   const meta = matchActivity(url);
 
   if (!meta) {
-    // Left a known domain — clear status INSTANTLY (free, unlike PreMiD)
+    // Left a known domain — clear status immediately
     if (activeActivityTabs.has(tabId)) {
       activeActivityTabs.delete(tabId);
       clearActivity();

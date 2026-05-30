@@ -1,8 +1,8 @@
 /**
  * FreeMiD Presence API
  *
- * Drop-in compatible with PreMiD's Presence class API so existing
- * community activity scripts can be ported with minimal changes.
+ * Activities import this class, construct a Presence, and register an
+ * "UpdateData" handler to relay scraped data to the background service worker.
  *
  * Activities import this class, construct a Presence, register an
  * "UpdateData" handler, and call setActivity() with the scraped data.
@@ -56,7 +56,7 @@ export class Presence {
 
   /**
    * Register a callback that fires on every update tick.
-   * Only "UpdateData" is supported — matches PreMiD's API surface.
+   * Only "UpdateData" is supported.
    */
   /** Returns false if the extension context has been invalidated (e.g. after reload). */
   private isContextValid(): boolean {
@@ -140,8 +140,7 @@ export class Presence {
   }
 
   /**
-   * Utility: get the value of a query-string parameter from the current URL
-   * (PreMiD compat helper)
+   * Utility: get the value of a query-string parameter from the current URL.
    */
   static getPageVariable<T = string>(varName: string, searchURL?: string): T | undefined {
     const url = new URL(searchURL ?? window.location.href);
