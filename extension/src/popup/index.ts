@@ -1,62 +1,76 @@
+/**
+ * FreeMiD — Popup
+ *
+ * Listens to HOST_STATUS broadcasts from the background service worker
+ * and renders a single, clear connection state.
+ */
+
 const dot = document.getElementById('dot')!;
-const statusText = document.getElementById('status-text')!;
-const noActivity = document.getElementById('no-activity')!;
-const activitySection = document.getElementById('activity-section')!;
-const authPrompt = document.getElementById('auth-prompt')!;
-const authBtn = document.getElementById('auth-btn')! as HTMLButtonElement;
+const label = document.getElementById('status-label')!;
+const sub = document.getElementById('status-sub')!;
+const helpHost = document.getElementById('help-host')!;
+const helpDiscord = document.getElementById('help-discord')!;
+const pageInfo = document.getElementById('page-info')!;
 
-type HostStatus = { type: 'HOST_STATUS'; connected: boolean; authRequired?: boolean };
+type Status = {
+  hostConnected: boolean;
+  discordConnected: boolean;
+  error?: string | null;
+};
 
-function setStatus(connected: boolean | null, authRequired?: boolean): void {
-  if (authRequired) {
-    authPrompt.style.display = 'block';
-    authBtn.disabled = false;
-    authBtn.textContent = 'Authorize with Discord';
-    dot.className = 'dot';
-    statusText.textContent = 'Not authorized';
-  } else if (connected === null) {
-    authPrompt.style.display = 'none';
+function render(status: Status | null): void {
+  helpHost.classList.add('hidden');
+  helpDiscord.classList.add('hidden');
+
+  if (!status) {
     dot.className = 'dot connecting';
-    statusText.textContent = 'Connecting to Discord…';
-  } else if (connected) {
-    authPrompt.style.display = 'none';
-    dot.className = 'dot connected';
-    statusText.textContent = 'Connected to Discord';
-  } else {
-    authPrompt.style.display = 'none';
-    dot.className = 'dot';
-    statusText.textContent = 'Discord not detected';
+    label.textContent = 'Connecting…';
+    sub.textContent = 'Reaching native host';
+    return;
   }
+
+  if (!status.hostConnected) {
+    dot.className = 'dot error';
+    label.textContent = 'Native host not running';
+    sub.textContent = status.error ?? 'Install the FreeMiD host to continue';
+    helpHost.classList.remove('hidden');
+    return;
+  }
+
+  if (!status.discordConnected) {
+    dot.className = 'dot warning';
+    label.textContent = 'Waiting for Discord';
+    sub.textContent = status.error ?? 'Open the Discord desktop app';
+    helpDiscord.classList.remove('hidden');
+    return;
+  }
+
+  dot.className = 'dot connected';
+  label.textContent = 'Connected';
+  sub.textContent = 'Rich Presence is live';
 }
 
-authBtn.addEventListener('click', () => {
-  authBtn.disabled = true;
-  authBtn.textContent = 'Waiting for authorization…';
-  void chrome.runtime.sendMessage({ type: 'INITIATE_AUTH' });
-});
-
-// Listen for status broadcasts from the background worker
+// Live updates from the background.
 chrome.runtime.onMessage.addListener((msg: unknown) => {
-  const m = msg as HostStatus;
-  if (m.type === 'HOST_STATUS') setStatus(m.connected, m.authRequired);
+  const m = msg as { type?: string } & Status;
+  if (m.type === 'HOST_STATUS') render(m);
 });
 
-// Bootstrap: ask the background for current state
+// Bootstrap.
 (async () => {
   try {
-    // Request current WS status from background
-    const status = await chrome.runtime.sendMessage({ type: 'GET_STATUS' }) as { connected: boolean; authRequired?: boolean } | undefined;
-    if (status != null) setStatus(status.connected, status.authRequired);
+    const status = (await chrome.runtime.sendMessage({ type: 'GET_STATUS' })) as Status | undefined;
+    render(status ?? null);
   } catch {
-    // background not ready yet — keep "connecting" state
+    render(null);
   }
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.url) {
-      noActivity.textContent = `Checking ${new URL(tab.url).hostname}…`;
+      pageInfo.textContent = new URL(tab.url).hostname;
     }
   } catch {
-    // ignore
+    pageInfo.textContent = '—';
   }
 })();

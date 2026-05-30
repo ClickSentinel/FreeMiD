@@ -5,159 +5,224 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FreeMiD</title>
     <style>
+      :root {
+        --bg-0: #0f1014;
+        --bg-1: #16181f;
+        --bg-2: #1d2029;
+        --border: #262a36;
+        --text-0: #f4f5f8;
+        --text-1: #c4c8d4;
+        --text-2: #7d8395;
+        --accent: #5865f2;
+        --accent-soft: rgba(88, 101, 242, 0.18);
+        --success: #2dd17a;
+        --warning: #f0b232;
+        --danger: #ed4245;
+      }
+
       * { box-sizing: border-box; margin: 0; padding: 0; }
 
       body {
-        width: 280px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        background: #1e1f22;
-        color: #dbdee1;
+        width: 320px;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: var(--bg-0);
+        color: var(--text-1);
         font-size: 13px;
+        line-height: 1.45;
       }
 
       header {
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 14px 16px 12px;
-        border-bottom: 1px solid #2b2d31;
+        gap: 12px;
+        padding: 18px 18px 14px;
+        background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
+        border-bottom: 1px solid var(--border);
       }
 
-      header .logo {
-        width: 28px;
-        height: 28px;
-        background: #5865f2;
-        border-radius: 50%;
-        flex-shrink: 0;
+      .logo {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, var(--accent) 0%, #7983f5 100%);
+        display: grid;
+        place-items: center;
+        color: #fff;
+        font-weight: 800;
+        font-size: 15px;
+        letter-spacing: -0.02em;
+        box-shadow: 0 4px 14px rgba(88, 101, 242, 0.4);
       }
 
-      header h1 { font-size: 15px; font-weight: 700; color: #f2f3f5; }
-      header p  { font-size: 11px; color: #949ba4; }
+      header h1 {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--text-0);
+        letter-spacing: -0.01em;
+      }
 
-      .status-bar {
+      header p {
+        font-size: 11px;
+        color: var(--text-2);
+        margin-top: 1px;
+      }
+
+      .status {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 10px 16px;
-        background: #2b2d31;
+        gap: 10px;
+        padding: 12px 18px;
+        background: var(--bg-1);
+        border-bottom: 1px solid var(--border);
       }
 
       .dot {
-        width: 8px;
-        height: 8px;
+        width: 9px;
+        height: 9px;
         border-radius: 50%;
-        background: #ed4245;
+        background: var(--text-2);
         flex-shrink: 0;
-        transition: background 0.3s;
+        position: relative;
+        transition: background 0.2s;
       }
-      .dot.connected   { background: #23a55a; }
-      .dot.connecting  { background: #f0b232; animation: pulse 1.2s infinite; }
+
+      .dot::after {
+        content: '';
+        position: absolute;
+        inset: -3px;
+        border-radius: 50%;
+        background: inherit;
+        opacity: 0.25;
+        z-index: -1;
+      }
+
+      .dot.connected   { background: var(--success); }
+      .dot.warning     { background: var(--warning); }
+      .dot.error       { background: var(--danger); }
+      .dot.connecting  { background: var(--warning); animation: pulse 1.4s ease-in-out infinite; }
 
       @keyframes pulse {
         0%, 100% { opacity: 1; }
-        50%       { opacity: 0.4; }
+        50%       { opacity: 0.35; }
       }
 
-      #status-text { color: #b5bac1; }
-
-      .activity-card {
-        padding: 12px 16px;
-        border-bottom: 1px solid #2b2d31;
-      }
-
-      .activity-card .label {
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: #949ba4;
-        margin-bottom: 4px;
-      }
-
-      .activity-card .value {
+      .status-label {
+        flex: 1;
+        font-weight: 500;
+        color: var(--text-0);
         font-size: 13px;
-        color: #f2f3f5;
+      }
+
+      .status-sub {
+        font-size: 11px;
+        color: var(--text-2);
+        margin-top: 2px;
+      }
+
+      .status-text { min-width: 0; flex: 1; }
+
+      .panel {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .panel-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-2);
+        margin-bottom: 6px;
+      }
+
+      .panel-value {
+        font-size: 13px;
+        color: var(--text-0);
+        font-weight: 500;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
 
-      .empty {
-        padding: 20px 16px;
-        color: #949ba4;
-        text-align: center;
+      .help {
+        padding: 14px 18px;
+        background: var(--bg-2);
+        border-bottom: 1px solid var(--border);
         font-size: 12px;
+        color: var(--text-1);
       }
 
-      .auth-prompt {
-        padding: 14px 16px;
-        border-bottom: 1px solid #2b2d31;
-        text-align: center;
-      }
+      .help strong { color: var(--text-0); }
 
-      .auth-prompt p {
-        font-size: 12px;
-        color: #949ba4;
-        margin-bottom: 10px;
-      }
-
-      .btn-auth {
-        background: #5865f2;
-        color: #fff;
-        border: none;
+      .help code {
+        display: inline-block;
+        margin-top: 6px;
+        padding: 4px 8px;
+        background: var(--bg-0);
+        border: 1px solid var(--border);
         border-radius: 4px;
-        padding: 8px 16px;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-        width: 100%;
+        font-family: 'SF Mono', Menlo, Consolas, monospace;
+        font-size: 11px;
+        color: var(--accent);
+        user-select: all;
       }
-      .btn-auth:hover  { background: #4752c4; }
-      .btn-auth:active { background: #3c45a5; }
-      .btn-auth:disabled { background: #3c3f45; color: #72767d; cursor: not-allowed; }
+
+      .help.hidden { display: none; }
 
       footer {
-        padding: 10px 16px;
+        padding: 10px 18px;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        border-top: 1px solid #2b2d31;
+        background: var(--bg-1);
+        font-size: 11px;
       }
 
       footer a {
-        color: #5865f2;
+        color: var(--text-2);
         text-decoration: none;
-        font-size: 11px;
+        transition: color 0.15s;
       }
-      footer a:hover { text-decoration: underline; }
+      footer a:hover { color: var(--accent); }
 
-      .version { color: #4e5058; font-size: 11px; }
+      .version { color: var(--text-2); font-variant-numeric: tabular-nums; }
     </style>
   </head>
   <body>
     <header>
-      <div class="logo"></div>
+      <div class="logo">F</div>
       <div>
         <h1>FreeMiD</h1>
         <p>Open-source Discord Rich Presence</p>
       </div>
     </header>
 
-    <div class="status-bar">
+    <div class="status">
       <div class="dot connecting" id="dot"></div>
-      <span id="status-text">Connecting to Discord…</span>
+      <div class="status-text">
+        <div class="status-label" id="status-label">Connecting…</div>
+        <div class="status-sub" id="status-sub">Reaching native host</div>
+      </div>
     </div>
 
-    <div class="auth-prompt" id="auth-prompt" style="display:none">
-      <p>Authorize FreeMiD to update your Discord status.</p>
-      <button class="btn-auth" id="auth-btn">Authorize with Discord</button>
+    <div class="help hidden" id="help-host">
+      <strong>Native host not installed.</strong><br />
+      Build and install the FreeMiD host, then reload this extension:
+      <br /><code>cargo build --release &amp;&amp; ./install/install.sh</code>
     </div>
 
-    <div id="activity-section">
-      <div class="empty" id="no-activity">No activity detected on this page.</div>
+    <div class="help hidden" id="help-discord">
+      <strong>Discord desktop not running.</strong><br />
+      Open the Discord desktop client and FreeMiD will connect automatically.
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">Current page</div>
+      <div class="panel-value" id="page-info">—</div>
     </div>
 
     <footer>
-      <a href="https://github.com/ClickSentinel/freemid" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://github.com/ClickSentinel/freemid" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
       <span class="version">v0.2.0</span>
     </footer>
 
