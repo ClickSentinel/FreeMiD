@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write  # required for Sigstore OIDC keyless signing
 
 jobs:
   build:
@@ -33,9 +34,19 @@ jobs:
       - name: Generate checksum
         run: sha256sum freemid-linux-x86_64 > freemid-linux-x86_64.sha256
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign binary (Sigstore keyless)
+        run: |
+          cosign sign-blob --yes \
+            freemid-linux-x86_64 \
+            --bundle freemid-linux-x86_64.bundle
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             freemid-linux-x86_64
             freemid-linux-x86_64.sha256
+            freemid-linux-x86_64.bundle

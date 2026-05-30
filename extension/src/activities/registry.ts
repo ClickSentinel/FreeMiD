@@ -25,14 +25,4 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityMeta> = {
     name: 'YouTube Music',
     matches: ['*://music.youtube.com/*'],
   },
-  twitch: {
-    id: 'twitch',
-    name: 'Twitch',
-    matches: ['*://www.twitch.tv/*', '*://twitch.tv/*'],
-  },
-  netflix: {
-    id: 'netflix',
-    name: 'Netflix',
-    matches: ['*://www.netflix.com/*'],
-  },
 };

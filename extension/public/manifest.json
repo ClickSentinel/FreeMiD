@@ -8,9 +8,14 @@
     "tabs",
     "scripting",
     "storage",
-    "alarms"
+    "alarms",
+    "identity"
   ],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "*://www.youtube.com/*",
+    "*://youtube.com/*",
+    "*://music.youtube.com/*",
+  ],
 
   "background": {
     "service_worker": "background/index.js",
@@ -32,10 +37,5 @@
     "128": "icons/icon128.png"
   },
 
-  "web_accessible_resources": [
-    {
-      "resources": ["activities/*"],
-      "matches": ["<all_urls>"]
-    }
-  ]
+  "web_accessible_resources": []
 }
