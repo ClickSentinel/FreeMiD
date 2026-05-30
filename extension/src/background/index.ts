@@ -2,88 +2,119 @@
  * FreeMiD — Background Service Worker
  *
  * Responsibilities:
- *  1. Maintain a WebSocket connection to the FreeMiD native host (127.0.0.1:3005)
+ *  1. Maintain a WebSocket connection directly to Discord's local RPC server (127.0.0.1:6463-6472)
  *  2. Register per-domain content scripts (activities) dynamically
- *  3. Relay activity data from content scripts to the native host
+ *  3. Relay activity data from content scripts to Discord via the RPC protocol
  *  4. Instantly clear the Discord status when the active tab leaves a known domain
  *     (free, unlike PreMiD's 20-minute paywall "feature")
+ *
+ * No native host is required — the extension communicates with Discord directly.
  */
 
 import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
 
-const HOST_URL = 'ws://127.0.0.1:3005';
-const RECONNECT_DELAY_MS = 3000;
+/** Discord application client ID */
+const CLIENT_ID = 'DISCORD_CLIENT_ID_REMOVED';
+/** Discord runs its local RPC WebSocket server on one of these ports */
+const DISCORD_RPC_PORTS = [6463, 6464, 6465, 6466, 6467, 6468, 6469, 6470, 6471, 6472];
+const RECONNECT_DELAY_MS = 5000;
 
 // ── WebSocket management ───────────────────────────────────────────────────────
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let hostConnected = false;
+let rpcReady = false;
+let portIndex = 0;
 
-function connectToHost(): void {
+function connectToDiscord(): void {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return;
   }
 
+  const port = DISCORD_RPC_PORTS[portIndex % DISCORD_RPC_PORTS.length];
+
   try {
-    ws = new WebSocket(HOST_URL);
+    ws = new WebSocket(`ws://127.0.0.1:${port}/?v=1&client_id=${CLIENT_ID}`);
   } catch {
-    scheduleReconnect();
+    advancePortAndReconnect();
     return;
   }
 
   ws.onopen = () => {
-    hostConnected = true;
-    console.log('[FreeMiD] Connected to native host');
-    broadcastStatus({ connected: true });
+    console.log(`[FreeMiD] Connected to Discord RPC on port ${port}`);
+    // Discord sends READY dispatch automatically; wait for it before sending activities
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data as string) as { evt?: string };
+      if (msg.evt === 'READY') {
+        rpcReady = true;
+        console.log('[FreeMiD] Discord RPC ready');
+        broadcastStatus({ connected: true });
+      }
+    } catch {
+      // ignore malformed frames
+    }
   };
 
   ws.onclose = () => {
-    hostConnected = false;
+    rpcReady = false;
     ws = null;
-    console.log('[FreeMiD] Disconnected from native host');
+    console.log('[FreeMiD] Disconnected from Discord RPC');
     broadcastStatus({ connected: false });
-    scheduleReconnect();
+    advancePortAndReconnect();
   };
 
   ws.onerror = () => {
     ws?.close();
   };
+}
 
-  ws.onmessage = (event) => {
-    try {
-      const msg = JSON.parse(event.data as string) as Record<string, unknown>;
-      if (msg.type === 'CONNECTED') {
-        console.log('[FreeMiD] Host version:', msg.version);
-      }
-    } catch {
-      // ignore malformed messages
-    }
-  };
+function advancePortAndReconnect(): void {
+  portIndex = (portIndex + 1) % DISCORD_RPC_PORTS.length;
+  scheduleReconnect();
 }
 
 function scheduleReconnect(): void {
   if (reconnectTimer !== null) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    connectToHost();
+    connectToDiscord();
   }, RECONNECT_DELAY_MS);
 }
 
-function sendToHost(payload: object): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    connectToHost(); // attempt reconnect; next activity update will retry
+/**
+ * Send a Discord RPC SET_ACTIVITY command.
+ * Strips FreeMiD-internal fields (application_id, name) that don't belong in the RPC payload.
+ */
+export function setActivity(activity: object): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !rpcReady) {
+    connectToDiscord();
     return;
   }
-  ws.send(JSON.stringify(payload));
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { application_id, name, ...discordActivity } = activity as Record<string, unknown>;
+
+  ws.send(JSON.stringify({
+    cmd: 'SET_ACTIVITY',
+    args: { pid: 1, activity: discordActivity },
+    nonce: crypto.randomUUID(),
+  }));
 }
 
-export function setActivity(activity: object): void {
-  sendToHost({ type: 'SET_ACTIVITY', activity });
-}
-
+/**
+ * Send a Discord RPC SET_ACTIVITY command with a null activity to clear the status.
+ */
 export function clearActivity(): void {
-  sendToHost({ type: 'CLEAR_ACTIVITY' });
+  if (!ws || ws.readyState !== WebSocket.OPEN || !rpcReady) return;
+
+  ws.send(JSON.stringify({
+    cmd: 'SET_ACTIVITY',
+    args: { pid: 1, activity: null },
+    nonce: crypto.randomUUID(),
+  }));
 }
 
 // ── Activity registry & content script injection ───────────────────────────────
@@ -99,11 +130,43 @@ function matchActivity(url: string): ActivityMeta | null {
 }
 
 function urlMatchesPattern(url: string, pattern: string): boolean {
-  // Convert glob-style patterns (*.youtube.com) to RegExp
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}`, 'i').test(url);
+  // Parse both the URL and the Chrome extension match pattern into components
+  // so we compare scheme/host/path independently. This prevents a crafted
+  // query-string like https://evil.com/?x=https://music.youtube.com/ from
+  // bypassing a regex anchored only at the start.
+  try {
+    const parsed = new URL(url);
+
+    const schemeEnd = pattern.indexOf('://');
+    if (schemeEnd === -1) return false;
+    const patternScheme = pattern.slice(0, schemeEnd);
+    const afterScheme = pattern.slice(schemeEnd + 3);
+    const slashIdx = afterScheme.indexOf('/');
+    const patternHost = slashIdx === -1 ? afterScheme : afterScheme.slice(0, slashIdx);
+    const patternPath = slashIdx === -1 ? '' : afterScheme.slice(slashIdx);
+
+    // Scheme: '*' matches any, otherwise must be exact (minus the trailing ':')
+    if (patternScheme !== '*' && patternScheme !== parsed.protocol.slice(0, -1)) {
+      return false;
+    }
+
+    // Host: must match the full hostname — no partial substring matches
+    const hostRe = new RegExp(
+      '^' + patternHost.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$',
+      'i'
+    );
+    if (!hostRe.test(parsed.hostname)) return false;
+
+    // Path: prefix match, '*' as wildcard
+    if (!patternPath || patternPath === '/*') return true;
+    const pathRe = new RegExp(
+      '^' + patternPath.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*'),
+      'i'
+    );
+    return pathRe.test(parsed.pathname + parsed.search);
+  } catch {
+    return false;
+  }
 }
 
 /** Track which tabId has an active activity script injected */
@@ -179,18 +242,17 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
 
   // Popup requesting connection status — respond synchronously with current state
   if (msg.type === 'GET_STATUS') {
-    const connected = !!(ws && ws.readyState === WebSocket.OPEN);
-    sendResponse({ connected });
+    sendResponse({ connected: !!(ws && ws.readyState === WebSocket.OPEN && rpcReady) });
     return true;
   }
 });
 
-// Keep service worker alive with a periodic alarm while the host is connected.
+// Keep service worker alive with a periodic alarm while connected.
 // This prevents Chrome from terminating it and dropping the WS connection.
 chrome.alarms.create('freemid-keepalive', { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'freemid-keepalive') {
-    connectToHost();
+    connectToDiscord();
   }
 });
 
@@ -204,4 +266,4 @@ function broadcastStatus(status: { connected: boolean }): void {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
-connectToHost();
+connectToDiscord();
