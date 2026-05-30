@@ -272,10 +272,12 @@ async function sendToBridge(payload: object): Promise<boolean> {
 async function checkAuthAndProceed(): Promise<void> {
   const token = await loadValidToken();
   if (!token) {
+    console.log('[FreeMiD] No valid token — user needs to authorize');
     needsAuth = true;
     broadcastStatus({ connected: false, authRequired: true });
     return;
   }
+  console.log('[FreeMiD] Token found — sending AUTHENTICATE');
   needsAuth = false;
   void sendToBridge({
     cmd: 'AUTHENTICATE',
@@ -470,7 +472,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     if (bridgeConnected) {
       console.log(`[FreeMiD] Bridge connected to Discord RPC (tab ${bridgeTabId as number}, port ${String(msg.port)})`);
     } else {
-      console.log('[FreeMiD] Bridge disconnected — retrying…');
+      console.log(`[FreeMiD] Bridge disconnected — close code: ${String(msg.closeCode ?? 'unknown')}. Retrying…`);
       rpcAuthenticated = false;
       broadcastStatus({ connected: false, authRequired: needsAuth });
     }

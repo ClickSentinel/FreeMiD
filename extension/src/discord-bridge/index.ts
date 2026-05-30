@@ -79,16 +79,19 @@ function connect(): void {
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data as string) as object;
-      chrome.runtime.sendMessage({ type: 'FREEMID_BRIDGE_MSG', data }).catch(() => {});
+      console.log('[FreeMiD] Received from Discord:', JSON.stringify(data).slice(0, 200));
+      chrome.runtime.sendMessage({ type: 'FREEMID_BRIDGE_MSG', data }).catch((err: unknown) => {
+        console.error('[FreeMiD] sendMessage BRIDGE_MSG failed:', err);
+      });
     } catch {
       // ignore malformed frames
     }
   };
 
   ws.onclose = (ev) => {
-    console.warn(`[FreeMiD] Disconnected from Discord RPC on port ${port} (code ${ev.code})`);
+    console.warn(`[FreeMiD] Disconnected from Discord RPC on port ${port} (code ${ev.code}, reason: "${ev.reason}")`);
     ws = null;
-    chrome.runtime.sendMessage({ type: 'FREEMID_BRIDGE_STATUS', connected: false }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'FREEMID_BRIDGE_STATUS', connected: false, closeCode: ev.code }).catch(() => {});
     advance();
   };
 
