@@ -12,8 +12,12 @@
 
 import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
 
-/** Discord application client ID */
-const CLIENT_ID = 'DISCORD_CLIENT_ID_REMOVED';
+/**
+ * Discord application client ID.
+ * Set VITE_DISCORD_CLIENT_ID in extension/.env (never commit that file).
+ */
+const CLIENT_ID: string = import.meta.env.VITE_DISCORD_CLIENT_ID as string;
+if (!CLIENT_ID) console.error('[FreeMiD] VITE_DISCORD_CLIENT_ID is not set — Rich Presence will not work.');
 /** Discord runs its local RPC WebSocket server on one of these ports */
 const DISCORD_RPC_PORTS = [6463, 6464, 6465, 6466, 6467, 6468, 6469, 6470, 6471, 6472];
 const RECONNECT_DELAY_MS = 5000;

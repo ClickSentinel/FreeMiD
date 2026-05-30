@@ -5,6 +5,8 @@ target/
 # Extension
 extension/node_modules/
 extension/dist/
+extension/.env
+extension/.env.local
 
 # OS
 .DS_Store

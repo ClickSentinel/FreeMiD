@@ -20,13 +20,11 @@ A fully free, open-source Discord Rich Presence bridge for web browsing — no s
 ```text
 Browser Extension (Chrome MV3)
   └─ Content script injected per matching tab
-       └─ Scrapes title / artist / timestamps via mediaSession + DOM
-            └─ Sends activity over WebSocket (ws://127.0.0.1:3005)
-                 └─ Native Host (Rust binary)
-                      └─ Forwards to Discord via local IPC socket
+       └─ Reads title / artist / timestamps via the browser's mediaSession API
+            └─ Background service worker relays activity to Discord's API
 ```
 
-The native host connects to Discord's local Unix socket (`$XDG_RUNTIME_DIR/discord-ipc-*`), including Flatpak paths. The extension and native host communicate over a local WebSocket — no native messaging manifest required.
+> **mediaSession** is a standard browser API (`navigator.mediaSession`) that YouTube and YouTube Music populate with track metadata. The extension reads only what the browser already exposes — it does not scrape the DOM or make any additional network requests.
 
 ---
 
@@ -36,50 +34,26 @@ The native host connects to Discord's local Unix socket (`$XDG_RUNTIME_DIR/disco
 
 | Requirement | Notes |
 | --- | --- |
-| Discord desktop client | Must be running. Flatpak supported on Linux. |
+| Discord desktop client | Must be running. |
 | Chrome or Chromium | Any Chromium-based browser works. |
-| Rust toolchain | Only needed if building from source. |
 | Node.js ≥ 18 | Only needed if building from source. |
-
-### Quick install (Linux)
-
-```bash
-git clone https://github.com/ClickSentinel/freemid
-cd freemid
-cargo build --release
-bash install/install.sh
-```
-
-The installer:
-
-1. Copies the binary to `~/.local/bin/freemid`
-2. Creates `~/.config/autostart/freemid.desktop` so it starts with your desktop session
-
-To uninstall:
-
-```bash
-bash install/install.sh --uninstall
-```
 
 ### Load the extension
 
-1. Open `chrome://extensions`
-2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked** → select the `extension/dist/` folder
-
-> The extension uses `chrome.scripting.executeScript` (standard MV3 API) — developer mode is only required to load an unpacked extension, not for the scripting API itself.
+1. Download the latest `freemid-extension.zip` from [Releases](https://github.com/ClickSentinel/FreeMiD/releases)
+2. Unzip it
+3. Open `chrome://extensions`
+4. Enable **Developer mode** (top-right toggle)
+5. Click **Load unpacked** → select the unzipped folder
 
 ---
 
 ## Building from source
 
 ```bash
-# Native host
-cargo build --release
-# Output: native-host/target/release/freemid (symlinked via workspace to target/release/freemid)
-
-# Extension
-cd extension
+git clone https://github.com/ClickSentinel/FreeMiD
+cd FreeMiD/extension
+cp .env.example .env          # then fill in your Discord Application ID
 npm install
 npm run build
 # Output: extension/dist/
