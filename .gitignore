@@ -1,0 +1,19 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Extension
+extension/node_modules/
+extension/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+*.swp
+
+# Logs
+*.log

@@ -1,0 +1,9 @@
+[workspace]
+members = ["native-host"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["FreeMiD Contributors"]
+license = "GPL-3.0"
