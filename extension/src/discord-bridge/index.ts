@@ -13,12 +13,6 @@
  *   Bridge → Background : { type: 'FREEMID_BRIDGE_STATUS', connected: boolean }
  */
 
-const _win = window as Window & { __freemidBridgeActive?: boolean };
-if (!_win.__freemidBridgeActive) {
-  _win.__freemidBridgeActive = true;
-  startBridge();
-}
-
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const CLIENT_ID: string = import.meta.env.VITE_DISCORD_CLIENT_ID as string;
@@ -34,6 +28,12 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 // ── Bridge init ────────────────────────────────────────────────────────────────
 
 function startBridge(): void {
+  if (!CLIENT_ID) {
+    console.error('[FreeMiD] VITE_DISCORD_CLIENT_ID is not set — bridge cannot connect');
+    return;
+  }
+
+  console.log('[FreeMiD] Bridge starting');
   connect();
 
   chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
@@ -62,6 +62,7 @@ function connect(): void {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
   const port = RPC_PORTS[portIndex % RPC_PORTS.length];
+  console.log(`[FreeMiD] Attempting connection on port ${port}`);
 
   try {
     ws = new WebSocket(`ws://127.0.0.1:${port}/?v=1&client_id=${CLIENT_ID}`);
@@ -71,6 +72,7 @@ function connect(): void {
   }
 
   ws.onopen = () => {
+    console.log(`[FreeMiD] Connected to Discord RPC on port ${port}`);
     chrome.runtime.sendMessage({ type: 'FREEMID_BRIDGE_STATUS', connected: true, port }).catch(() => {});
   };
 
@@ -83,13 +85,15 @@ function connect(): void {
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
+    console.warn(`[FreeMiD] Disconnected from Discord RPC on port ${port} (code ${ev.code})`);
     ws = null;
     chrome.runtime.sendMessage({ type: 'FREEMID_BRIDGE_STATUS', connected: false }).catch(() => {});
     advance();
   };
 
   ws.onerror = () => {
+    console.warn(`[FreeMiD] WebSocket error on port ${port}`);
     ws?.close();
   };
 }
@@ -105,4 +109,12 @@ function schedule(): void {
     reconnectTimer = null;
     connect();
   }, RECONNECT_MS);
+}
+
+// ── Guard — must be LAST so all const/let declarations above are initialized ───
+
+const _win = window as Window & { __freemidBridgeActive?: boolean };
+if (!_win.__freemidBridgeActive) {
+  _win.__freemidBridgeActive = true;
+  startBridge();
 }

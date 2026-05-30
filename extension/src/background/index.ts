@@ -467,7 +467,10 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (msg.type === 'FREEMID_BRIDGE_STATUS') {
     if (sender.tab?.id != null) bridgeTabId = sender.tab.id;
     bridgeConnected = msg.connected as boolean;
-    if (!bridgeConnected) {
+    if (bridgeConnected) {
+      console.log(`[FreeMiD] Bridge connected to Discord RPC (tab ${bridgeTabId as number}, port ${String(msg.port)})`);
+    } else {
+      console.log('[FreeMiD] Bridge disconnected — retrying…');
       rpcAuthenticated = false;
       broadcastStatus({ connected: false, authRequired: needsAuth });
     }
