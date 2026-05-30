@@ -11,10 +11,9 @@ Thanks for helping improve FreeMiD.
 
 ## Before you open a PR
 
-1. Build the native host: `cargo build --release`
-2. Build the extension: `cd extension && npm run build`
-3. Run the extension typecheck: `cd extension && npm run typecheck`
-4. Test the relevant site in Chrome with Discord running
+1. Build the extension: `cd extension && npm run build`
+2. Run the extension typecheck: `cd extension && npm run typecheck`
+3. Test the relevant site in Chrome with Discord running
 
 ## Code style
 

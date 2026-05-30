@@ -88,6 +88,33 @@
         font-size: 12px;
       }
 
+      .auth-prompt {
+        padding: 14px 16px;
+        border-bottom: 1px solid #2b2d31;
+        text-align: center;
+      }
+
+      .auth-prompt p {
+        font-size: 12px;
+        color: #949ba4;
+        margin-bottom: 10px;
+      }
+
+      .btn-auth {
+        background: #5865f2;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        padding: 8px 16px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        width: 100%;
+      }
+      .btn-auth:hover  { background: #4752c4; }
+      .btn-auth:active { background: #3c45a5; }
+      .btn-auth:disabled { background: #3c3f45; color: #72767d; cursor: not-allowed; }
+
       footer {
         padding: 10px 16px;
         display: flex;
@@ -117,7 +144,12 @@
 
     <div class="status-bar">
       <div class="dot connecting" id="dot"></div>
-      <span id="status-text">Connecting to native host…</span>
+      <span id="status-text">Connecting to Discord…</span>
+    </div>
+
+    <div class="auth-prompt" id="auth-prompt" style="display:none">
+      <p>Authorize FreeMiD to update your Discord status.</p>
+      <button class="btn-auth" id="auth-btn">Authorize with Discord</button>
     </div>
 
     <div id="activity-section">
@@ -126,7 +158,7 @@
 
     <footer>
       <a href="https://github.com/ClickSentinel/freemid" target="_blank" rel="noopener noreferrer">GitHub</a>
-      <span class="version">v0.1.0</span>
+      <span class="version">v0.2.0</span>
     </footer>
 
     <script src="index.js" type="module"></script>

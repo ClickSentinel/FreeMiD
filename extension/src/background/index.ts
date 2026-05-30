@@ -22,11 +22,200 @@ if (!CLIENT_ID) console.error('[FreeMiD] VITE_DISCORD_CLIENT_ID is not set — R
 const DISCORD_RPC_PORTS = [6463, 6464, 6465, 6466, 6467, 6468, 6469, 6470, 6471, 6472];
 const RECONNECT_DELAY_MS = 5000;
 
+// ── Auth state ────────────────────────────────────────────────────────────────
+
+/** True once AUTHENTICATE has been confirmed by Discord RPC */
+let rpcAuthenticated = false;
+/** True when we are waiting for the user to complete the OAuth2 flow */
+let needsAuth = false;
+
+// ── PKCE helpers ──────────────────────────────────────────────────────────────
+
+function base64urlEncode(buffer: ArrayBuffer): string {
+  return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
+}
+
+function generateCodeVerifier(): string {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  return base64urlEncode(arr.buffer);
+}
+
+async function generateCodeChallenge(verifier: string): Promise<string> {
+  const data = new TextEncoder().encode(verifier);
+  return base64urlEncode(await crypto.subtle.digest('SHA-256', data));
+}
+
+// ── Token management ──────────────────────────────────────────────────────────
+
+interface StoredTokens {
+  discord_access_token?: string;
+  discord_token_expiry?: number;
+  discord_refresh_token?: string;
+}
+
+async function loadValidToken(): Promise<string | null> {
+  const { discord_access_token, discord_token_expiry, discord_refresh_token } =
+    await chrome.storage.local.get([
+      'discord_access_token',
+      'discord_token_expiry',
+      'discord_refresh_token',
+    ]) as StoredTokens;
+
+  if (!discord_access_token) return null;
+
+  // Refresh proactively if expiring within 60 s
+  if (discord_token_expiry && Date.now() > discord_token_expiry - 60_000) {
+    if (discord_refresh_token) return attemptTokenRefresh(discord_refresh_token);
+    await chrome.storage.local.remove(['discord_access_token', 'discord_token_expiry', 'discord_refresh_token']);
+    return null;
+  }
+
+  return discord_access_token;
+}
+
+async function attemptTokenRefresh(refreshTok: string): Promise<string | null> {
+  try {
+    const res = await fetch('https://discord.com/api/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshTok,
+        client_id: CLIENT_ID,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json() as { access_token: string; expires_in: number; refresh_token?: string };
+    await chrome.storage.local.set({
+      discord_access_token: json.access_token,
+      discord_token_expiry: Date.now() + json.expires_in * 1000,
+      discord_refresh_token: json.refresh_token ?? refreshTok,
+    });
+    return json.access_token;
+  } catch (e) {
+    console.error('[FreeMiD] Token refresh failed:', e);
+    await chrome.storage.local.remove(['discord_access_token', 'discord_token_expiry', 'discord_refresh_token']);
+    return null;
+  }
+}
+
+// ── OAuth2 PKCE flow ──────────────────────────────────────────────────────────
+
+/**
+ * Opens Discord's OAuth2 consent page via chrome.identity.launchWebAuthFlow
+ * (PKCE — no client secret required). On success, stores tokens and
+ * calls sendAuthenticate() so the RPC session becomes active immediately.
+ */
+async function initiateOAuthFlow(): Promise<void> {
+  if (!CLIENT_ID) {
+    console.error('[FreeMiD] Cannot start OAuth: VITE_DISCORD_CLIENT_ID is not set');
+    return;
+  }
+
+  const verifier = generateCodeVerifier();
+  const challenge = await generateCodeChallenge(verifier);
+  const redirectUri = chrome.identity.getRedirectURL();
+
+  const authUrl = new URL('https://discord.com/oauth2/authorize');
+  authUrl.searchParams.set('client_id', CLIENT_ID);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('scope', 'rpc rpc.activities.write');
+  authUrl.searchParams.set('code_challenge', challenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
+
+  let responseUrl: string | undefined;
+  try {
+    responseUrl = await chrome.identity.launchWebAuthFlow({ url: authUrl.toString(), interactive: true });
+  } catch (e) {
+    console.error('[FreeMiD] OAuth flow cancelled or failed:', e);
+    needsAuth = true;
+    broadcastStatus({ connected: false, authRequired: true });
+    return;
+  }
+
+  if (!responseUrl) {
+    console.warn('[FreeMiD] OAuth flow returned no URL (user cancelled)');
+    needsAuth = true;
+    broadcastStatus({ connected: false, authRequired: true });
+    return;
+  }
+
+  const code = new URL(responseUrl).searchParams.get('code');
+  if (!code) {
+    console.error('[FreeMiD] OAuth redirect missing authorization code');
+    needsAuth = true;
+    broadcastStatus({ connected: false, authRequired: true });
+    return;
+  }
+
+  let tokenRes: Response;
+  try {
+    tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+        client_id: CLIENT_ID,
+        code_verifier: verifier,
+      }),
+    });
+  } catch (e) {
+    console.error('[FreeMiD] Token exchange network error:', e);
+    needsAuth = true;
+    broadcastStatus({ connected: false, authRequired: true });
+    return;
+  }
+
+  if (!tokenRes.ok) {
+    console.error('[FreeMiD] Token exchange failed:', await tokenRes.text());
+    needsAuth = true;
+    broadcastStatus({ connected: false, authRequired: true });
+    return;
+  }
+
+  const json = await tokenRes.json() as { access_token: string; expires_in: number; refresh_token: string };
+  await chrome.storage.local.set({
+    discord_access_token: json.access_token,
+    discord_token_expiry: Date.now() + json.expires_in * 1000,
+    discord_refresh_token: json.refresh_token,
+  });
+
+  needsAuth = false;
+  sendAuthenticate(json.access_token);
+}
+
+// ── Discord RPC authentication ─────────────────────────────────────────────────
+
+function sendAuthenticate(token: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({
+    cmd: 'AUTHENTICATE',
+    nonce: crypto.randomUUID(),
+    args: { access_token: token },
+  }));
+}
+
+async function checkAuthAndProceed(): Promise<void> {
+  const token = await loadValidToken();
+  if (!token) {
+    needsAuth = true;
+    broadcastStatus({ connected: false, authRequired: true });
+    return;
+  }
+  sendAuthenticate(token);
+}
+
 // ── WebSocket management ───────────────────────────────────────────────────────
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let rpcReady = false;
 let portIndex = 0;
 
 function connectToDiscord(): void {
@@ -45,16 +234,31 @@ function connectToDiscord(): void {
 
   ws.onopen = () => {
     console.log(`[FreeMiD] Connected to Discord RPC on port ${port}`);
-    // Discord sends READY dispatch automatically; wait for it before sending activities
   };
 
   ws.onmessage = (event) => {
     try {
-      const msg = JSON.parse(event.data as string) as { evt?: string };
+      const msg = JSON.parse(event.data as string) as { evt?: string; cmd?: string };
+
       if (msg.evt === 'READY') {
-        rpcReady = true;
-        console.log('[FreeMiD] Discord RPC ready');
-        broadcastStatus({ connected: true });
+        console.log('[FreeMiD] Discord RPC ready — checking auth');
+        void checkAuthAndProceed();
+        return;
+      }
+
+      if (msg.cmd === 'AUTHENTICATE') {
+        if (msg.evt === 'ERROR') {
+          console.warn('[FreeMiD] AUTHENTICATE rejected — clearing stored token');
+          rpcAuthenticated = false;
+          needsAuth = true;
+          void chrome.storage.local.remove(['discord_access_token', 'discord_token_expiry', 'discord_refresh_token']);
+          broadcastStatus({ connected: false, authRequired: true });
+        } else {
+          rpcAuthenticated = true;
+          needsAuth = false;
+          console.log('[FreeMiD] Authenticated with Discord RPC');
+          broadcastStatus({ connected: true, authRequired: false });
+        }
       }
     } catch {
       // ignore malformed frames
@@ -62,10 +266,10 @@ function connectToDiscord(): void {
   };
 
   ws.onclose = () => {
-    rpcReady = false;
+    rpcAuthenticated = false;
     ws = null;
     console.log('[FreeMiD] Disconnected from Discord RPC');
-    broadcastStatus({ connected: false });
+    broadcastStatus({ connected: false, authRequired: needsAuth });
     advancePortAndReconnect();
   };
 
@@ -92,7 +296,7 @@ function scheduleReconnect(): void {
  * Strips FreeMiD-internal fields (application_id, name) that don't belong in the RPC payload.
  */
 export function setActivity(activity: object): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN || !rpcReady) {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !rpcAuthenticated) {
     connectToDiscord();
     return;
   }
@@ -111,7 +315,7 @@ export function setActivity(activity: object): void {
  * Send a Discord RPC SET_ACTIVITY command with a null activity to clear the status.
  */
 export function clearActivity(): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN || !rpcReady) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN || !rpcAuthenticated) return;
 
   ws.send(JSON.stringify({
     cmd: 'SET_ACTIVITY',
@@ -243,9 +447,17 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     return;
   }
 
+  if (msg.type === 'INITIATE_AUTH') {
+    void initiateOAuthFlow();
+    return;
+  }
+
   // Popup requesting connection status — respond synchronously with current state
   if (msg.type === 'GET_STATUS') {
-    sendResponse({ connected: !!(ws && ws.readyState === WebSocket.OPEN && rpcReady) });
+    sendResponse({
+      connected: !!(ws && ws.readyState === WebSocket.OPEN && rpcAuthenticated),
+      authRequired: needsAuth,
+    });
     return true;
   }
 });
@@ -261,7 +473,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function broadcastStatus(status: { connected: boolean }): void {
+function broadcastStatus(status: { connected: boolean; authRequired?: boolean }): void {
   chrome.runtime.sendMessage({ type: 'HOST_STATUS', ...status }).catch(() => {
     // popup may not be open; ignore
   });
