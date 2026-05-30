@@ -8,13 +8,13 @@ type HostStatus = { type: 'HOST_STATUS'; connected: boolean };
 function setStatus(connected: boolean | null): void {
   if (connected === null) {
     dot.className = 'dot connecting';
-    statusText.textContent = 'Connecting to native host…';
+    statusText.textContent = 'Connecting to Discord…';
   } else if (connected) {
     dot.className = 'dot connected';
-    statusText.textContent = 'Native host connected — Discord ready';
+    statusText.textContent = 'Connected to Discord';
   } else {
     dot.className = 'dot';
-    statusText.textContent = 'Native host not running — start FreeMiD';
+    statusText.textContent = 'Discord not detected';
   }
 }
 

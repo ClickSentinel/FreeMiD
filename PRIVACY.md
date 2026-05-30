@@ -42,7 +42,7 @@ None of this data is transmitted to FreeMiD, the FreeMiD team, or any third-part
 ## How data flows locally
 
 ```text
-Browser tab (YouTube Music, YouTube, Twitch, Netflix)
+Browser tab (YouTube Music / YouTube)
   └─ Content script reads title / artist / timestamps from the page
        └─ Background service worker receives activity data
             └─ HTTPS POST to Discord API (discord.com) — sets Rich Presence
@@ -59,7 +59,6 @@ The only outbound network request FreeMiD makes is the Rich Presence update sent
 | `tabs` | Detect which tab is active and its URL |
 | `scripting` | Inject content scripts into supported pages |
 | `storage` | Persist user settings (e.g. enabled/disabled services) locally in the browser |
-| `identity` | Initiate the Discord OAuth2 login flow to authorise Rich Presence updates |
 
 No permission is used to read data beyond what is described above.
 
@@ -68,6 +67,8 @@ No permission is used to read data beyond what is described above.
 ## Third-party services
 
 FreeMiD itself operates no servers. When a Rich Presence activity is set, **Discord** receives the activity payload directly via its API. Refer to [Discord's Privacy Policy](https://discord.com/privacy) for how Discord handles activity data.
+
+FreeMiD's source code is hosted on **GitHub**. GitHub may collect data when you visit the repository or download a release. Refer to [GitHub's Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement) and [GitHub's Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service) for details.
 
 ---
 

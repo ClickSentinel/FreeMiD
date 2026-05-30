@@ -11,7 +11,6 @@ A fully free, open-source Discord Rich Presence bridge for web browsing — no s
 - Album art pulled directly from YouTube's image CDN — no asset uploads required
 - "Listen on YT Music" button linking to the current song
 - Instant status clear on tab close or navigation away
-- System tray icon with right-click quit
 - No account, no cloud, no telemetry
 
 ---

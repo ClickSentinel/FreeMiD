@@ -8,13 +8,12 @@
     "tabs",
     "scripting",
     "storage",
-    "alarms",
-    "identity"
+    "alarms"
   ],
   "host_permissions": [
     "*://www.youtube.com/*",
     "*://youtube.com/*",
-    "*://music.youtube.com/*",
+    "*://music.youtube.com/*"
   ],
 
   "background": {
