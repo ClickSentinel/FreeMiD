@@ -21,18 +21,39 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
-        run: cd extension && npm ci
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Write extension .env
+        run: echo "VITE_DISCORD_CLIENT_ID=${{ secrets.DISCORD_CLIENT_ID }}" > extension/.env
+
+      - name: Build native host
+        run: cargo build --release
 
       - name: Build extension
-        run: cd extension && npm run build
+        run: cd extension && npm ci && npm run build
 
       - name: Package extension
         run: |
           cd extension/dist
           zip -r ../../freemid-extension.zip .
 
+      - name: Copy native host binary
+        run: cp target/release/freemid freemid-linux-x86_64
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: freemid-extension.zip
+          files: |
+            freemid-extension.zip
+            freemid-linux-x86_64
+            install/install.sh

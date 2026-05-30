@@ -30,15 +30,14 @@ fn main() {
 
     let ipc: Mutex<Option<DiscordIpc>> = Mutex::new(None);
 
-    // Eagerly try to connect so the first STATUS we emit is accurate.
-    let initial_connected = match ensure_connected(&mut ipc.lock().unwrap()) {
-        Ok(()) => true,
-        Err(e) => {
-            eprintln!("[FreeMiD] initial Discord connect failed: {}", e);
-            false
-        }
-    };
-    send_status(initial_connected, None);
+    // Eagerly try to connect to Discord IPC. Don't send STATUS yet — Chrome's
+    // native-messaging pipe may not be ready to relay it, causing the message
+    // to be silently dropped. The popup polls via PING instead.
+    if let Err(e) = ensure_connected(&mut ipc.lock().unwrap()) {
+        eprintln!("[FreeMiD] initial Discord connect failed: {}", e);
+    } else {
+        eprintln!("[FreeMiD] Discord IPC connected at startup");
+    }
 
     loop {
         match read_message() {
@@ -149,6 +148,18 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
     let kind = msg.get("type").and_then(Value::as_str).unwrap_or("");
     match kind {
         "PING" => {
+            // Attempt to (re)connect to Discord IPC if we're not already connected.
+            // This means opening the popup always triggers a fresh connect attempt,
+            // so the status dot updates correctly without waiting for the next
+            // SET_ACTIVITY call.
+            {
+                let mut guard = ipc.lock().unwrap();
+                if guard.is_none() {
+                    if let Err(e) = ensure_connected(&mut guard) {
+                        eprintln!("[FreeMiD] PING: Discord reconnect failed: {}", e);
+                    }
+                }
+            }
             let connected = ipc.lock().unwrap().is_some();
             send_status(connected, None);
             Ok(())

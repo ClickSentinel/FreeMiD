@@ -56,14 +56,22 @@ chrome.runtime.onMessage.addListener((msg: unknown) => {
   if (m.type === 'HOST_STATUS') render(m);
 });
 
-// Bootstrap.
-(async () => {
+// Bootstrap — retry a few times to bridge the startup race where the
+// native host hasn't sent its initial STATUS yet.
+async function fetchStatus(retriesLeft = 4, intervalMs = 700): Promise<void> {
   try {
     const status = (await chrome.runtime.sendMessage({ type: 'GET_STATUS' })) as Status | undefined;
     render(status ?? null);
+    if (!status?.discordConnected && retriesLeft > 0) {
+      setTimeout(() => fetchStatus(retriesLeft - 1, intervalMs), intervalMs);
+    }
   } catch {
     render(null);
   }
+}
+
+(async () => {
+  fetchStatus();
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

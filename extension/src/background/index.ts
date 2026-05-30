@@ -207,9 +207,10 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   }
 
   if (msg.type === 'GET_STATUS') {
-    // Make sure we're connected to give the popup a fresh answer.
+    // Return the cached state immediately (kept fresh by the keepalive PING).
+    // If the port isn't open yet, try to connect — the onMessage STATUS
+    // response will broadcast the real state to the popup shortly after.
     if (!nativePort) connectNativeHost();
-    else sendToHost({ type: 'PING' });
     sendResponse({
       hostConnected,
       discordConnected,
