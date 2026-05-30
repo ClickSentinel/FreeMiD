@@ -51,32 +51,3 @@ for (const name of activities) {
 
   console.log(`[activities] ✓ dist/${outName}.js`);
 }
-
-// ── Discord bridge content script ─────────────────────────────────────────────
-
-const bridgeEntry = resolve(root, 'src/discord-bridge/index.ts');
-if (existsSync(bridgeEntry)) {
-  console.log('[bridge] building discord-bridge…');
-  await build({
-    root,
-    configFile: false,
-    logLevel: 'warn',
-    build: {
-      outDir:      resolve(root, 'dist'),
-      emptyOutDir: false,
-      minify:      false,
-      rollupOptions: {
-        input: { 'discord-bridge/index': bridgeEntry },
-        output: {
-          format:         'iife',
-          entryFileNames: '[name].js',
-          name:           'FreeMiDBridge',
-        },
-      },
-    },
-    resolve: {
-      alias: { '@': resolve(root, 'src') },
-    },
-  });
-  console.log('[bridge] ✓ dist/discord-bridge/index.js');
-}

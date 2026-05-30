@@ -7,15 +7,13 @@
   "permissions": [
     "tabs",
     "scripting",
-    "storage",
     "alarms",
-    "identity"
+    "nativeMessaging"
   ],
   "host_permissions": [
     "*://www.youtube.com/*",
     "*://youtube.com/*",
-    "*://music.youtube.com/*",
-    "https://discord.com/*"
+    "*://music.youtube.com/*"
   ],
 
   "background": {

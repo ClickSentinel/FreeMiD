@@ -45,10 +45,13 @@ None of this data is transmitted to FreeMiD, the FreeMiD team, or any third-part
 Browser tab (YouTube Music / YouTube)
   └─ Content script reads title / artist / timestamps from the page
        └─ Background service worker receives activity data
-            └─ HTTPS POST to Discord API (discord.com) — sets Rich Presence
+            └─ Chrome native messaging pipe (stdin/stdout, local only)
+                 └─ freemid native host binary
+                      └─ Discord IPC Unix socket (local filesystem)
+                           └─ Discord desktop app
 ```
 
-The only outbound network request FreeMiD makes is the Rich Presence update sent directly to Discord's API on your behalf. No data passes through any FreeMiD-operated server. Album art is served directly from YouTube's CDN to Discord using the same URLs the page already loaded — FreeMiD does not proxy or cache these.
+No data leaves your machine through FreeMiD. The only outbound network connection involved is Discord itself rendering your Rich Presence to other users — this is initiated by the Discord desktop app directly, not by FreeMiD.
 
 ---
 
@@ -58,7 +61,8 @@ The only outbound network request FreeMiD makes is the Rich Presence update sent
 | --- | --- |
 | `tabs` | Detect which tab is active and its URL |
 | `scripting` | Inject content scripts into supported pages |
-| `storage` | Persist user settings (e.g. enabled/disabled services) locally in the browser |
+| `alarms` | Keep the background service worker alive |
+| `nativeMessaging` | Communicate with the local FreeMiD native host binary |
 
 No permission is used to read data beyond what is described above.
 
