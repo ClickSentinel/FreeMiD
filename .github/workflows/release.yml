@@ -10,22 +10,53 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ── Extension (platform-independent) ───────────────────────────────────────
+  build-extension:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Write .env
+        run: echo "VITE_DISCORD_CLIENT_ID=${{ secrets.DISCORD_CLIENT_ID }}" > extension/.env
 
-      - name: Cache Cargo
-        uses: actions/cache@v4
+      - name: Install & build
+        run: cd extension && npm ci && npm run build
+
+      - name: Package
+        run: cd extension/dist && zip -r ../../freemid-extension.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freemid-extension
+          path: freemid-extension.zip
+
+  # ── Native host (per-platform) ─────────────────────────────────────────────
+  build-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: freemid-linux-x86_64
+          - os: macos-latest      # Apple Silicon (arm64)
+            artifact: freemid-macos-arm64
+          - os: macos-13          # Intel (x86_64)
+            artifact: freemid-macos-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -33,27 +64,42 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Write extension .env
-        run: echo "VITE_DISCORD_CLIENT_ID=${{ secrets.DISCORD_CLIENT_ID }}" > extension/.env
-
-      - name: Build native host
+      - name: Build
         run: cargo build --release
+        env:
+          DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
 
-      - name: Build extension
-        run: cd extension && npm ci && npm run build
+      - name: Rename binary
+        run: cp target/release/freemid ${{ matrix.artifact }}
 
-      - name: Package extension
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  # ── GitHub Release ─────────────────────────────────────────────────────────
+  release:
+    needs: [build-extension, build-native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect files
         run: |
-          cd extension/dist
-          zip -r ../../freemid-extension.zip .
+          cp artifacts/freemid-extension/freemid-extension.zip .
+          cp artifacts/freemid-linux-x86_64/freemid-linux-x86_64 .
+          cp artifacts/freemid-macos-arm64/freemid-macos-arm64 .
+          cp artifacts/freemid-macos-x86_64/freemid-macos-x86_64 .
 
-      - name: Copy native host binary
-        run: cp target/release/freemid freemid-linux-x86_64
-
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           files: |
             freemid-extension.zip
             freemid-linux-x86_64
+            freemid-macos-arm64
+            freemid-macos-x86_64
             install/install.sh

@@ -126,25 +126,41 @@ pub type IpcResult<T> = Result<T, IpcError>;
 // ── Socket discovery ───────────────────────────────────────────────────────────
 
 fn find_socket() -> Option<PathBuf> {
-    let runtime = std::env::var("XDG_RUNTIME_DIR").ok();
-    let allow_tmp_ipc = std::env::var("FREEMID_ALLOW_TMP_IPC").as_deref() == Ok("1");
-
     let mut bases: Vec<PathBuf> = Vec::new();
-    if let Some(ref r) = runtime {
-        let r = PathBuf::from(r);
-        // Flatpak Discord places the socket under app/<app-id>/
-        bases.push(r.join("app").join("com.discordapp.Discord"));
-        bases.push(r.join("app").join("com.discordapp.DiscordCanary"));
-        bases.push(r.join("app").join("com.discordapp.DiscordPTB"));
-        bases.push(r);
+
+    // ── Linux ──────────────────────────────────────────────────────────────
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(r) = std::env::var("XDG_RUNTIME_DIR") {
+            let r = PathBuf::from(r);
+            // Flatpak Discord places the socket under app/<app-id>/
+            bases.push(r.join("app").join("com.discordapp.Discord"));
+            bases.push(r.join("app").join("com.discordapp.DiscordCanary"));
+            bases.push(r.join("app").join("com.discordapp.DiscordPTB"));
+            bases.push(r);
+        }
+        // Allow /tmp search on Linux only when explicitly opted in
+        // (avoids TOCTOU with world-writable directories).
+        if std::env::var("FREEMID_ALLOW_TMP_IPC").as_deref() == Ok("1") {
+            for var in &["TMPDIR", "TMP", "TEMP"] {
+                if let Ok(v) = std::env::var(var) {
+                    bases.push(PathBuf::from(v));
+                }
+            }
+            bases.push(PathBuf::from("/tmp"));
+        }
     }
 
-    if allow_tmp_ipc {
-        for var in &["TMPDIR", "TMP", "TEMP"] {
-            if let Ok(v) = std::env::var(var) {
-                bases.push(PathBuf::from(v));
-            }
-        }
+    // ── macOS ──────────────────────────────────────────────────────────────
+    // Discord on macOS places the socket in $TMPDIR (always set by launchd,
+    // e.g. /var/folders/xx/.../T/). Fall back to /tmp if unset.
+    #[cfg(target_os = "macos")]
+    {
+        let tmpdir = std::env::var("TMPDIR")
+            .or_else(|_| std::env::var("TMP"))
+            .or_else(|_| std::env::var("TEMP"))
+            .unwrap_or_else(|_| "/tmp".to_string());
+        bases.push(PathBuf::from(tmpdir));
         bases.push(PathBuf::from("/tmp"));
     }
 
