@@ -103,9 +103,11 @@ foreach ($key in $BrowserKeys) {
     $grandparentKey = Split-Path $parentKey -Parent
     if (-not (Test-Path $grandparentKey)) { continue }
 
-    New-Item -Force -Path $parentKey | Out-Null
-    Set-ItemProperty -Path $parentKey -Name $HostName -Value $ManifestPath
-    Write-Host "-> Registered: $parentKey"
+    # Create HKCU:\...\NativeMessagingHosts\com.clicksentinel.freemid
+    # and set its default value to the manifest path (Chrome spec).
+    New-Item -Force -Path $key | Out-Null
+    Set-ItemProperty -Path $key -Name "(Default)" -Value $ManifestPath
+    Write-Host "-> Registered: $key"
     $RegisteredAny = $true
 }
 
@@ -113,7 +115,7 @@ if (-not $RegisteredAny) {
     Write-Warning "No supported browser registry key found. Registering for Chrome anyway."
     $chromePath = "$RegBase\Google\Chrome\NativeMessagingHosts\$HostName"
     New-Item -Force -Path $chromePath | Out-Null
-    Set-ItemProperty -Path $chromePath -Name $HostName -Value $ManifestPath
+    Set-ItemProperty -Path $chromePath -Name "(Default)" -Value $ManifestPath
     Write-Host "-> Registered: $chromePath"
 }
 
