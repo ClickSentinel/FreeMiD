@@ -142,7 +142,12 @@ presence.on('UpdateData', () => {
   let trackJustChanged = false;
   if (trackId !== activeTrackId || playbackAnchorStart === undefined) {
     activeTrackId = trackId;
-    playbackAnchorStart = now - current;
+    // Anchor to 'now' (assume new track starts at 0). The drift correction
+    // below will re-anchor on the next tick once video.currentTime reflects
+    // the new track's actual position. Using 'current' here would cause the
+    // old song's final currentTime to be used if mediaSession updates before
+    // the video element resets, making Discord show the wrong elapsed time.
+    playbackAnchorStart = now;
     pausedAtWallClock = undefined;
     trackJustChanged = true;
   }
@@ -168,10 +173,15 @@ presence.on('UpdateData', () => {
       pausedAtWallClock = undefined;
     }
 
-    const expectedCurrent = now - playbackAnchorStart;
-    if (Math.abs(expectedCurrent - current) > 3) {
-      // Re-anchor on large drift (seek/skip/new stream segment).
-      playbackAnchorStart = now - current;
+    // Skip drift correction on the first tick of a new track — currentTime
+    // may still reflect the previous song's position while mediaSession has
+    // already updated. Re-anchor will happen naturally on the next tick.
+    if (!trackJustChanged) {
+      const expectedCurrent = now - playbackAnchorStart;
+      if (Math.abs(expectedCurrent - current) > 3) {
+        // Re-anchor on large drift (seek/skip/new stream segment).
+        playbackAnchorStart = now - current;
+      }
     }
   }
 
