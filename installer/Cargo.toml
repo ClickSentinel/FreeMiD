@@ -1,0 +1,11 @@
+[package]
+name = "freemid-installer"
+version = "0.3.0"
+edition = "2021"
+authors = ["FreeMiD Contributors"]
+license = "GPL-3.0"
+description = "FreeMiD Windows installer"
+
+[[bin]]
+name = "freemid-setup"
+path = "src/main.rs"
