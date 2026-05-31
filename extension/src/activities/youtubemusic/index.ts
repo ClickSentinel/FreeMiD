@@ -129,14 +129,12 @@ presence.on('UpdateData', () => {
     : (video ? video.paused : true);
 
   const barTimes = getPlayerBarTimes();
-  const videoDuration = video ? video.duration : NaN;
-  const videoCurrent = video ? Math.floor(video.currentTime) : 0;
 
-  // YouTube Music streams continuously — video.currentTime accumulates across
-  // tracks and must NEVER be used for anchor math. barTimes.current (the
-  // player-bar display) is the only reliable per-song position. If the
-  // selector misses, default to 0 rather than falling back to video.currentTime.
+  // YouTube Music is a continuous stream — both video.currentTime and
+  // video.duration accumulate across tracks and must never be used.
+  // barTimes (scraped from the player bar) is the only reliable source.
   const current = barTimes.current ?? 0;
+  const duration = barTimes.duration ?? 0;
   console.debug('[FreeMiD] barTimes:', barTimes, 'video.currentTime:', video?.currentTime?.toFixed(1));
 
   const artUrl = getArtUrl();
@@ -158,16 +156,6 @@ presence.on('UpdateData', () => {
     // has already updated to the new song's position.
     playbackAnchorStart = now - current;
   }
-
-  // On a track change, only trust video.duration — barTimes still shows the
-  // previous song's total until the DOM updates. If video.duration isn't ready
-  // yet (NaN/Infinity) we use 0 so we skip timestamps for this one tick rather
-  // than displaying the old song's wrong total.
-  const duration = (() => {
-    if (Number.isFinite(videoDuration) && videoDuration > 0) return Math.floor(videoDuration);
-    if (trackJustChanged) return 0; // barTimes may be stale — skip timestamps this tick
-    return barTimes.duration ?? 0;
-  })();
 
   if (paused) {
     if (pausedAtWallClock === undefined) {
