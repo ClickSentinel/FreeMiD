@@ -84,6 +84,17 @@ function getArtUrl(): string | undefined {
   return undefined;
 }
 
+/** Returns true if an element exists AND is currently rendered (non-zero box). */
+function isVisible(el: Element | null): boolean {
+  if (!el) return false;
+  const rect = (el as HTMLElement).getBoundingClientRect?.();
+  if (!rect) return false;
+  if (rect.width === 0 && rect.height === 0) return false;
+  const style = window.getComputedStyle(el as HTMLElement);
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  return true;
+}
+
 /** Returns true if an ad is currently playing in the YouTube Music player. */
 function isAdPlaying(): boolean {
   const playerBar = document.querySelector('ytmusic-player-bar');
@@ -96,8 +107,8 @@ function isAdPlaying(): boolean {
     }
   }
 
-  // 2. Light-DOM element checks — only elements that are absent during normal
-  //    playback and specific to the ad experience.
+  // 2. Light-DOM element checks — these elements often persist in the DOM
+  //    after the ad ends (just hidden via CSS), so we require visibility.
   const adSelectors = [
     'ytmusic-ad-instream-companion-slot',
     'ytmusic-ad-badge',
@@ -107,8 +118,9 @@ function isAdPlaying(): boolean {
     '.ytp-ad-message-container', // "Video will play after ad"
   ];
   for (const sel of adSelectors) {
-    if (document.querySelector(sel)) {
-      console.warn(`[FreeMiD] isAdPlaying: ${sel}`);
+    const el = document.querySelector(sel);
+    if (el && isVisible(el)) {
+      console.warn(`[FreeMiD] isAdPlaying: ${sel} (visible)`);
       return true;
     }
   }
@@ -116,8 +128,9 @@ function isAdPlaying(): boolean {
   // 3. Shadow-DOM check — companion slot may live inside ytmusic-player-bar's
   //    shadow root and be invisible to document.querySelector.
   const shadowRoot = (playerBar as Element & { shadowRoot?: ShadowRoot | null })?.shadowRoot;
-  if (shadowRoot?.querySelector('ytmusic-ad-instream-companion-slot')) {
-    console.warn('[FreeMiD] isAdPlaying: shadow ytmusic-ad-instream-companion-slot');
+  const shadowSlot = shadowRoot?.querySelector('ytmusic-ad-instream-companion-slot');
+  if (shadowSlot && isVisible(shadowSlot)) {
+    console.warn('[FreeMiD] isAdPlaying: shadow ytmusic-ad-instream-companion-slot (visible)');
     return true;
   }
 
@@ -130,17 +143,6 @@ function isAdPlaying(): boolean {
     console.warn('[FreeMiD] isAdPlaying: non-YTM artwork →', artwork.map((a) => a.src));
     return true;
   }
-
-  // Diagnostic: always visible in console so we can identify the correct
-  // signal when an ad plays without matching any check above.
-  if (playerBar) {
-    const attrs = Array.from(playerBar.attributes)
-      .map((a) => `${a.name}="${a.value}"`)
-      .join(' ');
-    console.debug('[FreeMiD] no-ad: playerBar attrs:', attrs);
-  }
-  const ms = navigator.mediaSession;
-  console.debug('[FreeMiD] no-ad: mediaSession title:', ms?.metadata?.title, 'artwork:', ms?.metadata?.artwork?.map((a) => a.src));
 
   return false;
 }
