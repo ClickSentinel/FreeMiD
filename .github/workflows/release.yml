@@ -14,11 +14,11 @@ jobs:
   build-extension:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: 'lts/*'
           cache: npm
           cache-dependency-path: extension/package-lock.json
 
@@ -31,7 +31,7 @@ jobs:
       - name: Package
         run: cd extension/dist && zip -r ../../freemid-extension.zip .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: freemid-extension
           path: freemid-extension.zip
@@ -46,40 +46,45 @@ jobs:
             artifact: freemid-linux-x86_64
           - os: macos-latest
             artifact: freemid-macos-arm64
-          - os: macos-13
+          - os: macos-latest
             artifact: freemid-macos-x86_64
+            target: x86_64-apple-darwin
           - os: windows-latest
             artifact: freemid-windows-x86_64.exe
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/cache@v4
+      - name: Add cross-compile target
+        if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
+
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.target || 'native' }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build
-        run: cargo build --release
+        run: cargo build --release ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
         env:
           DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
 
       - name: Rename binary
-        run: cp target/release/freemid ${{ matrix.artifact }}
+        run: cp target/${{ matrix.target && format('{0}/', matrix.target) || '' }}release/freemid ${{ matrix.artifact }}
         if: runner.os != 'Windows'
 
       - name: Rename binary (Windows)
         run: copy target\release\freemid.exe ${{ matrix.artifact }}
         if: runner.os == 'Windows'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
@@ -89,9 +94,9 @@ jobs:
     needs: [build-extension, build-native]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
 
@@ -138,7 +143,7 @@ jobs:
     runs-on: ubuntu-latest
     if: vars.CWS_PUBLISH == 'true'
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: freemid-extension
 
