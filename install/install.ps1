@@ -55,10 +55,8 @@ if ($Binary) {
     }
 
     Write-Host "-> Downloading $Artifact from GitHub Releases..."
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $wc = New-Object Net.WebClient
     try {
-        $wc.DownloadFile($DownloadUrl, $BinDst)
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $BinDst -UseBasicParsing
     } catch {
         Write-Error "Download failed: $_"
         exit 1
@@ -71,7 +69,7 @@ if ($Binary) {
     Write-Host "-> Verifying checksum..."
     $ChecksumsUrl = $DownloadUrl -replace [regex]::Escape($Artifact), 'checksums.sha256'
     try {
-        $ChecksumData = $wc.DownloadString($ChecksumsUrl)
+        $ChecksumData = (Invoke-WebRequest -Uri $ChecksumsUrl -UseBasicParsing).Content
     } catch {
         Write-Error "Failed to download checksums.sha256: $_"
         Remove-Item $BinDst -Force -ErrorAction SilentlyContinue
