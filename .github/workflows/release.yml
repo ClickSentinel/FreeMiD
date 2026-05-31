@@ -127,7 +127,7 @@ jobs:
 
       - name: Build installer (Windows only)
         if: runner.os == 'Windows'
-        run: cargo build --release --manifest-path installer/Cargo.toml --target-dir target
+        run: cargo build --release -p freemid-installer
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:

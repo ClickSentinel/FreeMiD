@@ -1,5 +1,5 @@
 [workspace]
-members = ["native-host"]
+members = ["native-host", "installer"]
 resolver = "2"
 
 [workspace.package]
