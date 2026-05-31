@@ -68,6 +68,7 @@ curl -sSL https://github.com/ClickSentinel/FreeMiD/releases/latest/download/inst
 **Windows — graphical installer (recommended):**
 
 Download `freemid-setup.exe` from [Releases](https://github.com/ClickSentinel/FreeMiD/releases) and double-click it. It will:
+
 - Stop any running FreeMiD process
 - Download and verify the native host binary
 - Install to `%LOCALAPPDATA%\FreeMiD\freemid.exe`
