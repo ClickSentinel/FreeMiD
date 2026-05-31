@@ -2,7 +2,7 @@ import { Presence } from '../../presence/Presence';
 
 // Replace with your own Discord Application ID if you want custom artwork.
 // Create a free app at https://discord.com/developers/applications
-const presence = new Presence({ clientId: 'FREEMID_CLIENT_ID', updateInterval: 5 });
+const presence = new Presence({ clientId: import.meta.env.VITE_DISCORD_CLIENT_ID, updateInterval: 5 });
 
 function isWatchPage(): boolean {
   return window.location.pathname === '/watch';

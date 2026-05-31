@@ -7,7 +7,7 @@
  * activity separately with format:'iife' so Rollup inlines all dependencies
  * (including Presence.ts) into a single self-contained file.
  */
-import { build } from 'vite';
+import { build, loadEnv } from 'vite';
 import { resolve, dirname } from 'path';
 import { readdirSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -15,6 +15,9 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root      = resolve(__dirname, '..');
 const srcDir    = resolve(root, 'src/activities');
+
+// Load .env so VITE_* vars are substituted in activity bundles
+const env = loadEnv('production', root, '');
 
 const activities = readdirSync(srcDir).filter((name) =>
   existsSync(resolve(srcDir, name, 'index.ts'))
@@ -44,6 +47,11 @@ for (const name of activities) {
         },
       },
     },
+    define: Object.fromEntries(
+      Object.entries(env)
+        .filter(([k]) => k.startsWith('VITE_'))
+        .map(([k, v]) => [`import.meta.env.${k}`, JSON.stringify(v)])
+    ),
     resolve: {
       alias: { '@': resolve(root, 'src') },
     },

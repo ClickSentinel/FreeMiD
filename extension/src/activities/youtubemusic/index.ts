@@ -1,6 +1,6 @@
 import { Presence } from '../../presence/Presence';
 
-const presence = new Presence({ clientId: 'FREEMID_CLIENT_ID' });
+const presence = new Presence({ clientId: import.meta.env.VITE_DISCORD_CLIENT_ID });
 
 let activeTrackId: string | undefined;
 let playbackAnchorStart: number | undefined;
@@ -196,7 +196,7 @@ presence.on('UpdateData', () => {
   lastPausedState = false;
 
   presence.setActivity({
-    applicationId: 'FREEMID_CLIENT_ID',
+    applicationId: import.meta.env.VITE_DISCORD_CLIENT_ID,
     name: artist || 'YT Music',
     type: 2,
     details: title,
