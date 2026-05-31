@@ -40,8 +40,6 @@ mod win {
             Err(e) => {
                 eprintln!();
                 eprintln!("ERROR: {}", e);
-                eprintln!();
-                eprintln!("If this is a permissions error, try running as administrator.");
             }
         }
 
@@ -66,6 +64,24 @@ mod win {
 
         std::fs::create_dir_all(&install_dir)
             .map_err(|e| format!("Cannot create install directory: {}", e))?;
+
+        // Wait up to 5 s for freemid.exe to release its file handle.
+        if bin_dst.exists() {
+            let mut unlocked = false;
+            for _ in 0..10 {
+                if std::fs::OpenOptions::new().write(true).open(&bin_dst).is_ok() {
+                    unlocked = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            if !unlocked {
+                return Err(format!(
+                    "freemid.exe is still locked after 5 s. \
+                     Close any application using it and re-run the installer."
+                ));
+            }
+        }
 
         let tag = std::env::var("FREEMID_RELEASE_TAG").unwrap_or_else(|_| "latest".to_string());
         let (download_url, checksums_url) = build_urls(&tag);
