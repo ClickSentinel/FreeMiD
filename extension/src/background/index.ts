@@ -247,3 +247,13 @@ function broadcastStatus(): void {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 connectNativeHost();
+
+// Re-inject activity scripts into any tabs that are already open when the
+// service worker starts (e.g. after the extension is reloaded). Without this,
+// existing YouTube / YouTube Music tabs become orphaned and stop sending
+// activity updates until the user manually refreshes the page.
+chrome.tabs.query({}, (tabs) => {
+  for (const tab of tabs) {
+    if (tab.id && tab.url) void handleTabNavigation(tab.id, tab.url);
+  }
+});
