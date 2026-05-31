@@ -84,22 +84,32 @@ function getArtUrl(): string | undefined {
   return undefined;
 }
 
-/** Returns true if an element exists AND is currently rendered (non-zero box). */
+/** Returns true if an element exists AND is currently rendered. */
 function isVisible(el: Element | null): boolean {
   if (!el) return false;
-  const rect = (el as HTMLElement).getBoundingClientRect?.();
-  if (!rect) return false;
-  if (rect.width === 0 && rect.height === 0) return false;
-  const style = window.getComputedStyle(el as HTMLElement);
+  const html = el as HTMLElement;
+  const rect = html.getBoundingClientRect?.();
+  if (!rect || (rect.width === 0 && rect.height === 0)) return false;
+  const style = window.getComputedStyle(html);
   if (style.display === 'none' || style.visibility === 'hidden') return false;
+  if (Number.parseFloat(style.opacity) === 0) return false;
   return true;
 }
 
 /** Returns true if an ad is currently playing in the YouTube Music player. */
 function isAdPlaying(): boolean {
-  const playerBar = document.querySelector('ytmusic-player-bar');
+  // 1. Primary signal — YouTube's #movie_player gains `ad-showing` and
+  //    `ad-interrupting` classes during ads. This is what YouTube's own
+  //    player API checks internally and is the most reliable indicator.
+  const moviePlayer = document.querySelector('#movie_player');
+  if (moviePlayer?.classList.contains('ad-showing') ||
+      moviePlayer?.classList.contains('ad-interrupting')) {
+    console.warn('[FreeMiD] isAdPlaying: #movie_player.ad-showing');
+    return true;
+  }
 
-  // 1. Player-bar attribute check — YTM has used several names across versions.
+  // 2. Player-bar attribute check — YTM has used several names across versions.
+  const playerBar = document.querySelector('ytmusic-player-bar');
   for (const attr of ['has-ad', 'ad-showing', 'ad', 'is-ad']) {
     if (playerBar?.hasAttribute(attr)) {
       console.warn(`[FreeMiD] isAdPlaying: playerBar[${attr}]`);
@@ -107,36 +117,25 @@ function isAdPlaying(): boolean {
     }
   }
 
-  // 2. Light-DOM element checks — these elements often persist in the DOM
-  //    after the ad ends (just hidden via CSS), so we require visibility.
+  // 3. Ad-specific DOM elements that must be VISIBLE (these elements often
+  //    persist in the DOM after the ad ends, hidden via display/opacity).
   const adSelectors = [
     'ytmusic-ad-instream-companion-slot',
     'ytmusic-ad-badge',
-    '.ytp-ad-player-overlay',  // video ad overlay
-    '.ytp-ad-skip-button',     // skippable ad skip button
-    '.ytp-skip-ad-button',     // alternate skip button class
-    '.ytp-ad-message-container', // "Video will play after ad"
+    '.ytp-ad-skip-button',
+    '.ytp-skip-ad-button',
+    '.ytp-ad-message-container',
   ];
   for (const sel of adSelectors) {
     const el = document.querySelector(sel);
-    if (el && isVisible(el)) {
+    if (isVisible(el)) {
       console.warn(`[FreeMiD] isAdPlaying: ${sel} (visible)`);
       return true;
     }
   }
 
-  // 3. Shadow-DOM check — companion slot may live inside ytmusic-player-bar's
-  //    shadow root and be invisible to document.querySelector.
-  const shadowRoot = (playerBar as Element & { shadowRoot?: ShadowRoot | null })?.shadowRoot;
-  const shadowSlot = shadowRoot?.querySelector('ytmusic-ad-instream-companion-slot');
-  if (shadowSlot && isVisible(shadowSlot)) {
-    console.warn('[FreeMiD] isAdPlaying: shadow ytmusic-ad-instream-companion-slot (visible)');
-    return true;
-  }
-
   // 4. mediaSession artwork heuristic — real YTM tracks serve artwork from
   //    YouTube/Google CDNs; instream ads use advertiser CDNs.
-  //    Accepted domains: ytimg.com, googleusercontent.com (both used by YTM).
   const artwork = navigator.mediaSession?.metadata?.artwork ?? [];
   const ytmDomains = ['ytimg.com', 'googleusercontent.com', 'youtube.com'];
   if (artwork.length > 0 && !artwork.some((a) => ytmDomains.some((d) => a.src.includes(d)))) {
