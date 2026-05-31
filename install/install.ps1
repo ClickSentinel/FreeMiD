@@ -66,6 +66,32 @@ if ($Binary) {
 
     $sizeMb = [math]::Round((Get-Item $BinDst).Length / 1MB, 2)
     Write-Host "-> Installed binary: $BinDst ($sizeMb MB)"
+
+    # ── Verify SHA256 checksum ─────────────────────────────────────────────────
+    Write-Host "-> Verifying checksum..."
+    $ChecksumsUrl = $DownloadUrl -replace [regex]::Escape($Artifact), 'checksums.sha256'
+    try {
+        $ChecksumData = $wc.DownloadString($ChecksumsUrl)
+    } catch {
+        Write-Error "Failed to download checksums.sha256: $_"
+        Remove-Item $BinDst -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+    $ExpectedHash = ($ChecksumData -split "`n" |
+        Where-Object { $_ -match "\s+$([regex]::Escape($Artifact))$" } |
+        Select-Object -First 1) -split '\s+' | Select-Object -First 1
+    if (-not $ExpectedHash) {
+        Write-Error "Could not find checksum for $Artifact in checksums.sha256"
+        Remove-Item $BinDst -Force
+        exit 1
+    }
+    $ActualHash = (Get-FileHash $BinDst -Algorithm SHA256).Hash.ToLower()
+    if ($ActualHash -ne $ExpectedHash.ToLower()) {
+        Write-Error "Checksum mismatch!`n  Expected: $ExpectedHash`n  Actual:   $ActualHash"
+        Remove-Item $BinDst -Force
+        exit 1
+    }
+    Write-Host "-> Checksum verified ✓"
 }
 
 # ── Build the manifest JSON ────────────────────────────────────────────────────

@@ -110,7 +110,38 @@ else
 
     chmod 0755 "$BIN_DST"
     echo "→ Installed binary: $BIN_DST ($(du -h "$BIN_DST" | cut -f1))"
-fi
+
+    # ── Verify SHA256 checksum ─────────────────────────────────────────
+    echo "→ Verifying checksum…"
+    CHECKSUMS_URL="${DOWNLOAD_URL%/*}/checksums.sha256"
+    if command -v curl &>/dev/null; then
+        CHECKSUMS=$(curl -fsSL --retry 3 "$CHECKSUMS_URL")
+    else
+        CHECKSUMS=$(wget -q --tries=3 -O- "$CHECKSUMS_URL")
+    fi
+    EXPECTED=$(echo "$CHECKSUMS" | grep -E "\b${ARTIFACT}$" | awk '{print $1}')
+    if [[ -z "$EXPECTED" ]]; then
+        echo "✗ Could not find checksum for $ARTIFACT in checksums.sha256" >&2
+        rm -f "$BIN_DST"
+        exit 1
+    fi
+    if command -v sha256sum &>/dev/null; then
+        ACTUAL=$(sha256sum "$BIN_DST" | awk '{print $1}')
+    elif command -v shasum &>/dev/null; then
+        ACTUAL=$(shasum -a 256 "$BIN_DST" | awk '{print $1}')
+    else
+        echo "✗ No sha256sum or shasum available — cannot verify download." >&2
+        rm -f "$BIN_DST"
+        exit 1
+    fi
+    if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+        echo "✗ Checksum mismatch for $ARTIFACT!" >&2
+        echo "  Expected: $EXPECTED" >&2
+        echo "  Actual:   $ACTUAL" >&2
+        rm -f "$BIN_DST"
+        exit 1
+    fi
+    echo "→ Checksum verified ✓"
 
 # ── Build the native-messaging manifest ───────────────────────────────────
 MANIFEST_JSON=$(cat <<EOF
