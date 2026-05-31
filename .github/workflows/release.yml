@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  # ── Extension (platform-independent) ───────────────────────────────────────
+  # Build the extension zip (platform-independent)
   build-extension:
     runs-on: ubuntu-latest
     steps:
@@ -36,7 +36,7 @@ jobs:
           name: freemid-extension
           path: freemid-extension.zip
 
-  # ── Native host (per-platform) ─────────────────────────────────────────────
+  # Build native host binaries (one job per platform)
   build-native:
     strategy:
       fail-fast: false
@@ -44,9 +44,9 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact: freemid-linux-x86_64
-          - os: macos-latest      # Apple Silicon (arm64)
+          - os: macos-latest
             artifact: freemid-macos-arm64
-          - os: macos-13          # Intel (x86_64)
+          - os: macos-13
             artifact: freemid-macos-x86_64
 
     runs-on: ${{ matrix.os }}
@@ -77,7 +77,7 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
-  # ── GitHub Release ─────────────────────────────────────────────────────────
+  # Create the GitHub release with all artifacts
   release:
     needs: [build-extension, build-native]
     runs-on: ubuntu-latest
@@ -94,6 +94,7 @@ jobs:
           cp artifacts/freemid-linux-x86_64/freemid-linux-x86_64 .
           cp artifacts/freemid-macos-arm64/freemid-macos-arm64 .
           cp artifacts/freemid-macos-x86_64/freemid-macos-x86_64 .
+          chmod +x freemid-linux-x86_64 freemid-macos-arm64 freemid-macos-x86_64
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -103,3 +104,39 @@ jobs:
             freemid-macos-arm64
             freemid-macos-x86_64
             install/install.sh
+
+  # Publish to Chrome Web Store
+  #
+  # Requires these repository secrets:
+  #   CWS_EXTENSION_ID    - stable CWS extension ID (from devconsole)
+  #   CWS_CLIENT_ID       - OAuth2 client ID (Google Cloud Console)
+  #   CWS_CLIENT_SECRET   - OAuth2 client secret
+  #   CWS_REFRESH_TOKEN   - long-lived refresh token (one-time setup)
+  #
+  # And this repository variable:
+  #   CWS_PUBLISH = true  - set this to enable publishing
+  #
+  # First-time setup:
+  #   1. Submit the extension zip manually at https://chrome.google.com/webstore/devconsole
+  #   2. Follow https://github.com/nicedoc/chrome-webstore-upload-cli#getting-credentials
+  #      to generate OAuth credentials and a refresh token.
+  #   3. Add all four values as repository secrets.
+  #   4. Set the CWS_PUBLISH repository variable to 'true'.
+  publish-cws:
+    needs: release
+    runs-on: ubuntu-latest
+    if: vars.CWS_PUBLISH == 'true'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: freemid-extension
+
+      - name: Publish to Chrome Web Store
+        uses: nicedoc/chrome-webstore-upload-cli@v2
+        with:
+          zip-path: freemid-extension.zip
+          extension-id: ${{ secrets.CWS_EXTENSION_ID }}
+          client-id: ${{ secrets.CWS_CLIENT_ID }}
+          client-secret: ${{ secrets.CWS_CLIENT_SECRET }}
+          refresh-token: ${{ secrets.CWS_REFRESH_TOKEN }}
+          publish: true

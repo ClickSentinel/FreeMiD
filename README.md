@@ -59,19 +59,26 @@ YouTube / YouTube Music tab
 
 ### Step 2 — Install the native host
 
-Download the binary for your platform from [Releases](https://github.com/ClickSentinel/FreeMiD/releases) and put it somewhere accessible, then run the installer:
+**One-liner (Linux / macOS):**
 
 ```bash
-# Linux / macOS
-chmod +x install.sh
-./install.sh --extension-id <your-extension-id>
+curl -sSL https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.sh | bash
+```
+
+This downloads the correct binary for your OS/architecture and registers the Native Messaging manifest with every Chromium-family browser found on your machine.
+
+Pass `--extension-id <id>` to use a non-default extension ID:
+
+```bash
+curl -sSL https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.sh | bash -s -- --extension-id <your-id>
 ```
 
 The installer:
-- Copies the binary to `~/.local/bin/freemid`
-- Writes a Native Messaging manifest to every Chromium-family browser config directory it finds on your machine
+- Detects your OS and CPU architecture, downloads the matching binary from GitHub Releases
+- Installs it to `~/.local/bin/freemid` (Linux) or `~/.local/bin/freemid` (macOS)
+- Writes a Native Messaging manifest to every Chromium-family browser config directory it finds
 
-> **macOS:** The installer targets `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` (and Chromium, Brave, Vivaldi equivalents).
+> **macOS:** Manifest paths target `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` (and Chromium, Brave, Vivaldi equivalents).
 
 ### Step 3 — Restart your browser
 
