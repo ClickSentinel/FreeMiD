@@ -91,22 +91,24 @@ function isAdPlaying(): boolean {
   // 1. Player-bar attribute check — YTM has used several names across versions.
   for (const attr of ['has-ad', 'ad-showing', 'ad', 'is-ad']) {
     if (playerBar?.hasAttribute(attr)) {
-      console.debug(`[FreeMiD] isAdPlaying: playerBar[${attr}]`);
+      console.warn(`[FreeMiD] isAdPlaying: playerBar[${attr}]`);
       return true;
     }
   }
 
-  // 2. Light-DOM element checks.
+  // 2. Light-DOM element checks — only elements that are absent during normal
+  //    playback and specific to the ad experience.
   const adSelectors = [
     'ytmusic-ad-instream-companion-slot',
     'ytmusic-ad-badge',
-    '.ytp-ad-player-overlay',    // video ad overlay
-    '.ytp-ad-skip-button',       // skippable ad skip button
-    '.ytp-skip-ad-button',       // alternate skip button class
+    '.ytp-ad-player-overlay',  // video ad overlay
+    '.ytp-ad-skip-button',     // skippable ad skip button
+    '.ytp-skip-ad-button',     // alternate skip button class
+    '.ytp-ad-message-container', // "Video will play after ad"
   ];
   for (const sel of adSelectors) {
     if (document.querySelector(sel)) {
-      console.debug(`[FreeMiD] isAdPlaying: ${sel}`);
+      console.warn(`[FreeMiD] isAdPlaying: ${sel}`);
       return true;
     }
   }
@@ -115,68 +117,30 @@ function isAdPlaying(): boolean {
   //    shadow root and be invisible to document.querySelector.
   const shadowRoot = (playerBar as Element & { shadowRoot?: ShadowRoot | null })?.shadowRoot;
   if (shadowRoot?.querySelector('ytmusic-ad-instream-companion-slot')) {
-    console.debug('[FreeMiD] isAdPlaying: shadow ytmusic-ad-instream-companion-slot');
+    console.warn('[FreeMiD] isAdPlaying: shadow ytmusic-ad-instream-companion-slot');
     return true;
   }
 
-  // 4. "Sponsored" label — shown in the player bar caption during video ads.
-  const caption = document.querySelector<HTMLElement>(
-    'ytmusic-player-bar .caption, ytmusic-player-bar .subtitle, ytmusic-player-bar [slot="caption"]'
-  )?.textContent?.toLowerCase() ?? '';
-  if (caption.includes('sponsor')) {
-    console.debug('[FreeMiD] isAdPlaying: sponsored caption →', caption);
-    return true;
-  }
-
-  // 5. "Video will play after ad" overlay — specific to the video player,
-  //    only present during an actual ad. .video-ads is always in the DOM so
-  //    we require it to be non-empty. .ytmusic-mealbar-promo-renderer is a
-  //    Premium upsell banner that appears during normal playback — excluded.
-  if (document.querySelector('.ytp-ad-message-container')) {
-    console.debug('[FreeMiD] isAdPlaying: .ytp-ad-message-container');
-    return true;
-  }
-  const videoAds = document.querySelector('.video-ads');
-  if (videoAds && videoAds.children.length > 0) {
-    console.debug('[FreeMiD] isAdPlaying: .video-ads non-empty');
-    return true;
-  }
-
-  // 6. Short bar-timer duration — real songs are at least 60 s; ad countdowns
-  //    are typically ≤ 30 s and the time-info text itself changes format.
-  //    We read the raw text here rather than calling getPlayerBarTimes() to
-  //    avoid circular dependency assumptions.
-  const timeNode = document.querySelector<HTMLElement>(
-    'ytmusic-player-bar .time-info, #time-info, ytmusic-player-bar span.time-info'
-  );
-  const rawTime = timeNode?.textContent?.trim() ?? '';
-  const durMatch = rawTime.match(/\/\s*(\d+):(\d+)/);
-  if (durMatch) {
-    const durSec = Number(durMatch[1]) * 60 + Number(durMatch[2]);
-    if (durSec > 0 && durSec <= 30) {
-      console.debug('[FreeMiD] isAdPlaying: short duration', durSec, 'from', rawTime);
-      return true;
-    }
-  }
-
-  // 7. mediaSession artwork heuristic — every real YTM track has i.ytimg.com
-  //    artwork; instream ads surface artwork from advertiser CDNs (or none).
+  // 4. mediaSession artwork heuristic — real YTM tracks serve artwork from
+  //    YouTube/Google CDNs; instream ads use advertiser CDNs.
+  //    Accepted domains: ytimg.com, googleusercontent.com (both used by YTM).
   const artwork = navigator.mediaSession?.metadata?.artwork ?? [];
-  if (artwork.length > 0 && !artwork.some((a) => a.src.includes('ytimg.com'))) {
-    console.debug('[FreeMiD] isAdPlaying: non-ytimg artwork →', artwork.map((a) => a.src));
+  const ytmDomains = ['ytimg.com', 'googleusercontent.com', 'youtube.com'];
+  if (artwork.length > 0 && !artwork.some((a) => ytmDomains.some((d) => a.src.includes(d)))) {
+    console.warn('[FreeMiD] isAdPlaying: non-YTM artwork →', artwork.map((a) => a.src));
     return true;
   }
 
-  // Diagnostic: log what we see so we can identify the correct selector when
-  // an ad plays and none of the above fired.
+  // Diagnostic: always visible in console so we can identify the correct
+  // signal when an ad plays without matching any check above.
   if (playerBar) {
     const attrs = Array.from(playerBar.attributes)
       .map((a) => `${a.name}="${a.value}"`)
       .join(' ');
-    console.debug('[FreeMiD] playerBar attrs:', attrs);
+    console.debug('[FreeMiD] no-ad: playerBar attrs:', attrs);
   }
   const ms = navigator.mediaSession;
-  console.debug('[FreeMiD] mediaSession:', ms?.metadata?.title, ms?.metadata?.artwork?.map((a) => a.src));
+  console.debug('[FreeMiD] no-ad: mediaSession title:', ms?.metadata?.title, 'artwork:', ms?.metadata?.artwork?.map((a) => a.src));
 
   return false;
 }
