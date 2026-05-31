@@ -119,7 +119,42 @@ function isAdPlaying(): boolean {
     return true;
   }
 
-  // 4. mediaSession artwork heuristic — every real YTM track has i.ytimg.com
+  // 4. "Sponsored" label — shown in the player bar caption during video ads.
+  const caption = document.querySelector<HTMLElement>(
+    'ytmusic-player-bar .caption, ytmusic-player-bar .subtitle, ytmusic-player-bar [slot="caption"]'
+  )?.textContent?.toLowerCase() ?? '';
+  if (caption.includes('sponsor')) {
+    console.debug('[FreeMiD] isAdPlaying: sponsored caption →', caption);
+    return true;
+  }
+
+  // 5. "Video will play after ad" message — rendered in the player area.
+  const adMsg = document.querySelector<HTMLElement>(
+    '.ytp-ad-message-container, .ytmusic-mealbar-promo-renderer, .video-ads'
+  );
+  if (adMsg) {
+    console.debug('[FreeMiD] isAdPlaying: ad message container');
+    return true;
+  }
+
+  // 6. Short bar-timer duration — real songs are at least 60 s; ad countdowns
+  //    are typically ≤ 30 s and the time-info text itself changes format.
+  //    We read the raw text here rather than calling getPlayerBarTimes() to
+  //    avoid circular dependency assumptions.
+  const timeNode = document.querySelector<HTMLElement>(
+    'ytmusic-player-bar .time-info, #time-info, ytmusic-player-bar span.time-info'
+  );
+  const rawTime = timeNode?.textContent?.trim() ?? '';
+  const durMatch = rawTime.match(/\/\s*(\d+):(\d+)/);
+  if (durMatch) {
+    const durSec = Number(durMatch[1]) * 60 + Number(durMatch[2]);
+    if (durSec > 0 && durSec <= 30) {
+      console.debug('[FreeMiD] isAdPlaying: short duration', durSec, 'from', rawTime);
+      return true;
+    }
+  }
+
+  // 7. mediaSession artwork heuristic — every real YTM track has i.ytimg.com
   //    artwork; instream ads surface artwork from advertiser CDNs (or none).
   const artwork = navigator.mediaSession?.metadata?.artwork ?? [];
   if (artwork.length > 0 && !artwork.some((a) => a.src.includes('ytimg.com'))) {
