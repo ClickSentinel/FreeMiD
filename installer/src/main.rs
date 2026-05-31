@@ -100,8 +100,9 @@ mod win {
         println!("      Downloaded ({:.2} MB)", size_mb);
 
         println!("[3/5] Verifying SHA256 checksum...");
+        // .Content is byte[] on PS5 when Content-Type is octet-stream; decode explicitly.
         let checksums_raw = ps_output(&format!(
-            "(Invoke-WebRequest -Uri '{}' -UseBasicParsing).Content",
+            "[System.Text.Encoding]::UTF8.GetString((Invoke-WebRequest -Uri '{}' -UseBasicParsing).Content)",
             checksums_url
         ))?;
 
