@@ -59,26 +59,37 @@ YouTube / YouTube Music tab
 
 ### Step 2 — Install the native host
 
-**One-liner (Linux / macOS):**
+**Linux / macOS:**
 
 ```bash
 curl -sSL https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.sh | bash
 ```
 
-This downloads the correct binary for your OS/architecture and registers the Native Messaging manifest with every Chromium-family browser found on your machine.
+**Windows** (PowerShell — no admin required):
 
-Pass `--extension-id <id>` to use a non-default extension ID:
-
-```bash
-curl -sSL https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.sh | bash -s -- --extension-id <your-id>
+```powershell
+irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps1 | iex
 ```
 
-The installer:
-- Detects your OS and CPU architecture, downloads the matching binary from GitHub Releases
-- Installs it to `~/.local/bin/freemid` (Linux) or `~/.local/bin/freemid` (macOS)
-- Writes a Native Messaging manifest to every Chromium-family browser config directory it finds
+Both installers detect your platform, download the correct binary from GitHub Releases, and register the Native Messaging manifest with every Chromium-family browser found on your machine.
 
-> **macOS:** Manifest paths target `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` (and Chromium, Brave, Vivaldi equivalents).
+Pass `--extension-id` / `$env:FREEMID_EXTENSION_ID` to use a non-default extension ID:
+
+```bash
+# Linux / macOS
+curl -sSL .../install.sh | bash -s -- --extension-id <your-id>
+```
+
+```powershell
+# Windows
+$env:FREEMID_EXTENSION_ID = "<your-id>"; irm .../install.ps1 | iex
+```
+
+| Platform | Binary location | Manifest registration |
+| --- | --- | --- |
+| Linux | `~/.local/bin/freemid` | `~/.config/<browser>/NativeMessagingHosts/` |
+| macOS | `~/.local/bin/freemid` | `~/Library/Application Support/<browser>/NativeMessagingHosts/` |
+| Windows | `%LOCALAPPDATA%\FreeMiD\freemid.exe` | `HKCU\Software\<browser>\NativeMessagingHosts\` |
 
 ### Step 3 — Restart your browser
 

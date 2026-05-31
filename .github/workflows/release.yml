@@ -48,6 +48,8 @@ jobs:
             artifact: freemid-macos-arm64
           - os: macos-13
             artifact: freemid-macos-x86_64
+          - os: windows-latest
+            artifact: freemid-windows-x86_64.exe
 
     runs-on: ${{ matrix.os }}
 
@@ -71,6 +73,11 @@ jobs:
 
       - name: Rename binary
         run: cp target/release/freemid ${{ matrix.artifact }}
+        if: runner.os != 'Windows'
+
+      - name: Rename binary (Windows)
+        run: copy target\release\freemid.exe ${{ matrix.artifact }}
+        if: runner.os == 'Windows'
 
       - uses: actions/upload-artifact@v4
         with:
@@ -94,16 +101,20 @@ jobs:
           cp artifacts/freemid-linux-x86_64/freemid-linux-x86_64 .
           cp artifacts/freemid-macos-arm64/freemid-macos-arm64 .
           cp artifacts/freemid-macos-x86_64/freemid-macos-x86_64 .
+          cp artifacts/freemid-windows-x86_64.exe/freemid-windows-x86_64.exe .
           chmod +x freemid-linux-x86_64 freemid-macos-arm64 freemid-macos-x86_64
 
       - uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             freemid-extension.zip
             freemid-linux-x86_64
             freemid-macos-arm64
             freemid-macos-x86_64
+            freemid-windows-x86_64.exe
             install/install.sh
+            install/install.ps1
 
   # Publish to Chrome Web Store
   #
@@ -132,9 +143,9 @@ jobs:
           name: freemid-extension
 
       - name: Publish to Chrome Web Store
-        uses: nicedoc/chrome-webstore-upload-cli@v2
+        uses: mnao305/chrome-extension-upload@v6.0.0
         with:
-          zip-path: freemid-extension.zip
+          file-path: freemid-extension.zip
           extension-id: ${{ secrets.CWS_EXTENSION_ID }}
           client-id: ${{ secrets.CWS_CLIENT_ID }}
           client-secret: ${{ secrets.CWS_CLIENT_SECRET }}

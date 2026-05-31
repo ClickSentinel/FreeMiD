@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FreeMiD</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        width: 280px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: #1e1f22;
+        color: #dbdee1;
+        font-size: 13px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 16px 12px;
+        border-bottom: 1px solid #2b2d31;
+      }
+
+      header .logo {
+        width: 28px;
+        height: 28px;
+        background: #5865f2;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      header h1 { font-size: 15px; font-weight: 700; color: #f2f3f5; }
+      header p  { font-size: 11px; color: #949ba4; }
+
+      .status-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        background: #2b2d31;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #ed4245;
+        flex-shrink: 0;
+        transition: background 0.3s;
+      }
+      .dot.connected   { background: #23a55a; }
+      .dot.connecting  { background: #f0b232; animation: pulse 1.2s infinite; }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.4; }
+      }
+
+      #status-text { color: #b5bac1; }
+
+      .activity-card {
+        padding: 12px 16px;
+        border-bottom: 1px solid #2b2d31;
+      }
+
+      .activity-card .label {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #949ba4;
+        margin-bottom: 4px;
+      }
+
+      .activity-card .value {
+        font-size: 13px;
+        color: #f2f3f5;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .empty {
+        padding: 20px 16px;
+        color: #949ba4;
+        text-align: center;
+        font-size: 12px;
+      }
+
+      .auth-prompt {
+        padding: 14px 16px;
+        border-bottom: 1px solid #2b2d31;
+        text-align: center;
+      }
+
+      .auth-prompt p {
+        font-size: 12px;
+        color: #949ba4;
+        margin-bottom: 10px;
+      }
+
+      .btn-auth {
+        background: #5865f2;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        padding: 8px 16px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        width: 100%;
+      }
+      .btn-auth:hover  { background: #4752c4; }
+      .btn-auth:active { background: #3c45a5; }
+      .btn-auth:disabled { background: #3c3f45; color: #72767d; cursor: not-allowed; }
+
+      footer {
+        padding: 10px 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-top: 1px solid #2b2d31;
+      }
+
+      footer a {
+        color: #5865f2;
+        text-decoration: none;
+        font-size: 11px;
+      }
+      footer a:hover { text-decoration: underline; }
+
+      .version { color: #4e5058; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="logo"></div>
+      <div>
+        <h1>FreeMiD</h1>
+        <p>Open-source Discord Rich Presence</p>
+      </div>
+    </header>
+
+    <div class="status-bar">
+      <div class="dot connecting" id="dot"></div>
+      <span id="status-text">Connecting to Discord…</span>
+    </div>
+
+    <div class="auth-prompt" id="auth-prompt" style="display:none">
+      <p>Authorize FreeMiD to update your Discord status.</p>
+      <button class="btn-auth" id="auth-btn">Authorize with Discord</button>
+    </div>
+
+    <div id="activity-section">
+      <div class="empty" id="no-activity">No activity detected on this page.</div>
+    </div>
+
+    <footer>
+      <a href="https://github.com/ClickSentinel/freemid" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <span class="version">v0.2.0</span>
+    </footer>
+
+    <script src="index.js" type="module"></script>
+  </body>
+</html>

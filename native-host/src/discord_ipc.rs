@@ -1,18 +1,24 @@
-//! Discord IPC client (synchronous, Linux Unix-socket only).
+//! Discord IPC client (synchronous, cross-platform).
 //!
-//! Connects to Discord's local IPC socket (`$XDG_RUNTIME_DIR/discord-ipc-N`,
-//! also searches Flatpak app-sandboxed locations) and speaks the standard
-//! framed protocol:
-//!     u32 LE opcode | u32 LE length | UTF-8 JSON payload
+//! Connects to Discord's local IPC socket and speaks the standard framed
+//! protocol:  u32 LE opcode | u32 LE length | UTF-8 JSON payload
+//!
+//! Platform socket locations:
+//!   Linux  — `$XDG_RUNTIME_DIR/discord-ipc-N` (also Flatpak paths)
+//!   macOS  — `$TMPDIR/discord-ipc-N`
+//!   Windows — `\\.\pipe\discord-ipc-N`
 //!
 //! No async runtime — single connection, blocking I/O is fine.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 const OPCODE_HANDSHAKE: u32 = 0;
 const OPCODE_FRAME: u32 = 1;
@@ -123,14 +129,54 @@ impl From<serde_json::Error> for IpcError {
 
 pub type IpcResult<T> = Result<T, IpcError>;
 
-// ── Socket discovery ───────────────────────────────────────────────────────────
+// ── Platform stream abstraction ────────────────────────────────────────────────
 
-fn find_socket() -> Option<PathBuf> {
-    let mut bases: Vec<PathBuf> = Vec::new();
+/// Wraps the platform-specific IPC stream in a uniform Read+Write handle.
+/// On Unix this is a UnixStream; on Windows a named pipe opened as a File.
+enum IpcStream {
+    #[cfg(unix)]
+    Unix(UnixStream),
+    #[cfg(windows)]
+    NamedPipe(std::fs::File),
+}
 
+impl Read for IpcStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            #[cfg(unix)]
+            IpcStream::Unix(s) => s.read(buf),
+            #[cfg(windows)]
+            IpcStream::NamedPipe(f) => f.read(buf),
+        }
+    }
+}
+
+impl Write for IpcStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            #[cfg(unix)]
+            IpcStream::Unix(s) => s.write(buf),
+            #[cfg(windows)]
+            IpcStream::NamedPipe(f) => f.write(buf),
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            #[cfg(unix)]
+            IpcStream::Unix(s) => s.flush(),
+            #[cfg(windows)]
+            IpcStream::NamedPipe(f) => f.flush(),
+        }
+    }
+}
+
+// ── Socket / pipe discovery ────────────────────────────────────────────────────
+
+fn open_ipc_stream() -> Option<IpcStream> {
     // ── Linux ──────────────────────────────────────────────────────────────
     #[cfg(target_os = "linux")]
     {
+        let mut bases: Vec<PathBuf> = Vec::new();
         if let Ok(r) = std::env::var("XDG_RUNTIME_DIR") {
             let r = PathBuf::from(r);
             // Flatpak Discord places the socket under app/<app-id>/
@@ -139,7 +185,7 @@ fn find_socket() -> Option<PathBuf> {
             bases.push(r.join("app").join("com.discordapp.DiscordPTB"));
             bases.push(r);
         }
-        // Allow /tmp search on Linux only when explicitly opted in
+        // Allow /tmp search only when explicitly opted in
         // (avoids TOCTOU with world-writable directories).
         if std::env::var("FREEMID_ALLOW_TMP_IPC").as_deref() == Ok("1") {
             for var in &["TMPDIR", "TMP", "TEMP"] {
@@ -149,10 +195,18 @@ fn find_socket() -> Option<PathBuf> {
             }
             bases.push(PathBuf::from("/tmp"));
         }
+        for base in &bases {
+            for n in 0u8..10 {
+                let path = base.join(format!("discord-ipc-{}", n));
+                if let Ok(s) = UnixStream::connect(&path) {
+                    return Some(IpcStream::Unix(s));
+                }
+            }
+        }
     }
 
     // ── macOS ──────────────────────────────────────────────────────────────
-    // Discord on macOS places the socket in $TMPDIR (always set by launchd,
+    // Discord on macOS places the socket in $TMPDIR (set by launchd,
     // e.g. /var/folders/xx/.../T/). Fall back to /tmp if unset.
     #[cfg(target_os = "macos")]
     {
@@ -160,40 +214,61 @@ fn find_socket() -> Option<PathBuf> {
             .or_else(|_| std::env::var("TMP"))
             .or_else(|_| std::env::var("TEMP"))
             .unwrap_or_else(|_| "/tmp".to_string());
-        bases.push(PathBuf::from(tmpdir));
-        bases.push(PathBuf::from("/tmp"));
-    }
-
-    for base in &bases {
-        for n in 0u8..10 {
-            let path = base.join(format!("discord-ipc-{}", n));
-            if path.exists() {
-                return Some(path);
+        for base in &[tmpdir.as_str(), "/tmp"] {
+            for n in 0u8..10 {
+                let path = PathBuf::from(base).join(format!("discord-ipc-{}", n));
+                if let Ok(s) = UnixStream::connect(&path) {
+                    return Some(IpcStream::Unix(s));
+                }
             }
         }
     }
+
+    // ── Windows ────────────────────────────────────────────────────────────
+    // Discord on Windows uses named pipes: \\.\pipe\discord-ipc-N
+    // Open with read+write access using standard File I/O (no extra crates).
+    #[cfg(windows)]
+    {
+        use std::fs::OpenOptions;
+        for n in 0u8..10 {
+            let path = format!("\\\\.\\pipe\\discord-ipc-{}", n);
+            if let Ok(f) = OpenOptions::new().read(true).write(true).open(&path) {
+                return Some(IpcStream::NamedPipe(f));
+            }
+        }
+    }
+
     None
 }
 
 // ── IPC client ─────────────────────────────────────────────────────────────────
 
 pub struct DiscordIpc {
-    stream: UnixStream,
+    stream: IpcStream,
 }
 
 impl DiscordIpc {
-    /// Connect to the Discord IPC socket and complete the handshake.
+    /// Connect to the Discord IPC socket/pipe and complete the handshake.
     pub fn connect_and_handshake() -> IpcResult<Self> {
         if CLIENT_ID.is_empty() {
             return Err(IpcError::Protocol(
                 "DISCORD_CLIENT_ID was not set at build time".into(),
             ));
         }
-        let path = find_socket().ok_or(IpcError::SocketNotFound)?;
-        let stream = UnixStream::connect(&path)?;
-        // Reasonable read timeout so we don't hang forever if Discord misbehaves.
-        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        let stream = open_ipc_stream().ok_or(IpcError::SocketNotFound)?;
+
+        // Set I/O timeouts on Unix (named pipes on Windows don't support
+        // set_read_timeout via std::fs::File — they respect the pipe's
+        // own timeout configured by Discord, which is fine).
+        #[cfg(unix)]
+        {
+            let IpcStream::Unix(ref s) = stream;
+            s.set_read_timeout(Some(Duration::from_secs(5)))?;
+            s.set_write_timeout(Some(Duration::from_secs(5)))?;
+        }
+        // Suppress unused-import warning on Windows where Duration isn't used.
+        #[cfg(windows)]
+        let _ = Duration::from_secs(0);
 
         let mut ipc = Self { stream };
         ipc.handshake()?;
