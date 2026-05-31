@@ -16,7 +16,12 @@ function parseClock(text: string): number | undefined {
 }
 
 function getPlayerBarTimes(): { current?: number; duration?: number } {
-  const timeNode = document.querySelector<HTMLElement>('ytmusic-player-bar .time-info');
+  // Try several selectors — YouTube Music has changed its DOM structure over time.
+  const timeNode =
+    document.querySelector<HTMLElement>('ytmusic-player-bar .time-info') ??
+    document.querySelector<HTMLElement>('#time-info') ??
+    document.querySelector<HTMLElement>('ytmusic-player-bar span.time-info') ??
+    document.querySelector<HTMLElement>('.ytmusic-player-bar .time-info');
   const raw = timeNode?.textContent?.trim();
   if (!raw) return {};
 
@@ -127,11 +132,12 @@ presence.on('UpdateData', () => {
   const videoDuration = video ? video.duration : NaN;
   const videoCurrent = video ? Math.floor(video.currentTime) : 0;
 
-  // YouTube Music uses continuous streaming — video.currentTime accumulates
-  // indefinitely across tracks rather than resetting per song. barTimes.current
-  // (scraped from the player bar display) correctly reflects position within
-  // the current track and is used as the canonical source for all anchor math.
-  const current = barTimes.current ?? (Number.isFinite(videoCurrent) && videoCurrent >= 0 ? videoCurrent : 0);
+  // YouTube Music streams continuously — video.currentTime accumulates across
+  // tracks and must NEVER be used for anchor math. barTimes.current (the
+  // player-bar display) is the only reliable per-song position. If the
+  // selector misses, default to 0 rather than falling back to video.currentTime.
+  const current = barTimes.current ?? 0;
+  console.debug('[FreeMiD] barTimes:', barTimes, 'video.currentTime:', video?.currentTime?.toFixed(1));
 
   const artUrl = getArtUrl();
   const videoId = getVideoId();
@@ -174,12 +180,12 @@ presence.on('UpdateData', () => {
       pausedAtWallClock = undefined;
     }
 
-    const expectedCurrent = now - playbackAnchorStart;
-    if (!trackJustChanged && Math.abs(expectedCurrent - current) > 3) {
-      // Re-anchor on large drift (seek or stream discontinuity).
-      // Skipped on the same tick as a track change to avoid barTimes
-      // stale reads on very short update intervals.
-      playbackAnchorStart = now - current;
+    if (!trackJustChanged && barTimes.current !== undefined) {
+      const expectedCurrent = now - playbackAnchorStart;
+      if (Math.abs(expectedCurrent - current) > 3) {
+        // Re-anchor on large drift (seek or stream discontinuity).
+        playbackAnchorStart = now - current;
+      }
     }
   }
 
