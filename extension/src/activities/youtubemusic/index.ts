@@ -128,12 +128,17 @@ function isAdPlaying(): boolean {
     return true;
   }
 
-  // 5. "Video will play after ad" message — rendered in the player area.
-  const adMsg = document.querySelector<HTMLElement>(
-    '.ytp-ad-message-container, .ytmusic-mealbar-promo-renderer, .video-ads'
-  );
-  if (adMsg) {
-    console.debug('[FreeMiD] isAdPlaying: ad message container');
+  // 5. "Video will play after ad" overlay — specific to the video player,
+  //    only present during an actual ad. .video-ads is always in the DOM so
+  //    we require it to be non-empty. .ytmusic-mealbar-promo-renderer is a
+  //    Premium upsell banner that appears during normal playback — excluded.
+  if (document.querySelector('.ytp-ad-message-container')) {
+    console.debug('[FreeMiD] isAdPlaying: .ytp-ad-message-container');
+    return true;
+  }
+  const videoAds = document.querySelector('.video-ads');
+  if (videoAds && videoAds.children.length > 0) {
+    console.debug('[FreeMiD] isAdPlaying: .video-ads non-empty');
     return true;
   }
 
