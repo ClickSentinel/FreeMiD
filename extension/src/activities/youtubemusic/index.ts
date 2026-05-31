@@ -84,7 +84,25 @@ function getArtUrl(): string | undefined {
   return undefined;
 }
 
+/** Returns true if an ad is currently playing in the YouTube Music player. */
+function isAdPlaying(): boolean {
+  // 1. Player bar gains a [has-ad] attribute during instream ads
+  if (document.querySelector('ytmusic-player-bar[has-ad]')) return true;
+  // 2. Instream ad companion slot is mounted
+  if (document.querySelector('ytmusic-ad-instream-companion-slot')) return true;
+  // 3. The embedded video player shows its ad overlay
+  if (document.querySelector('.ytp-ad-player-overlay')) return true;
+  return false;
+}
+
 presence.on('UpdateData', () => {
+  // Suppress presence entirely during ads — mediaSession is populated by the
+  // ad, not the track, so we cannot trust title/artist at this point.
+  if (isAdPlaying()) {
+    presence.clearActivity();
+    return;
+  }
+
   const ms = navigator.mediaSession;
   const video = document.querySelector<HTMLVideoElement>('.video-stream, video');
 

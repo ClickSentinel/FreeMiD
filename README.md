@@ -43,7 +43,7 @@ YouTube / YouTube Music tab
 | Linux (x86_64) | `freemid-linux-x86_64` | ✅ Supported |
 | macOS (Apple Silicon) | `freemid-macos-arm64` | ✅ Supported |
 | macOS (Intel) | `freemid-macos-x86_64` | ✅ Supported |
-| Windows | — | 🗓 Planned |
+| Windows | `freemid-setup.exe` / `freemid-windows-x86_64.exe` | ✅ Supported |
 
 ---
 
@@ -65,23 +65,29 @@ YouTube / YouTube Music tab
 curl -sSL https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.sh | bash
 ```
 
-**Windows** (PowerShell — no admin required):
+**Windows — graphical installer (recommended):**
+
+Download `freemid-setup.exe` from [Releases](https://github.com/ClickSentinel/FreeMiD/releases) and double-click it. It will:
+- Stop any running FreeMiD process
+- Download and verify the native host binary
+- Install to `%LOCALAPPDATA%\FreeMiD\freemid.exe`
+- Register the native messaging host for Chrome and Edge
+
+No admin rights required.
+
+**Windows — command line:**
 
 ```powershell
+# Run in PowerShell (no admin required)
 irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps1 | iex
 ```
 
-Both installers detect your platform, download the correct binary from GitHub Releases, and register the Native Messaging manifest with every Chromium-family browser found on your machine.
-
-Pass `--extension-id` / `$env:FREEMID_EXTENSION_ID` to use a non-default extension ID:
-
-```bash
-# Linux / macOS
-curl -sSL .../install.sh | bash -s -- --extension-id <your-id>
-```
+To use a custom extension ID:
 
 ```powershell
-# Windows
+$env:FREEMID_EXTENSION_ID = "<your-id>"
+.\freemid-setup.exe
+# or
 $env:FREEMID_EXTENSION_ID = "<your-id>"; irm .../install.ps1 | iex
 ```
 
