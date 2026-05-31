@@ -6,11 +6,6 @@ let activeTrackId: string | undefined;
 let playbackAnchorStart: number | undefined;
 let pausedAtWallClock: number | undefined;
 let lastPausedState: boolean | undefined;
-// Set to the epoch-second timestamp of a mid-session track change.
-// Drift correction is suppressed for DRIFT_GRACE_SECONDS after a change
-// so we don't re-anchor with the previous song's stale currentTime.
-let trackChangedAt: number | undefined;
-const DRIFT_GRACE_SECONDS = 3;
 
 function parseClock(text: string): number | undefined {
   const parts = text.trim().split(':').map((p) => Number.parseInt(p, 10));
@@ -132,9 +127,11 @@ presence.on('UpdateData', () => {
   const videoDuration = video ? video.duration : NaN;
   const videoCurrent = video ? Math.floor(video.currentTime) : 0;
 
-  const current = Number.isFinite(videoCurrent) && videoCurrent >= 0
-    ? videoCurrent
-    : (barTimes.current ?? 0);
+  // YouTube Music uses continuous streaming — video.currentTime accumulates
+  // indefinitely across tracks rather than resetting per song. barTimes.current
+  // (scraped from the player bar display) correctly reflects position within
+  // the current track and is used as the canonical source for all anchor math.
+  const current = barTimes.current ?? (Number.isFinite(videoCurrent) && videoCurrent >= 0 ? videoCurrent : 0);
 
   const artUrl = getArtUrl();
   const videoId = getVideoId();
@@ -145,30 +142,15 @@ presence.on('UpdateData', () => {
   const trackId = videoId || `${title}::${artist || ''}`;
 
   let trackJustChanged = false;
-  if (trackId !== activeTrackId) {
-    const isFirstInjection = activeTrackId === undefined;
+  if (trackId !== activeTrackId || playbackAnchorStart === undefined) {
     activeTrackId = trackId;
     pausedAtWallClock = undefined;
     trackJustChanged = true;
-
-    if (isFirstInjection) {
-      // Fresh script injection (initial load or extension reload):
-      // video.currentTime is accurate — anchor directly so Discord shows
-      // the correct elapsed time immediately.
-      playbackAnchorStart = now - current;
-      trackChangedAt = undefined;
-    } else {
-      // Track changed mid-session: video.currentTime may still reflect the
-      // previous song's final position (mediaSession updates before the
-      // video element resets). Anchor at 'now' (assume new track starts at 0)
-      // and suppress drift correction for a few seconds to let currentTime
-      // settle, then the drift check will re-anchor to the true position.
-      playbackAnchorStart = now;
-      trackChangedAt = now;
-    }
-  } else if (playbackAnchorStart === undefined) {
+    // barTimes.current correctly shows position within the current song for
+    // both fresh injection and mid-session track changes, so we anchor directly.
+    // The update interval (~10 s) means we detect changes well after barTimes
+    // has already updated to the new song's position.
     playbackAnchorStart = now - current;
-    trackChangedAt = undefined;
   }
 
   // On a track change, only trust video.duration — barTimes still shows the
@@ -192,18 +174,12 @@ presence.on('UpdateData', () => {
       pausedAtWallClock = undefined;
     }
 
-    // Suppress drift correction for a few seconds after a mid-session track
-    // change so stale currentTime can't corrupt the new anchor. After the
-    // grace period, drift correction re-anchors as normal (handles seeks too).
-    const inGracePeriod =
-      trackChangedAt !== undefined && now - trackChangedAt < DRIFT_GRACE_SECONDS;
-    if (!inGracePeriod) {
-      if (trackChangedAt !== undefined) trackChangedAt = undefined;
-      const expectedCurrent = now - playbackAnchorStart;
-      if (Math.abs(expectedCurrent - current) > 3) {
-        // Re-anchor on large drift (seek/skip/new stream segment).
-        playbackAnchorStart = now - current;
-      }
+    const expectedCurrent = now - playbackAnchorStart;
+    if (!trackJustChanged && Math.abs(expectedCurrent - current) > 3) {
+      // Re-anchor on large drift (seek or stream discontinuity).
+      // Skipped on the same tick as a track change to avoid barTimes
+      // stale reads on very short update intervals.
+      playbackAnchorStart = now - current;
     }
   }
 
