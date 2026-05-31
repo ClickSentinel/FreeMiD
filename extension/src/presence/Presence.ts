@@ -69,6 +69,17 @@ export class Presence {
 
   on(event: 'UpdateData', callback: () => void | Promise<void>): void {
     if (event !== 'UpdateData') return;
+
+    // Guard against duplicate instances in the same tab. The MV3 service
+    // worker restarts frequently and clears activeActivityTabs each time,
+    // so it may re-inject this script into a tab that is already running it.
+    // globalThis persists across injections in the same isolated content
+    // script world, so we can use it to stop the previous interval before
+    // starting a new one — preventing two instances from racing each other
+    // with conflicting anchor state.
+    const GUARD_KEY = '__freemid_presence_interval';
+    const prevId = (globalThis as Record<string, unknown>)[GUARD_KEY] as ReturnType<typeof setInterval> | undefined;
+    if (prevId !== undefined) clearInterval(prevId);
     if (this.intervalId) clearInterval(this.intervalId);
 
     const safeCallback = () => {
@@ -77,6 +88,7 @@ export class Presence {
       if (!this.isContextValid()) {
         if (this.intervalId) clearInterval(this.intervalId);
         this.intervalId = undefined;
+        (globalThis as Record<string, unknown>)[GUARD_KEY] = undefined;
         return;
       }
       void Promise.resolve(callback());
@@ -84,6 +96,7 @@ export class Presence {
 
     safeCallback();
     this.intervalId = setInterval(safeCallback, this.updateIntervalMs);
+    (globalThis as Record<string, unknown>)[GUARD_KEY] = this.intervalId;
   }
 
   /** Push presence data to Discord via the background service worker */
