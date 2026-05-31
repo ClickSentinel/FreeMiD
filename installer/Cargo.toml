@@ -1,6 +1,6 @@
 [package]
 name = "freemid-installer"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 authors = ["FreeMiD Contributors"]
 license = "GPL-3.0"

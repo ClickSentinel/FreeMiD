@@ -84,75 +84,11 @@ function getArtUrl(): string | undefined {
   return undefined;
 }
 
-/** Returns true if an element exists AND is currently rendered. */
-function isVisible(el: Element | null): boolean {
-  if (!el) return false;
-  const html = el as HTMLElement;
-  const rect = html.getBoundingClientRect?.();
-  if (!rect || (rect.width === 0 && rect.height === 0)) return false;
-  const style = window.getComputedStyle(html);
-  if (style.display === 'none' || style.visibility === 'hidden') return false;
-  if (Number.parseFloat(style.opacity) === 0) return false;
-  return true;
-}
-
-/** Returns true if an ad is currently playing in the YouTube Music player. */
-function isAdPlaying(): boolean {
-  // 1. Primary signal — YouTube's #movie_player gains `ad-showing` and
-  //    `ad-interrupting` classes during ads. This is what YouTube's own
-  //    player API checks internally and is the most reliable indicator.
-  const moviePlayer = document.querySelector('#movie_player');
-  if (moviePlayer?.classList.contains('ad-showing') ||
-      moviePlayer?.classList.contains('ad-interrupting')) {
-    console.warn('[FreeMiD] isAdPlaying: #movie_player.ad-showing');
-    return true;
-  }
-
-  // 2. Player-bar attribute check — YTM has used several names across versions.
-  const playerBar = document.querySelector('ytmusic-player-bar');
-  for (const attr of ['has-ad', 'ad-showing', 'ad', 'is-ad']) {
-    if (playerBar?.hasAttribute(attr)) {
-      console.warn(`[FreeMiD] isAdPlaying: playerBar[${attr}]`);
-      return true;
-    }
-  }
-
-  // 3. Ad-specific DOM elements that must be VISIBLE (these elements often
-  //    persist in the DOM after the ad ends, hidden via display/opacity).
-  const adSelectors = [
-    'ytmusic-ad-instream-companion-slot',
-    'ytmusic-ad-badge',
-    '.ytp-ad-skip-button',
-    '.ytp-skip-ad-button',
-    '.ytp-ad-message-container',
-  ];
-  for (const sel of adSelectors) {
-    const el = document.querySelector(sel);
-    if (isVisible(el)) {
-      console.warn(`[FreeMiD] isAdPlaying: ${sel} (visible)`);
-      return true;
-    }
-  }
-
-  // 4. mediaSession artwork heuristic — real YTM tracks serve artwork from
-  //    YouTube/Google CDNs; instream ads use advertiser CDNs.
-  const artwork = navigator.mediaSession?.metadata?.artwork ?? [];
-  const ytmDomains = ['ytimg.com', 'googleusercontent.com', 'youtube.com'];
-  if (artwork.length > 0 && !artwork.some((a) => ytmDomains.some((d) => a.src.includes(d)))) {
-    console.warn('[FreeMiD] isAdPlaying: non-YTM artwork →', artwork.map((a) => a.src));
-    return true;
-  }
-
-  return false;
-}
-
 presence.on('UpdateData', () => {
-  // Suppress presence entirely during ads — mediaSession is populated by the
-  // ad, not the track, so we cannot trust title/artist at this point.
-  if (isAdPlaying()) {
-    presence.clearActivity();
-    return;
-  }
+  // NOTE: ad detection removed in v0.3.7 — multiple attempts at DOM-based
+  // detection caused regressions where presence would not recover after an
+  // ad ended. Tracked in the bug filed against this repo. Until we have a
+  // reliable signal, presence will momentarily show the ad as a track.
 
   const ms = navigator.mediaSession;
   const video = document.querySelector<HTMLVideoElement>('.video-stream, video');
@@ -275,6 +211,8 @@ presence.on('UpdateData', () => {
     largeImageKey: artUrl,
     largeImageText: ms?.metadata?.album || title,
     largeImageUrl: songUrl,
+    smallImageKey: 'https://music.youtube.com/img/favicon_144.png',
+    smallImageText: 'YouTube Music',
     buttons: songUrl ? [{ label: 'Listen on YT Music', url: songUrl }] : undefined,
   });
 });
