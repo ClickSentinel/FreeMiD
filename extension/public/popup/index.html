@@ -434,20 +434,6 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .now-button {
-        margin-top: 6px;
-        display: inline-flex;
-        max-width: 100%;
-        padding: 2px 8px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        background: rgba(255,255,255,0.04);
-        color: var(--text-1);
-        font-size: 10px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
       .now-timeline { margin-top: 10px; }
       .timeline-track {
         width: 100%;
@@ -540,7 +526,7 @@
       <br /><button class="btn-discord" id="btn-open-discord">Open Discord ↗</button>
     </div>
 
-    <div class="now-playing hidden" id="activity-panel">
+    <div class="now-playing" id="activity-panel" hidden>
       <div class="now-top">
         <div class="now-artist">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -557,7 +543,6 @@
         <div class="now-text">
           <div class="now-title" id="activity-title">—</div>
           <div class="now-album" id="activity-sub"></div>
-          <div class="now-button" id="activity-button"></div>
         </div>
       </div>
       <div class="now-timeline hidden" id="elapsed-bar">

@@ -15,7 +15,6 @@ const activitySub   = document.getElementById('activity-sub')   as HTMLElement |
 const activityMetaText = document.getElementById('activity-meta-text') as HTMLElement | null;
 const activityArt   = document.getElementById('activity-art')   as HTMLImageElement | null;
 const activityLogo  = document.getElementById('activity-logo')  as HTMLImageElement | null;
-const activityButton = document.getElementById('activity-button') as HTMLElement | null;
 const pauseRow  = document.getElementById('pause-row')  as HTMLElement      | null;
 const pauseSub  = document.getElementById('pause-sub')  as HTMLElement      | null;
 const btnPause  = document.getElementById('btn-pause')  as HTMLButtonElement | null;
@@ -188,7 +187,6 @@ type Status = {
     largeImageText?: string;
     smallImageKey?: string;
     smallImageText?: string;
-    firstButtonLabel?: string;
   } | null;
   connectedSince?: number | null;
   enabledSites?: Record<string, boolean>;
@@ -343,11 +341,6 @@ function render(status: Status | null): void {
         activityLogo.removeAttribute('src');
         activityLogo.hidden = true;
       }
-    }
-
-    if (activityButton) {
-      activityButton.textContent = act.firstButtonLabel ? act.firstButtonLabel : '';
-      activityButton.hidden = !act.firstButtonLabel;
     }
 
     const hasTimeline =
