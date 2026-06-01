@@ -11,6 +11,8 @@
 
 FreeMiD collects **no personal data**. Everything runs locally on your machine.
 
+The use of information received from Google APIs will adhere to the [Chrome Web Store User Data Policy](https://developer.chrome.com/docs/webstore/program-policies/limited-use), including the Limited Use requirements.
+
 ---
 
 ## What data FreeMiD processes
