@@ -7,6 +7,7 @@ const label      = document.getElementById('status-label')!;
 const sub        = document.getElementById('status-sub')!;
 const helpHost   = document.getElementById('help-host')!;
 const helpDiscord = document.getElementById('help-discord')!;
+const btnInstallHost = document.getElementById('btn-install-host') as HTMLButtonElement | null;
 const pageInfo   = document.getElementById('page-info')!;
 
 const activityPanel = document.getElementById('activity-panel') as HTMLElement | null;
@@ -161,6 +162,11 @@ btnUpdate?.addEventListener('click', () => {
   void chrome.tabs.create({ url: 'https://github.com/ClickSentinel/FreeMiD/releases/latest' });
 });
 
+btnInstallHost?.addEventListener('click', () => {
+  const installUrl = 'https://github.com/ClickSentinel/FreeMiD#installation';
+  void chrome.tabs.create({ url: installUrl });
+});
+
 btnUninstall?.addEventListener('click', () => {
   const isWindows = /Win/i.test(navigator.platform);
   const scriptUrl = isWindows
@@ -252,10 +258,22 @@ function render(status: Status | null): void {
   setToggle(toggleYTM, status.enabledSites?.['youtubemusic'] ?? true);
 
   if (!status.hostConnected) {
-    dot.className = 'dot error';
-    label.textContent = 'Native host not running';
-    sub.textContent = status.error ?? 'Install the FreeMiD host to continue';
-    helpHost.classList.remove('hidden');
+    if (discordCheckTimer) { clearTimeout(discordCheckTimer); discordCheckTimer = null; }
+    discordCheckShown = false;
+
+    // If there is no explicit error yet, treat this as a transient connecting
+    // state to avoid flashing between statuses while the host handshake settles.
+    if (!status.error) {
+      dot.className = 'dot connecting';
+      label.textContent = 'Connecting…';
+      sub.textContent = 'Reaching native host';
+    } else {
+      dot.className = 'dot error';
+      label.textContent = 'Native host not running';
+      sub.textContent = status.error;
+      helpHost.classList.remove('hidden');
+    }
+
     stopUptimeTick();
     stopTimelineTick();
     if (activityPanel) activityPanel.hidden = true;
@@ -387,7 +405,8 @@ async function fetchStatus(retriesLeft = 4, intervalMs = 700): Promise<void> {
   try {
     const status = (await chrome.runtime.sendMessage({ type: 'GET_STATUS' })) as Status | undefined;
     render(status ?? null);
-    if (!status?.discordConnected && retriesLeft > 0) {
+    // Retry only while host is connected but Discord handshake is pending.
+    if (status?.hostConnected && !status.discordConnected && retriesLeft > 0) {
       setTimeout(() => void fetchStatus(retriesLeft - 1, intervalMs), intervalMs);
     }
   } catch {

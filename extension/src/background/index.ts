@@ -45,13 +45,17 @@ function connectNativeHost(): void {
   if (nativePort) return;
   try {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
-    hostConnected = true;
+    // Do not mark connected until we receive a STATUS from the host.
+    // This avoids transient "connected -> disconnected" flicker when the
+    // host executable is missing and Chrome disconnects immediately.
+    hostConnected = false;
     lastError = null;
     console.log('[FreeMiD] Native host port opened');
 
     nativePort.onMessage.addListener((msg: unknown) => {
       const m = msg as { type?: string; connected?: boolean; error?: string; version?: string };
       if (m.type === 'STATUS') {
+        hostConnected = true;
         const wasConnected = discordConnected;
         discordConnected = m.connected === true;
         if (m.version) hostVersion = m.version;

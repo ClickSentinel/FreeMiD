@@ -22,6 +22,8 @@
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
 
+      html { overflow: hidden; }
+
       body {
         width: 320px;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -168,6 +170,8 @@
         -webkit-user-select: all;
         user-select: all;
       }
+
+      .help p { margin-top: 2px; }
 
       .help.hidden { display: none; }
 
@@ -343,6 +347,22 @@
       }
       .btn-discord:hover { opacity: 0.85; }
 
+      .btn-install {
+        display: inline-flex;
+        align-items: center;
+        margin-top: 8px;
+        padding: 5px 12px;
+        background: var(--accent);
+        border: none;
+        border-radius: 6px;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+      .btn-install:hover { opacity: 0.85; }
+
       /* Update banner */
       .update-banner {
         display: flex;
@@ -515,9 +535,9 @@
     </div>
 
     <div class="help hidden" id="help-host">
-      <strong>Native host not installed.</strong><br />
-      Build and install the FreeMiD host, then reload this extension:
-      <br /><code>cargo build --release &amp;&amp; ./install/install.sh</code>
+      <strong>Native host not installed.</strong>
+      <p>Open the install guide for your platform, then restart your browser.</p>
+      <button class="btn-install" id="btn-install-host">Open Install Guide ↗</button>
     </div>
 
     <div class="help hidden" id="help-discord">
