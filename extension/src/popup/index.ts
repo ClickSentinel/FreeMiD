@@ -24,6 +24,9 @@ const hostVersionEl = document.getElementById('host-version') as HTMLElement | n
 const updateBanner  = document.getElementById('update-banner') as HTMLElement | null;
 const updateText    = document.getElementById('update-text')   as HTMLElement | null;
 const btnUpdate     = document.getElementById('btn-update')    as HTMLButtonElement | null;
+const elapsedBar    = document.getElementById('elapsed-bar')   as HTMLElement | null;
+const elapsedLabel  = document.getElementById('elapsed-label') as HTMLElement | null;
+const elapsedTime   = document.getElementById('elapsed-time')  as HTMLElement | null;
 
 if (versionEl) versionEl.textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -31,6 +34,13 @@ if (versionEl) versionEl.textContent = `v${chrome.runtime.getManifest().version}
 
 let uptimeInterval: ReturnType<typeof setInterval> | null = null;
 let connectedSinceMs: number | null = null;
+let elapsedInterval: ReturnType<typeof setInterval> | null = null;
+let activityStartMs: number | null = null;
+
+// How long to show "Checking for Discord..." before revealing help panel
+const DISCORD_CHECK_DELAY_MS = 3000;
+let discordCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let discordCheckShown = false;
 
 function formatUptime(ms: number): string {
   const totalMin = Math.floor(ms / 60_000);
@@ -54,6 +64,33 @@ function startUptimeTick(): void {
 function stopUptimeTick(): void {
   if (uptimeInterval) { clearInterval(uptimeInterval); uptimeInterval = null; }
   connectedSinceMs = null;
+}
+
+// ── Elapsed bar (Discord-style) ───────────────────────────────────────────────
+
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  if (h > 0) return `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function updateElapsedDisplay(): void {
+  if (activityStartMs == null || !elapsedTime) return;
+  elapsedTime.textContent = formatElapsed(Date.now() - activityStartMs);
+}
+
+function startElapsedTick(): void {
+  if (elapsedInterval) return;
+  elapsedInterval = setInterval(updateElapsedDisplay, 1000);
+  updateElapsedDisplay();
+}
+
+function stopElapsedTick(): void {
+  if (elapsedInterval) { clearInterval(elapsedInterval); elapsedInterval = null; }
+  activityStartMs = null;
+  if (elapsedBar) elapsedBar.classList.add('hidden');
 }
 
 // ── Reconnect ─────────────────────────────────────────────────────────────────
@@ -128,6 +165,7 @@ function render(status: Status | null): void {
     if (hostVersionEl) hostVersionEl.textContent = '';
     if (updateBanner) updateBanner.classList.add('hidden');
     stopUptimeTick();
+    stopElapsedTick();
     return;
   }
 
@@ -157,38 +195,74 @@ function render(status: Status | null): void {
   setToggle(toggleYT,  status.enabledSites?.['youtube']      ?? true);
   setToggle(toggleYTM, status.enabledSites?.['youtubemusic'] ?? true);
 
-  // Activity preview
+  // Activity preview & elapsed bar
   const act = status.lastActivity;
   if (activityPanel) activityPanel.hidden = !act || paused;
-  if (act) {
+  if (act && !paused) {
     if (activityTitle) activityTitle.textContent = act.title;
     if (activitySub)   activitySub.textContent   = act.sub;
+    // Elapsed bar: reset if activity title changed
+    const newLabel = act.sub || act.title;
+    if (elapsedLabel && elapsedLabel.dataset['activity'] !== newLabel) {
+      elapsedLabel.dataset['activity'] = newLabel;
+      activityStartMs = Date.now();
+    } else if (activityStartMs == null) {
+      activityStartMs = Date.now();
+    }
+    if (elapsedBar) elapsedBar.classList.remove('hidden');
+    if (elapsedLabel) elapsedLabel.textContent = 'Elapsed';
+    startElapsedTick();
+  } else {
+    stopElapsedTick();
   }
 
-  // Connection state
   if (!status.hostConnected) {
     dot.className = 'dot error';
     label.textContent = 'Native host not running';
     sub.textContent = status.error ?? 'Install the FreeMiD host to continue';
     helpHost.classList.remove('hidden');
     stopUptimeTick();
+    stopElapsedTick();
     return;
   }
 
   if (!status.discordConnected) {
-    dot.className = 'dot warning';
-    label.textContent = 'Waiting for Discord';
-    sub.textContent = status.error ?? 'Open the Discord desktop app';
-    helpDiscord.classList.remove('hidden');
     stopUptimeTick();
+    stopElapsedTick();
+    // Show "checking" for DISCORD_CHECK_DELAY_MS before revealing help panel
+    if (!discordCheckShown) {
+      dot.className = 'dot connecting';
+      label.textContent = 'Checking for Discord…';
+      sub.textContent = 'Looking for the Discord desktop app';
+      if (!discordCheckTimer) {
+        discordCheckTimer = setTimeout(() => {
+          discordCheckShown = true;
+          discordCheckTimer = null;
+          dot.className = 'dot warning';
+          label.textContent = 'Waiting for Discord';
+          sub.textContent = status.error ?? 'Open the Discord desktop app';
+          helpDiscord.classList.remove('hidden');
+        }, DISCORD_CHECK_DELAY_MS);
+      }
+    } else {
+      dot.className = 'dot warning';
+      label.textContent = 'Waiting for Discord';
+      sub.textContent = status.error ?? 'Open the Discord desktop app';
+      helpDiscord.classList.remove('hidden');
+    }
     return;
   }
+
+  // Discord is connected — clear the check state for next disconnection
+  if (discordCheckTimer) { clearTimeout(discordCheckTimer); discordCheckTimer = null; }
+  discordCheckShown = false;
 
   if (paused) {
     dot.className = 'dot warning';
     label.textContent = 'Rich Presence paused';
     sub.textContent = 'Toggle to resume sending to Discord';
     stopUptimeTick();
+    stopElapsedTick();
     return;
   }
 

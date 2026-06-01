@@ -142,6 +142,7 @@ else
         exit 1
     fi
     echo "→ Checksum verified ✓"
+fi  # end: if [[ -n "$BINARY_SRC" ]]
 
 # ── Build the native-messaging manifest ───────────────────────────────────
 MANIFEST_JSON=$(cat <<EOF

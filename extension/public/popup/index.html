@@ -29,6 +29,7 @@
         color: var(--text-1);
         font-size: 13px;
         line-height: 1.45;
+        overflow: hidden;
       }
 
       header {
@@ -309,6 +310,26 @@
       .btn-update:hover { opacity: 0.82; }
 
       .host-version { color: var(--text-2); font-size: 11px; }
+
+      /* Elapsed / timestamp bar (Discord-style) */
+      .elapsed-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 18px;
+        background: var(--bg-2);
+        border-bottom: 1px solid var(--border);
+        font-size: 11px;
+        color: var(--text-2);
+      }
+      .elapsed-bar.hidden { display: none; }
+      .elapsed-icon { flex-shrink: 0; opacity: 0.7; }
+      .elapsed-label { flex: 1; }
+      .elapsed-time { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-1); }
+
+      /* GitHub icon link */
+      .gh-link { color: var(--text-2); display: flex; align-items: center; transition: color 0.15s; }
+      .gh-link:hover { color: var(--text-0); }
     </style>
   </head>
   <body>
@@ -357,6 +378,14 @@
       <br /><button class="btn-discord" id="btn-open-discord">Open Discord ↗</button>
     </div>
 
+    <div class="elapsed-bar hidden" id="elapsed-bar">
+      <svg class="elapsed-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+      </svg>
+      <span class="elapsed-label" id="elapsed-label">Elapsed</span>
+      <span class="elapsed-time" id="elapsed-time">0:00</span>
+    </div>
+
     <div class="panel" id="activity-panel" hidden>
       <div class="panel-label">Now sending</div>
       <div class="panel-value" id="activity-title">—</div>
@@ -392,7 +421,11 @@
     </div>
 
     <footer>
-      <a href="https://github.com/ClickSentinel/freemid" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+      <a class="gh-link" href="https://github.com/ClickSentinel/freemid" target="_blank" rel="noopener noreferrer" title="GitHub">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.341-3.369-1.341-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.031 1.531 1.031.892 1.529 2.341 1.088 2.91.832.091-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.682-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836a9.59 9.59 0 0 1 2.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.698 1.028 1.591 1.028 2.682 0 3.841-2.337 4.687-4.565 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.741 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
+        </svg>
+      </a>
       <span class="host-version" id="host-version"></span>
       <span class="version" id="version"></span>
     </footer>
