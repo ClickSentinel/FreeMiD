@@ -108,6 +108,34 @@ Click the FreeMiD icon in your toolbar. The dot should turn **green** within a f
 
 ---
 
+## Uninstall
+
+### Remove native host
+
+**Linux / macOS:**
+
+```bash
+curl -sSL https://github.com/ClickSentinel/FreeMiD/releases/latest/download/uninstall.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/uninstall.ps1 | iex
+```
+
+The uninstall scripts remove:
+
+- Native host binary
+- Native messaging manifest
+- Browser native messaging registration entries
+
+### Remove extension
+
+Open `chrome://extensions`, find FreeMiD, and click **Remove**.
+
+---
+
 ## Building from source
 
 ### Prerequisites

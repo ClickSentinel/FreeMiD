@@ -120,6 +120,8 @@ jobs:
             freemid-windows-x86_64.exe
             install/install.sh
             install/install.ps1
+            install/uninstall.sh
+            install/uninstall.ps1
 
   # Publish to Chrome Web Store
   #
