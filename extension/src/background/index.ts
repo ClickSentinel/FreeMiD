@@ -21,7 +21,17 @@ let hostConnected = false;        // STDIO port is alive
 let discordConnected = false;     // Discord IPC handshake succeeded
 let lastError: string | null = null;
 let paused = false;
-let lastActivity: { title: string; sub: string; startTimestamp?: number; endTimestamp?: number } | null = null;
+let lastActivity: {
+  title: string;
+  sub: string;
+  startTimestamp?: number;
+  endTimestamp?: number;
+  activityName?: string;
+  activityType?: number;
+  largeImageKey?: string;
+  smallImageKey?: string;
+  firstButtonLabel?: string;
+} | null = null;
 let discordConnectedSince: number | null = null;
 let enabledSites: Record<string, boolean> = { youtube: true, youtubemusic: true };
 let hostVersion: string | null = null;
@@ -106,18 +116,43 @@ function sendToHost(payload: object): boolean {
 export function setActivity(activity: object, siteId?: string): void {
   if (paused) return;
   if (siteId !== undefined && !enabledSites[siteId]) return;
+
   const a = activity as {
+    name?: string;
+    type?: number;
     details?: string;
     state?: string;
     startTimestamp?: number;
     endTimestamp?: number;
+    timestamps?: { start?: number; end?: number };
+    assets?: { large_image?: string; small_image?: string };
+    buttons?: Array<{ label?: string; url?: string }>;
   };
+
+  const startTs =
+    typeof a.startTimestamp === 'number'
+      ? a.startTimestamp
+      : typeof a.timestamps?.start === 'number'
+        ? a.timestamps.start
+        : undefined;
+  const endTs =
+    typeof a.endTimestamp === 'number'
+      ? a.endTimestamp
+      : typeof a.timestamps?.end === 'number'
+        ? a.timestamps.end
+        : undefined;
+
   lastActivity = a.details
     ? {
         title: a.details,
         sub: a.state ?? '',
-        startTimestamp: typeof a.startTimestamp === 'number' ? a.startTimestamp : undefined,
-        endTimestamp: typeof a.endTimestamp === 'number' ? a.endTimestamp : undefined,
+        startTimestamp: startTs,
+        endTimestamp: endTs,
+        activityName: a.name,
+        activityType: a.type,
+        largeImageKey: a.assets?.large_image,
+        smallImageKey: a.assets?.small_image,
+        firstButtonLabel: a.buttons?.[0]?.label,
       }
     : null;
   sendToHost({ type: 'SET_ACTIVITY', activity });

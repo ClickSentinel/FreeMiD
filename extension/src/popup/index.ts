@@ -12,6 +12,10 @@ const pageInfo   = document.getElementById('page-info')!;
 const activityPanel = document.getElementById('activity-panel') as HTMLElement | null;
 const activityTitle = document.getElementById('activity-title') as HTMLElement | null;
 const activitySub   = document.getElementById('activity-sub')   as HTMLElement | null;
+const activityMeta  = document.getElementById('activity-meta')  as HTMLElement | null;
+const activityExtra = document.getElementById('activity-extra') as HTMLElement | null;
+const activityArt   = document.getElementById('activity-art')   as HTMLImageElement | null;
+const activityButton = document.getElementById('activity-button') as HTMLElement | null;
 const pauseRow  = document.getElementById('pause-row')  as HTMLElement      | null;
 const pauseSub  = document.getElementById('pause-sub')  as HTMLElement      | null;
 const btnPause  = document.getElementById('btn-pause')  as HTMLButtonElement | null;
@@ -173,13 +177,34 @@ type Status = {
   discordConnected: boolean;
   error?: string | null;
   paused?: boolean;
-  lastActivity?: { title: string; sub: string; startTimestamp?: number; endTimestamp?: number } | null;
+  lastActivity?: {
+    title: string;
+    sub: string;
+    startTimestamp?: number;
+    endTimestamp?: number;
+    activityName?: string;
+    activityType?: number;
+    largeImageKey?: string;
+    smallImageKey?: string;
+    firstButtonLabel?: string;
+  } | null;
   connectedSince?: number | null;
   enabledSites?: Record<string, boolean>;
   hostVersion?: string | null;
   latestVersion?: string | null;
   updateAvailable?: boolean;
 };
+
+function activityTypeLabel(type?: number): string {
+  if (type === 2) return 'Listening';
+  if (type === 3) return 'Watching';
+  if (type === 5) return 'Competing';
+  return 'Playing';
+}
+
+function urlLike(value?: string): boolean {
+  return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
 
 function setToggle(btn: HTMLButtonElement | null, checked: boolean): void {
   btn?.setAttribute('aria-checked', String(checked));
@@ -285,6 +310,34 @@ function render(status: Status | null): void {
   if (act) {
     if (activityTitle) activityTitle.textContent = act.title;
     if (activitySub)   activitySub.textContent   = act.sub;
+    if (activityMeta) {
+      const verb = activityTypeLabel(act.activityType);
+      const appName = act.activityName ? ` • ${act.activityName}` : '';
+      activityMeta.textContent = `${verb}${appName}`;
+    }
+
+    const artUrl = urlLike(act.largeImageKey)
+      ? act.largeImageKey
+      : urlLike(act.smallImageKey)
+        ? act.smallImageKey
+        : null;
+    if (activityArt) {
+      if (artUrl) {
+        activityArt.src = artUrl;
+        activityArt.hidden = false;
+      } else {
+        activityArt.removeAttribute('src');
+        activityArt.hidden = true;
+      }
+    }
+    if (activityButton) {
+      activityButton.textContent = act.firstButtonLabel ? `Button: ${act.firstButtonLabel}` : '';
+    }
+    if (activityExtra) {
+      const hasArt = !!artUrl;
+      const hasButton = !!act.firstButtonLabel;
+      activityExtra.hidden = !hasArt && !hasButton;
+    }
 
     const hasTimeline =
       typeof act.startTimestamp === 'number' &&
