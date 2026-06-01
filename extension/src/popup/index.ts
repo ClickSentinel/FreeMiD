@@ -20,6 +20,10 @@ const toggleYTM = document.getElementById('toggle-ytm')     as HTMLButtonElement
 const btnOpenDiscord = document.getElementById('btn-open-discord') as HTMLButtonElement | null;
 const reconnectBtn   = document.getElementById('btn-reconnect')    as HTMLButtonElement | null;
 const versionEl = document.getElementById('version');
+const hostVersionEl = document.getElementById('host-version') as HTMLElement | null;
+const updateBanner  = document.getElementById('update-banner') as HTMLElement | null;
+const updateText    = document.getElementById('update-text')   as HTMLElement | null;
+const btnUpdate     = document.getElementById('btn-update')    as HTMLButtonElement | null;
 
 if (versionEl) versionEl.textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -90,6 +94,10 @@ btnOpenDiscord?.addEventListener('click', () => {
   void chrome.tabs.create({ url: 'discord://' });
 });
 
+btnUpdate?.addEventListener('click', () => {
+  void chrome.tabs.create({ url: 'https://github.com/ClickSentinel/FreeMiD/releases/latest' });
+});
+
 // ── Render ────────────────────────────────────────────────────────────────────
 
 type Status = {
@@ -100,6 +108,9 @@ type Status = {
   lastActivity?: { title: string; sub: string } | null;
   connectedSince?: number | null;
   enabledSites?: Record<string, boolean>;
+  hostVersion?: string | null;
+  latestVersion?: string | null;
+  updateAvailable?: boolean;
 };
 
 function setToggle(btn: HTMLButtonElement | null, checked: boolean): void {
@@ -114,11 +125,28 @@ function render(status: Status | null): void {
     dot.className = 'dot connecting';
     label.textContent = 'Connecting…';
     sub.textContent = 'Reaching native host';
+    if (hostVersionEl) hostVersionEl.textContent = '';
+    if (updateBanner) updateBanner.classList.add('hidden');
     stopUptimeTick();
     return;
   }
 
   const paused = status.paused ?? false;
+
+  // Host version
+  if (hostVersionEl) {
+    hostVersionEl.textContent = status.hostVersion ? `Host v${status.hostVersion}` : '';
+  }
+
+  // Update banner
+  if (updateBanner) {
+    if (status.updateAvailable && status.latestVersion) {
+      updateBanner.classList.remove('hidden');
+      if (updateText) updateText.textContent = `Host update available: v${status.latestVersion}`;
+    } else {
+      updateBanner.classList.add('hidden');
+    }
+  }
 
   // Pause toggle — toggle is ON when Rich Presence is active (not paused)
   setToggle(btnPause, !paused);

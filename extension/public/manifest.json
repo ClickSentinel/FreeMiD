@@ -15,7 +15,8 @@
   "host_permissions": [
     "*://www.youtube.com/*",
     "*://youtube.com/*",
-    "*://music.youtube.com/*"
+    "*://music.youtube.com/*",
+    "https://api.github.com/*"
   ],
 
   "background": {

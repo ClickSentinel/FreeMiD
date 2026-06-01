@@ -102,7 +102,11 @@ fn write_message(value: &Value) {
 }
 
 fn send_status(connected: bool, error: Option<&str>) {
-    let mut payload = json!({ "type": "STATUS", "connected": connected });
+    let mut payload = json!({
+        "type": "STATUS",
+        "connected": connected,
+        "version": env!("CARGO_PKG_VERSION"),
+    });
     if let Some(e) = error {
         payload["error"] = Value::String(e.to_string());
     }

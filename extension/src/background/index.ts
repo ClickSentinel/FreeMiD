@@ -24,6 +24,10 @@ let paused = false;
 let lastActivity: { title: string; sub: string } | null = null;
 let discordConnectedSince: number | null = null;
 let enabledSites: Record<string, boolean> = { youtube: true, youtubemusic: true };
+let hostVersion: string | null = null;
+let latestVersion: string | null = null;
+
+const GITHUB_REPO = 'ClickSentinel/FreeMiD';
 
 function connectNativeHost(): void {
   if (nativePort) return;
@@ -34,10 +38,11 @@ function connectNativeHost(): void {
     console.log('[FreeMiD] Native host port opened');
 
     nativePort.onMessage.addListener((msg: unknown) => {
-      const m = msg as { type?: string; connected?: boolean; error?: string };
+      const m = msg as { type?: string; connected?: boolean; error?: string; version?: string };
       if (m.type === 'STATUS') {
         const wasConnected = discordConnected;
         discordConnected = m.connected === true;
+        if (m.version) hostVersion = m.version;
         if (discordConnected && !wasConnected) {
           discordConnectedSince = Date.now();
           notifyConnectionChange(true);
@@ -276,6 +281,9 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       lastActivity,
       connectedSince: discordConnectedSince,
       enabledSites,
+      hostVersion,
+      latestVersion,
+      updateAvailable: isUpdateAvailable(),
     });
     return true;
   }
@@ -288,6 +296,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (!nativePort) connectNativeHost();
     else sendToHost({ type: 'PING' });
   }
+  if (alarm.name === 'freemid-update-check') { void checkForUpdates(); }
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -303,21 +312,68 @@ function broadcastStatus(): void {
       lastActivity,
       connectedSince: discordConnectedSince,
       enabledSites,
+      hostVersion,
+      latestVersion,
+      updateAvailable: isUpdateAvailable(),
     })
     .catch(() => {
       // popup might not be open — ignore
     });
 }
 
+// ── Version & update check ────────────────────────────────────────────────────
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function isUpdateAvailable(): boolean {
+  if (!hostVersion || !latestVersion) return false;
+  return compareVersions(latestVersion, hostVersion) > 0;
+}
+
+async function checkForUpdates(): Promise<void> {
+  try {
+    const resp = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
+      { headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } },
+    );
+    if (!resp.ok) return;
+    const data = (await resp.json()) as { tag_name?: string };
+    const tag = (data.tag_name ?? '').replace(/^v/, '');
+    if (tag) {
+      latestVersion = tag;
+      await chrome.storage.local.set({ latestVersion });
+      broadcastStatus();
+    }
+  } catch (e) {
+    console.warn('[FreeMiD] Update check failed:', e);
+  }
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 // Load persisted state (pause flag, site toggles) before connecting.
-void chrome.storage.local.get(['paused', 'enabledSites']).then((stored) => {
+void chrome.storage.local.get(['paused', 'enabledSites', 'latestVersion']).then((stored) => {
   if (typeof stored['paused'] === 'boolean') paused = stored['paused'] as boolean;
   if (stored['enabledSites'] && typeof stored['enabledSites'] === 'object') {
     enabledSites = { ...enabledSites, ...(stored['enabledSites'] as Record<string, boolean>) };
   }
+  if (typeof stored['latestVersion'] === 'string') latestVersion = stored['latestVersion'] as string;
   connectNativeHost();
+  // Schedule daily update check — only create if not already scheduled so a
+  // service-worker restart doesn't reset the 24 h timer.
+  chrome.alarms.get('freemid-update-check', (existing) => {
+    if (!existing) {
+      chrome.alarms.create('freemid-update-check', { delayInMinutes: 2, periodInMinutes: 1440 });
+    }
+  });
   // Re-inject activity scripts into any tabs that are already open when the
   // service worker starts (e.g. after the extension is reloaded). Without this,
   // existing YouTube / YouTube Music tabs become orphaned and stop sending
