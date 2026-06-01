@@ -12,9 +12,9 @@ const pageInfo   = document.getElementById('page-info')!;
 const activityPanel = document.getElementById('activity-panel') as HTMLElement | null;
 const activityTitle = document.getElementById('activity-title') as HTMLElement | null;
 const activitySub   = document.getElementById('activity-sub')   as HTMLElement | null;
-const activityMeta  = document.getElementById('activity-meta')  as HTMLElement | null;
-const activityExtra = document.getElementById('activity-extra') as HTMLElement | null;
+const activityMetaText = document.getElementById('activity-meta-text') as HTMLElement | null;
 const activityArt   = document.getElementById('activity-art')   as HTMLImageElement | null;
+const activityLogo  = document.getElementById('activity-logo')  as HTMLImageElement | null;
 const activityButton = document.getElementById('activity-button') as HTMLElement | null;
 const pauseRow  = document.getElementById('pause-row')  as HTMLElement      | null;
 const pauseSub  = document.getElementById('pause-sub')  as HTMLElement      | null;
@@ -185,7 +185,9 @@ type Status = {
     activityName?: string;
     activityType?: number;
     largeImageKey?: string;
+    largeImageText?: string;
     smallImageKey?: string;
+    smallImageText?: string;
     firstButtonLabel?: string;
   } | null;
   connectedSince?: number | null;
@@ -195,15 +197,15 @@ type Status = {
   updateAvailable?: boolean;
 };
 
-function activityTypeLabel(type?: number): string {
-  if (type === 2) return 'Listening';
-  if (type === 3) return 'Watching';
-  if (type === 5) return 'Competing';
-  return 'Playing';
-}
-
 function urlLike(value?: string): boolean {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+function artistFromActivity(act: NonNullable<Status['lastActivity']>): string {
+  const fromSub = act.sub?.replace(/^by\s+/i, '').trim();
+  if (fromSub) return fromSub;
+  if (act.activityName) return act.activityName;
+  return '';
 }
 
 function setToggle(btn: HTMLButtonElement | null, checked: boolean): void {
@@ -309,11 +311,12 @@ function render(status: Status | null): void {
   if (activityPanel) activityPanel.hidden = !act;
   if (act) {
     if (activityTitle) activityTitle.textContent = act.title;
-    if (activitySub)   activitySub.textContent   = act.sub;
-    if (activityMeta) {
-      const verb = activityTypeLabel(act.activityType);
-      const appName = act.activityName ? ` • ${act.activityName}` : '';
-      activityMeta.textContent = `${verb}${appName}`;
+    if (activitySub) {
+      const album = act.largeImageText && act.largeImageText !== act.title ? act.largeImageText : '';
+      activitySub.textContent = album;
+    }
+    if (activityMetaText) {
+      activityMetaText.textContent = artistFromActivity(act);
     }
 
     const artUrl = urlLike(act.largeImageKey)
@@ -330,13 +333,21 @@ function render(status: Status | null): void {
         activityArt.hidden = true;
       }
     }
+
+    if (activityLogo) {
+      const logoUrl = urlLike(act.smallImageKey) ? act.smallImageKey : null;
+      if (logoUrl) {
+        activityLogo.src = logoUrl;
+        activityLogo.hidden = false;
+      } else {
+        activityLogo.removeAttribute('src');
+        activityLogo.hidden = true;
+      }
+    }
+
     if (activityButton) {
       activityButton.textContent = act.firstButtonLabel ? act.firstButtonLabel : '';
-    }
-    if (activityExtra) {
-      const hasArt = !!artUrl;
-      const hasButton = !!act.firstButtonLabel;
-      activityExtra.hidden = !hasArt && !hasButton;
+      activityButton.hidden = !act.firstButtonLabel;
     }
 
     const hasTimeline =

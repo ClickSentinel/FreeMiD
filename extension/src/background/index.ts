@@ -29,7 +29,9 @@ let lastActivity: {
   activityName?: string;
   activityType?: number;
   largeImageKey?: string;
+  largeImageText?: string;
   smallImageKey?: string;
+  smallImageText?: string;
   firstButtonLabel?: string;
 } | null = null;
 let discordConnectedSince: number | null = null;
@@ -125,7 +127,7 @@ export function setActivity(activity: object, siteId?: string): void {
     startTimestamp?: number;
     endTimestamp?: number;
     timestamps?: { start?: number; end?: number };
-    assets?: { large_image?: string; small_image?: string };
+    assets?: { large_image?: string; large_text?: string; small_image?: string; small_text?: string };
     buttons?: Array<{ label?: string; url?: string }>;
   };
 
@@ -151,7 +153,9 @@ export function setActivity(activity: object, siteId?: string): void {
         activityName: a.name,
         activityType: a.type,
         largeImageKey: a.assets?.large_image,
+        largeImageText: a.assets?.large_text,
         smallImageKey: a.assets?.small_image,
+        smallImageText: a.assets?.small_text,
         firstButtonLabel: a.buttons?.[0]?.label,
       }
     : null;
