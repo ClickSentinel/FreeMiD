@@ -3,7 +3,7 @@ members = ["native-host", "installer"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.9"
+version = "0.3.10"
 edition = "2021"
 authors = ["FreeMiD Contributors"]
 license = "GPL-3.0"
