@@ -46,7 +46,13 @@ presence.on('UpdateData', () => {
   const paused  = video?.paused ?? true;
   const duration = video?.duration ?? 0;
   const elapsed  = video?.currentTime ?? 0;
-  const now      = Date.now();
+  const nowSec   = Math.floor(Date.now() / 1000);
+
+  const hasProgress = !paused && duration > 0;
+  const startTimestamp = hasProgress ? nowSec - Math.floor(elapsed) : undefined;
+  const endTimestamp = hasProgress && startTimestamp != null
+    ? startTimestamp + Math.floor(duration)
+    : undefined;
 
   presence.setActivity({
     type: 3,
@@ -58,10 +64,9 @@ presence.on('UpdateData', () => {
       ? 'https://www.freemid.app/assets/pause.png'
       : 'https://www.freemid.app/assets/play.png',
     smallImageText: paused ? 'Paused' : 'Playing',
-    // Show end timestamp while playing so Discord shows a countdown
-    endTimestamp: !paused && duration > 0
-      ? Math.floor(now / 1000) + Math.floor(duration - elapsed)
-      : undefined,
+    // Provide both timestamps so popup and Discord can render synced progress.
+    startTimestamp,
+    endTimestamp,
     buttons: [{ label: 'Watch on YouTube', url: window.location.href.split('&')[0]! }],
   });
 });

@@ -21,7 +21,7 @@ let hostConnected = false;        // STDIO port is alive
 let discordConnected = false;     // Discord IPC handshake succeeded
 let lastError: string | null = null;
 let paused = false;
-let lastActivity: { title: string; sub: string } | null = null;
+let lastActivity: { title: string; sub: string; startTimestamp?: number; endTimestamp?: number } | null = null;
 let discordConnectedSince: number | null = null;
 let enabledSites: Record<string, boolean> = { youtube: true, youtubemusic: true };
 let hostVersion: string | null = null;
@@ -106,8 +106,20 @@ function sendToHost(payload: object): boolean {
 export function setActivity(activity: object, siteId?: string): void {
   if (paused) return;
   if (siteId !== undefined && !enabledSites[siteId]) return;
-  const a = activity as { details?: string; state?: string };
-  lastActivity = a.details ? { title: a.details, sub: a.state ?? '' } : null;
+  const a = activity as {
+    details?: string;
+    state?: string;
+    startTimestamp?: number;
+    endTimestamp?: number;
+  };
+  lastActivity = a.details
+    ? {
+        title: a.details,
+        sub: a.state ?? '',
+        startTimestamp: typeof a.startTimestamp === 'number' ? a.startTimestamp : undefined,
+        endTimestamp: typeof a.endTimestamp === 'number' ? a.endTimestamp : undefined,
+      }
+    : null;
   sendToHost({ type: 'SET_ACTIVITY', activity });
 }
 

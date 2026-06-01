@@ -26,8 +26,9 @@ const updateText    = document.getElementById('update-text')   as HTMLElement | 
 const btnUpdate     = document.getElementById('btn-update')    as HTMLButtonElement | null;
 const btnUninstall  = document.getElementById('btn-uninstall') as HTMLButtonElement | null;
 const elapsedBar    = document.getElementById('elapsed-bar')   as HTMLElement | null;
-const elapsedLabel  = document.getElementById('elapsed-label') as HTMLElement | null;
-const elapsedTime   = document.getElementById('elapsed-time')  as HTMLElement | null;
+const timelineFill    = document.getElementById('timeline-fill')    as HTMLElement | null;
+const timelineElapsed = document.getElementById('timeline-elapsed') as HTMLElement | null;
+const timelineTotal   = document.getElementById('timeline-total')   as HTMLElement | null;
 
 if (versionEl) versionEl.textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -35,8 +36,10 @@ if (versionEl) versionEl.textContent = `v${chrome.runtime.getManifest().version}
 
 let uptimeInterval: ReturnType<typeof setInterval> | null = null;
 let connectedSinceMs: number | null = null;
-let elapsedInterval: ReturnType<typeof setInterval> | null = null;
-let activityStartMs: number | null = null;
+let timelineInterval: ReturnType<typeof setInterval> | null = null;
+let timelineStartSec: number | null = null;
+let timelineEndSec: number | null = null;
+let timelineKey: string | null = null;
 
 // How long to show "Checking for Discord..." before revealing help panel
 const DISCORD_CHECK_DELAY_MS = 3000;
@@ -67,30 +70,49 @@ function stopUptimeTick(): void {
   connectedSinceMs = null;
 }
 
-// ── Elapsed bar (Discord-style) ───────────────────────────────────────────────
+// ── Timeline bar (Discord-style) ─────────────────────────────────────────────
 
-function formatElapsed(ms: number): string {
-  const s = Math.floor(ms / 1000);
+function formatTimestamp(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
   const m = Math.floor(s / 60);
   const h = Math.floor(m / 60);
   if (h > 0) return `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function updateElapsedDisplay(): void {
-  if (activityStartMs == null || !elapsedTime) return;
-  elapsedTime.textContent = formatElapsed(Date.now() - activityStartMs);
+function updateTimelineDisplay(): void {
+  if (
+    timelineStartSec == null ||
+    timelineEndSec == null ||
+    !timelineFill ||
+    !timelineElapsed ||
+    !timelineTotal
+  ) return;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const duration = Math.max(0, timelineEndSec - timelineStartSec);
+  const elapsed = Math.min(Math.max(0, nowSec - timelineStartSec), duration);
+  const pct = duration > 0 ? (elapsed / duration) * 100 : 0;
+
+  timelineFill.style.width = `${pct}%`;
+  timelineElapsed.textContent = formatTimestamp(elapsed);
+  timelineTotal.textContent = formatTimestamp(duration);
 }
 
-function startElapsedTick(): void {
-  if (elapsedInterval) return;
-  elapsedInterval = setInterval(updateElapsedDisplay, 1000);
-  updateElapsedDisplay();
+function startTimelineTick(): void {
+  if (timelineInterval) return;
+  timelineInterval = setInterval(updateTimelineDisplay, 1000);
+  updateTimelineDisplay();
 }
 
-function stopElapsedTick(): void {
-  if (elapsedInterval) { clearInterval(elapsedInterval); elapsedInterval = null; }
-  activityStartMs = null;
+function stopTimelineTick(): void {
+  if (timelineInterval) { clearInterval(timelineInterval); timelineInterval = null; }
+  timelineStartSec = null;
+  timelineEndSec = null;
+  timelineKey = null;
+  if (timelineFill) timelineFill.style.width = '0%';
+  if (timelineElapsed) timelineElapsed.textContent = '0:00';
+  if (timelineTotal) timelineTotal.textContent = '0:00';
   if (elapsedBar) elapsedBar.classList.add('hidden');
 }
 
@@ -151,7 +173,7 @@ type Status = {
   discordConnected: boolean;
   error?: string | null;
   paused?: boolean;
-  lastActivity?: { title: string; sub: string } | null;
+  lastActivity?: { title: string; sub: string; startTimestamp?: number; endTimestamp?: number } | null;
   connectedSince?: number | null;
   enabledSites?: Record<string, boolean>;
   hostVersion?: string | null;
@@ -174,7 +196,7 @@ function render(status: Status | null): void {
     if (hostVersionEl) hostVersionEl.textContent = '';
     if (updateBanner) updateBanner.classList.add('hidden');
     stopUptimeTick();
-    stopElapsedTick();
+    stopTimelineTick();
     return;
   }
 
@@ -210,14 +232,14 @@ function render(status: Status | null): void {
     sub.textContent = status.error ?? 'Install the FreeMiD host to continue';
     helpHost.classList.remove('hidden');
     stopUptimeTick();
-    stopElapsedTick();
+    stopTimelineTick();
     if (activityPanel) activityPanel.hidden = true;
     return;
   }
 
   if (!status.discordConnected) {
     stopUptimeTick();
-    stopElapsedTick();
+    stopTimelineTick();
     if (activityPanel) activityPanel.hidden = true;
     // Show "checking" for DISCORD_CHECK_DELAY_MS before revealing help panel
     if (!discordCheckShown) {
@@ -252,29 +274,38 @@ function render(status: Status | null): void {
     label.textContent = 'Rich Presence paused';
     sub.textContent = 'Toggle to resume sending to Discord';
     stopUptimeTick();
-    stopElapsedTick();
+    stopTimelineTick();
     if (activityPanel) activityPanel.hidden = true;
     return;
   }
 
-  // Activity preview & elapsed bar — only shown when fully connected and active
+  // Activity preview & timeline bar — only shown when fully connected and active
   const act = status.lastActivity;
   if (activityPanel) activityPanel.hidden = !act;
   if (act) {
     if (activityTitle) activityTitle.textContent = act.title;
     if (activitySub)   activitySub.textContent   = act.sub;
-    // Elapsed bar: reset timer when track changes
-    const trackKey = act.title + '|' + act.sub;
-    if (elapsedLabel && elapsedLabel.dataset['activity'] !== trackKey) {
-      elapsedLabel.dataset['activity'] = trackKey;
-      activityStartMs = Date.now();
-    } else if (activityStartMs == null) {
-      activityStartMs = Date.now();
+
+    const hasTimeline =
+      typeof act.startTimestamp === 'number' &&
+      typeof act.endTimestamp === 'number' &&
+      act.endTimestamp > act.startTimestamp;
+
+    if (hasTimeline) {
+      const key = `${act.startTimestamp}:${act.endTimestamp}`;
+      if (timelineKey !== key) {
+        timelineKey = key;
+        timelineStartSec = act.startTimestamp!;
+        timelineEndSec = act.endTimestamp!;
+      }
+      if (elapsedBar) elapsedBar.classList.remove('hidden');
+      startTimelineTick();
+      updateTimelineDisplay();
+    } else {
+      stopTimelineTick();
     }
-    if (elapsedBar) elapsedBar.classList.remove('hidden');
-    startElapsedTick();
   } else {
-    stopElapsedTick();
+    stopTimelineTick();
   }
 
   dot.className = 'dot connected';
