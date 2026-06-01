@@ -208,6 +208,78 @@
       .btn-reconnect svg { flex-shrink: 0; }
       @keyframes spin { to { transform: rotate(360deg); } }
       .btn-reconnect.spinning svg { animation: spin 0.7s linear infinite; }
+
+      /* Toggle switch */
+      .toggle-btn {
+        position: relative;
+        width: 36px;
+        height: 20px;
+        border-radius: 10px;
+        background: var(--bg-0);
+        border: 1px solid var(--border);
+        cursor: pointer;
+        transition: background 0.2s, border-color 0.2s;
+        flex-shrink: 0;
+        padding: 0;
+      }
+      .toggle-btn[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+      .toggle-thumb {
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--text-2);
+        transition: transform 0.2s, background 0.2s;
+      }
+      .toggle-btn[aria-checked="true"] .toggle-thumb { transform: translateX(16px); background: #fff; }
+
+      /* Pause control row */
+      .control-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 11px 18px;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-1);
+      }
+      .control-label { display: flex; flex-direction: column; gap: 2px; }
+      .control-label > span:first-child { font-size: 13px; font-weight: 500; color: var(--text-0); }
+      .control-sub { font-size: 11px; color: var(--text-2); }
+      .control-row[data-paused="true"] .control-sub { color: var(--warning); }
+
+      /* Site toggles */
+      .site-toggles { display: flex; flex-direction: column; gap: 10px; }
+      .site-row { display: flex; align-items: center; justify-content: space-between; }
+      .site-row span { font-size: 12px; color: var(--text-1); }
+
+      /* Activity sub-label */
+      .panel-sub {
+        font-size: 11px;
+        color: var(--text-2);
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Open Discord button */
+      .btn-discord {
+        display: inline-flex;
+        align-items: center;
+        margin-top: 8px;
+        padding: 5px 12px;
+        background: var(--accent);
+        border: none;
+        border-radius: 6px;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+      .btn-discord:hover { opacity: 0.85; }
     </style>
   </head>
   <body>
@@ -234,6 +306,16 @@
       </button>
     </div>
 
+    <div class="control-row" id="pause-row" data-paused="false">
+      <div class="control-label">
+        <span>Rich Presence</span>
+        <span class="control-sub" id="pause-sub">Active</span>
+      </div>
+      <button class="toggle-btn" id="btn-pause" role="switch" aria-checked="false" title="Pause/resume Rich Presence">
+        <span class="toggle-thumb"></span>
+      </button>
+    </div>
+
     <div class="help hidden" id="help-host">
       <strong>Native host not installed.</strong><br />
       Build and install the FreeMiD host, then reload this extension:
@@ -243,6 +325,31 @@
     <div class="help hidden" id="help-discord">
       <strong>Discord desktop not running.</strong><br />
       Open the Discord desktop client and FreeMiD will connect automatically.
+      <br /><button class="btn-discord" id="btn-open-discord">Open Discord ↗</button>
+    </div>
+
+    <div class="panel" id="activity-panel" hidden>
+      <div class="panel-label">Now sending</div>
+      <div class="panel-value" id="activity-title">—</div>
+      <div class="panel-sub" id="activity-sub"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">Active on</div>
+      <div class="site-toggles">
+        <div class="site-row">
+          <span>YouTube</span>
+          <button class="toggle-btn" id="toggle-youtube" role="switch" aria-checked="true" title="Toggle YouTube activity">
+            <span class="toggle-thumb"></span>
+          </button>
+        </div>
+        <div class="site-row">
+          <span>YouTube Music</span>
+          <button class="toggle-btn" id="toggle-ytm" role="switch" aria-checked="true" title="Toggle YouTube Music activity">
+            <span class="toggle-thumb"></span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <div class="panel">

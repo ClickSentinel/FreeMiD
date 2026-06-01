@@ -20,6 +20,10 @@ let nativePort: chrome.runtime.Port | null = null;
 let hostConnected = false;        // STDIO port is alive
 let discordConnected = false;     // Discord IPC handshake succeeded
 let lastError: string | null = null;
+let paused = false;
+let lastActivity: { title: string; sub: string } | null = null;
+let discordConnectedSince: number | null = null;
+let enabledSites: Record<string, boolean> = { youtube: true, youtubemusic: true };
 
 function connectNativeHost(): void {
   if (nativePort) return;
@@ -32,7 +36,15 @@ function connectNativeHost(): void {
     nativePort.onMessage.addListener((msg: unknown) => {
       const m = msg as { type?: string; connected?: boolean; error?: string };
       if (m.type === 'STATUS') {
+        const wasConnected = discordConnected;
         discordConnected = m.connected === true;
+        if (discordConnected && !wasConnected) {
+          discordConnectedSince = Date.now();
+          notifyConnectionChange(true);
+        } else if (!discordConnected && wasConnected) {
+          discordConnectedSince = null;
+          notifyConnectionChange(false);
+        }
         lastError = m.error ?? null;
         if (m.error) console.warn('[FreeMiD] host reported error:', m.error);
         broadcastStatus();
@@ -84,13 +96,29 @@ function sendToHost(payload: object): boolean {
 
 /**
  * Send Discord Rich Presence activity via the native host.
+ * Pass siteId to enforce per-site enable/disable and pause state.
  */
-export function setActivity(activity: object): void {
+export function setActivity(activity: object, siteId?: string): void {
+  if (paused) return;
+  if (siteId !== undefined && !enabledSites[siteId]) return;
+  const a = activity as { details?: string; state?: string };
+  lastActivity = a.details ? { title: a.details, sub: a.state ?? '' } : null;
   sendToHost({ type: 'SET_ACTIVITY', activity });
 }
 
 export function clearActivity(): void {
+  lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
+}
+
+function notifyConnectionChange(connected: boolean): void {
+  chrome.notifications.create('freemid-status', {
+    type: 'basic',
+    iconUrl: 'icons/icon48.png',
+    title: 'FreeMiD',
+    message: connected ? 'Connected to Discord' : 'Disconnected from Discord',
+    silent: true,
+  });
 }
 
 // ── Activity registry & content script injection ───────────────────────────────
@@ -153,6 +181,14 @@ async function handleTabNavigation(tabId: number, url: string): Promise<void> {
     return;
   }
 
+  if (!enabledSites[meta.id]) {
+    if (activeActivityTabs.has(tabId)) {
+      activeActivityTabs.delete(tabId);
+      clearActivity();
+    }
+    return;
+  }
+
   if (activeActivityTabs.get(tabId) === meta.id) return;
 
   activeActivityTabs.set(tabId, meta.id);
@@ -193,16 +229,37 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // Messages from injected activity scripts and the popup.
-chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   const msg = message as Record<string, unknown>;
 
   if (msg.type === 'FREEMID_SET_ACTIVITY' && typeof msg.data === 'object') {
-    setActivity(msg.data as object);
+    const siteId = sender.tab?.id != null ? activeActivityTabs.get(sender.tab.id) : undefined;
+    setActivity(msg.data as object, siteId);
     return;
   }
 
   if (msg.type === 'FREEMID_CLEAR_ACTIVITY') {
     clearActivity();
+    return;
+  }
+
+  if (msg.type === 'SET_PAUSED') {
+    paused = msg.value as boolean;
+    void chrome.storage.local.set({ paused });
+    if (paused) { lastActivity = null; sendToHost({ type: 'CLEAR_ACTIVITY' }); }
+    broadcastStatus();
+    return;
+  }
+
+  if (msg.type === 'SET_SITE_ENABLED') {
+    const siteId = msg.siteId as string;
+    const enabled = msg.enabled as boolean;
+    enabledSites[siteId] = enabled;
+    void chrome.storage.local.set({ enabledSites });
+    if (!enabled && [...activeActivityTabs.values()].includes(siteId)) {
+      clearActivity();
+    }
+    broadcastStatus();
     return;
   }
 
@@ -215,6 +272,10 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
       hostConnected,
       discordConnected,
       error: lastError,
+      paused,
+      lastActivity,
+      connectedSince: discordConnectedSince,
+      enabledSites,
     });
     return true;
   }
@@ -238,6 +299,10 @@ function broadcastStatus(): void {
       hostConnected,
       discordConnected,
       error: lastError,
+      paused,
+      lastActivity,
+      connectedSince: discordConnectedSince,
+      enabledSites,
     })
     .catch(() => {
       // popup might not be open — ignore
@@ -246,14 +311,20 @@ function broadcastStatus(): void {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
-connectNativeHost();
-
-// Re-inject activity scripts into any tabs that are already open when the
-// service worker starts (e.g. after the extension is reloaded). Without this,
-// existing YouTube / YouTube Music tabs become orphaned and stop sending
-// activity updates until the user manually refreshes the page.
-chrome.tabs.query({}, (tabs) => {
-  for (const tab of tabs) {
-    if (tab.id && tab.url) void handleTabNavigation(tab.id, tab.url);
+// Load persisted state (pause flag, site toggles) before connecting.
+void chrome.storage.local.get(['paused', 'enabledSites']).then((stored) => {
+  if (typeof stored['paused'] === 'boolean') paused = stored['paused'] as boolean;
+  if (stored['enabledSites'] && typeof stored['enabledSites'] === 'object') {
+    enabledSites = { ...enabledSites, ...(stored['enabledSites'] as Record<string, boolean>) };
   }
+  connectNativeHost();
+  // Re-inject activity scripts into any tabs that are already open when the
+  // service worker starts (e.g. after the extension is reloaded). Without this,
+  // existing YouTube / YouTube Music tabs become orphaned and stop sending
+  // activity updates until the user manually refreshes the page.
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      if (tab.id && tab.url) void handleTabNavigation(tab.id, tab.url);
+    }
+  });
 });
