@@ -11,6 +11,8 @@ const sub = document.getElementById('status-sub')!;
 const helpHost = document.getElementById('help-host')!;
 const helpDiscord = document.getElementById('help-discord')!;
 const pageInfo = document.getElementById('page-info')!;
+const versionEl = document.getElementById('version');
+if (versionEl) versionEl.textContent = `v${chrome.runtime.getManifest().version}`;
 
 type Status = {
   hostConnected: boolean;
