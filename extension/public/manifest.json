@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FreeMiD",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "Free, open-source Discord Rich Presence for YouTube and YouTube Music.",
 
   "permissions": [
@@ -29,14 +29,14 @@
     "default_icon": {
       "16":  "icons/icon16.png",
       "48":  "icons/icon48.png",
-      "128": "icons/icon128.png"
+      "128": "icons/icon128-cws.png"
     }
   },
 
   "icons": {
     "16":  "icons/icon16.png",
     "48":  "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "128": "icons/icon128-cws.png"
   },
 
   "web_accessible_resources": []
