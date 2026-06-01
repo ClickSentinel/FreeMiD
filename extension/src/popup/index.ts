@@ -195,27 +195,6 @@ function render(status: Status | null): void {
   setToggle(toggleYT,  status.enabledSites?.['youtube']      ?? true);
   setToggle(toggleYTM, status.enabledSites?.['youtubemusic'] ?? true);
 
-  // Activity preview & elapsed bar
-  const act = status.lastActivity;
-  if (activityPanel) activityPanel.hidden = !act || paused;
-  if (act && !paused) {
-    if (activityTitle) activityTitle.textContent = act.title;
-    if (activitySub)   activitySub.textContent   = act.sub;
-    // Elapsed bar: reset if activity title changed
-    const newLabel = act.sub || act.title;
-    if (elapsedLabel && elapsedLabel.dataset['activity'] !== newLabel) {
-      elapsedLabel.dataset['activity'] = newLabel;
-      activityStartMs = Date.now();
-    } else if (activityStartMs == null) {
-      activityStartMs = Date.now();
-    }
-    if (elapsedBar) elapsedBar.classList.remove('hidden');
-    if (elapsedLabel) elapsedLabel.textContent = 'Elapsed';
-    startElapsedTick();
-  } else {
-    stopElapsedTick();
-  }
-
   if (!status.hostConnected) {
     dot.className = 'dot error';
     label.textContent = 'Native host not running';
@@ -223,12 +202,14 @@ function render(status: Status | null): void {
     helpHost.classList.remove('hidden');
     stopUptimeTick();
     stopElapsedTick();
+    if (activityPanel) activityPanel.hidden = true;
     return;
   }
 
   if (!status.discordConnected) {
     stopUptimeTick();
     stopElapsedTick();
+    if (activityPanel) activityPanel.hidden = true;
     // Show "checking" for DISCORD_CHECK_DELAY_MS before revealing help panel
     if (!discordCheckShown) {
       dot.className = 'dot connecting';
@@ -263,7 +244,28 @@ function render(status: Status | null): void {
     sub.textContent = 'Toggle to resume sending to Discord';
     stopUptimeTick();
     stopElapsedTick();
+    if (activityPanel) activityPanel.hidden = true;
     return;
+  }
+
+  // Activity preview & elapsed bar — only shown when fully connected and active
+  const act = status.lastActivity;
+  if (activityPanel) activityPanel.hidden = !act;
+  if (act) {
+    if (activityTitle) activityTitle.textContent = act.title;
+    if (activitySub)   activitySub.textContent   = act.sub;
+    // Elapsed bar: reset timer when track changes
+    const trackKey = act.title + '|' + act.sub;
+    if (elapsedLabel && elapsedLabel.dataset['activity'] !== trackKey) {
+      elapsedLabel.dataset['activity'] = trackKey;
+      activityStartMs = Date.now();
+    } else if (activityStartMs == null) {
+      activityStartMs = Date.now();
+    }
+    if (elapsedBar) elapsedBar.classList.remove('hidden');
+    startElapsedTick();
+  } else {
+    stopElapsedTick();
   }
 
   dot.className = 'dot connected';
