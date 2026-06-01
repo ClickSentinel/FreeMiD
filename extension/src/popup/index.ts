@@ -173,7 +173,7 @@ function render(status: Status | null): void {
 
   // Host version
   if (hostVersionEl) {
-    hostVersionEl.textContent = status.hostVersion ? `Host v${status.hostVersion}` : '';
+    hostVersionEl.textContent = status.hostVersion ? `host v${status.hostVersion}` : '';
   }
 
   // Update banner
