@@ -72,7 +72,7 @@ if ($removedReg -eq 0) {
     Write-Host "   (no browser registry entries found)"
 }
 
-$removedManifest = Remove-IfExists -Path $ManifestPath -Label "manifest"
+[void](Remove-IfExists -Path $ManifestPath -Label "manifest")
 
 if ($KeepBinary) {
     Write-Host "-> Keeping binary by request: $BinaryPath"

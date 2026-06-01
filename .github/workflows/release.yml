@@ -134,23 +134,7 @@ jobs:
             install/uninstall.sh
             install/uninstall.ps1
 
-  # Publish to Chrome Web Store
-  #
-  # Requires these repository secrets:
-  #   CWS_EXTENSION_ID    - stable CWS extension ID (from devconsole)
-  #   CWS_CLIENT_ID       - OAuth2 client ID (Google Cloud Console)
-  #   CWS_CLIENT_SECRET   - OAuth2 client secret
-  #   CWS_REFRESH_TOKEN   - long-lived refresh token (one-time setup)
-  #
-  # And this repository variable:
-  #   CWS_PUBLISH = true  - set this to enable publishing
-  #
-  # First-time setup:
-  #   1. Submit the extension zip manually at https://chrome.google.com/webstore/devconsole
-  #   2. Follow https://github.com/nicedoc/chrome-webstore-upload-cli#getting-credentials
-  #      to generate OAuth credentials and a refresh token.
-  #   3. Add all four values as repository secrets.
-  #   4. Set the CWS_PUBLISH repository variable to 'true'.
+  # Optional publish job; runs only when CWS_PUBLISH=true.
   publish-cws:
     needs: release
     runs-on: ubuntu-latest
