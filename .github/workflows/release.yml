@@ -109,6 +109,16 @@ jobs:
           cp artifacts/freemid-windows-x86_64.exe/freemid-windows-x86_64.exe .
           chmod +x freemid-linux-x86_64 freemid-macos-arm64 freemid-macos-x86_64
 
+      - name: Generate checksums
+        run: |
+          sha256sum \
+            freemid-linux-x86_64 \
+            freemid-macos-arm64 \
+            freemid-macos-x86_64 \
+            freemid-windows-x86_64.exe \
+            freemid-extension.zip \
+            > checksums.sha256
+
       - uses: softprops/action-gh-release@v2
         with:
           prerelease: ${{ contains(github.ref_name, '-') }}
@@ -118,6 +128,7 @@ jobs:
             freemid-macos-arm64
             freemid-macos-x86_64
             freemid-windows-x86_64.exe
+            checksums.sha256
             install/install.sh
             install/install.ps1
             install/uninstall.sh
