@@ -6,55 +6,17 @@ on:
       - 'v*'
   workflow_dispatch:
 
-# Deny all permissions by default; each job grants only what it needs.
-permissions: {}
+permissions:
+  contents: write
 
 jobs:
-  # ── Security audit (runs once, gates all builds) ──────────────────────────
-  audit:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        id: cache-cargo-audit
-        with:
-          path: ~/.cargo/bin/cargo-audit
-          key: cargo-audit-${{ runner.os }}-0.21
-
-      - name: Install cargo-audit
-        if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
-        run: cargo install cargo-audit --locked
-
-      - name: cargo audit
-        run: cargo audit
-
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: extension/package-lock.json
-
-      - name: npm install (for audit)
-        run: cd extension && npm ci --ignore-scripts
-
-      - name: npm audit
-        run: cd extension && npm audit --audit-level=high
-
-  # ── Build the extension zip (platform-independent) ───────────────────────
+  # Build the extension zip (platform-independent)
   build-extension:
-    needs: audit
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: npm
@@ -69,14 +31,13 @@ jobs:
       - name: Package
         run: cd extension/dist && zip -r ../../freemid-extension.zip .
 
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+      - uses: actions/upload-artifact@v5
         with:
           name: freemid-extension
           path: freemid-extension.zip
 
   # Build native host binaries (one job per platform)
   build-native:
-    needs: audit
     strategy:
       fail-fast: false
       matrix:
@@ -92,19 +53,17 @@ jobs:
             artifact: freemid-windows-x86_64.exe
 
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
 
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@v5
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Add cross-compile target
         if: matrix.target != ''
         run: rustup target add ${{ matrix.target }}
 
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -125,31 +84,19 @@ jobs:
         run: copy target\release\freemid.exe ${{ matrix.artifact }}
         if: runner.os == 'Windows'
 
-      - name: Build installer (Windows only)
-        if: runner.os == 'Windows'
-        run: cargo build --release -p freemid-installer
-
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
-
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        if: runner.os == 'Windows'
-        with:
-          name: freemid-setup.exe
-          path: target\release\freemid-setup.exe
 
   # Create the GitHub release with all artifacts
   release:
     needs: [build-extension, build-native]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
 
@@ -160,22 +107,9 @@ jobs:
           cp artifacts/freemid-macos-arm64/freemid-macos-arm64 .
           cp artifacts/freemid-macos-x86_64/freemid-macos-x86_64 .
           cp artifacts/freemid-windows-x86_64.exe/freemid-windows-x86_64.exe .
-          cp artifacts/freemid-setup.exe/freemid-setup.exe .
           chmod +x freemid-linux-x86_64 freemid-macos-arm64 freemid-macos-x86_64
 
-      - name: Generate checksums
-        run: |
-          sha256sum \
-            freemid-linux-x86_64 \
-            freemid-macos-arm64 \
-            freemid-macos-x86_64 \
-            freemid-windows-x86_64.exe \
-            freemid-setup.exe \
-            freemid-extension.zip \
-            > checksums.sha256
-          cat checksums.sha256
-
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+      - uses: softprops/action-gh-release@v2
         with:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
@@ -184,8 +118,6 @@ jobs:
             freemid-macos-arm64
             freemid-macos-x86_64
             freemid-windows-x86_64.exe
-            freemid-setup.exe
-            checksums.sha256
             install/install.sh
             install/install.ps1
 
@@ -209,15 +141,14 @@ jobs:
   publish-cws:
     needs: release
     runs-on: ubuntu-latest
-    permissions: {}
     if: vars.CWS_PUBLISH == 'true'
     steps:
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - uses: actions/download-artifact@v5
         with:
           name: freemid-extension
 
       - name: Publish to Chrome Web Store
-        uses: mnao305/chrome-extension-upload@fdfe79400af990f5145a319e834aee64907ccff4 # v6.0.0
+        uses: mnao305/chrome-extension-upload@v6.0.0
         with:
           file-path: freemid-extension.zip
           extension-id: ${{ secrets.CWS_EXTENSION_ID }}

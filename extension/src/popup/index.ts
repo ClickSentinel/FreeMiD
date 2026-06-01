@@ -14,6 +14,19 @@ const pageInfo = document.getElementById('page-info')!;
 const versionEl = document.getElementById('version');
 if (versionEl) versionEl.textContent = `v${chrome.runtime.getManifest().version}`;
 
+const reconnectBtn = document.getElementById('btn-reconnect') as HTMLButtonElement | null;
+reconnectBtn?.addEventListener('click', async () => {
+  if (!reconnectBtn) return;
+  reconnectBtn.classList.add('spinning');
+  reconnectBtn.disabled = true;
+  dot.className = 'dot connecting';
+  label.textContent = 'Reconnecting…';
+  sub.textContent = '';
+  await fetchStatus();
+  reconnectBtn.classList.remove('spinning');
+  reconnectBtn.disabled = false;
+});
+
 type Status = {
   hostConnected: boolean;
   discordConnected: boolean;

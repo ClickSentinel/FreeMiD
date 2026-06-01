@@ -187,6 +187,27 @@
       footer a:hover { color: var(--accent); }
 
       .version { color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+      .btn-reconnect {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 10px;
+        background: var(--accent-soft);
+        border: 1px solid rgba(88,101,242,0.35);
+        border-radius: 6px;
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s, opacity 0.15s;
+        flex-shrink: 0;
+      }
+      .btn-reconnect:hover { background: rgba(88,101,242,0.28); }
+      .btn-reconnect:disabled { opacity: 0.45; cursor: not-allowed; }
+      .btn-reconnect svg { flex-shrink: 0; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .btn-reconnect.spinning svg { animation: spin 0.7s linear infinite; }
     </style>
   </head>
   <body>
@@ -204,6 +225,13 @@
         <div class="status-label" id="status-label">Connecting…</div>
         <div class="status-sub" id="status-sub">Reaching native host</div>
       </div>
+      <button class="btn-reconnect" id="btn-reconnect" title="Reconnect">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        </svg>
+        Reconnect
+      </button>
     </div>
 
     <div class="help hidden" id="help-host">
