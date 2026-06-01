@@ -331,7 +331,7 @@ function render(status: Status | null): void {
       }
     }
     if (activityButton) {
-      activityButton.textContent = act.firstButtonLabel ? `Button: ${act.firstButtonLabel}` : '';
+      activityButton.textContent = act.firstButtonLabel ? act.firstButtonLabel : '';
     }
     if (activityExtra) {
       const hasArt = !!artUrl;
