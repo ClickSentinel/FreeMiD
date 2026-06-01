@@ -10,6 +10,16 @@ permissions:
   contents: write
 
 jobs:
+  audit-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Security audit
+        run: cargo install cargo-audit --locked && cargo audit
+
   # Build the extension zip (platform-independent)
   build-extension:
     runs-on: ubuntu-latest
@@ -91,7 +101,7 @@ jobs:
 
   # Create the GitHub release with all artifacts
   release:
-    needs: [build-extension, build-native]
+    needs: [audit-rust, build-extension, build-native]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
