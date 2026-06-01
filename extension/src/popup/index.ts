@@ -69,7 +69,7 @@ reconnectBtn?.addEventListener('click', async () => {
 // ── Pause toggle ──────────────────────────────────────────────────────────────
 
 btnPause?.addEventListener('click', () => {
-  const nowPaused = btnPause.getAttribute('aria-checked') !== 'true';
+  const nowPaused = btnPause.getAttribute('aria-checked') === 'true'; // ON = active, so clicking ON → pause
   void chrome.runtime.sendMessage({ type: 'SET_PAUSED', value: nowPaused });
 });
 
@@ -120,8 +120,8 @@ function render(status: Status | null): void {
 
   const paused = status.paused ?? false;
 
-  // Pause toggle
-  setToggle(btnPause, paused);
+  // Pause toggle — toggle is ON when Rich Presence is active (not paused)
+  setToggle(btnPause, !paused);
   if (pauseSub) pauseSub.textContent = paused ? 'Paused' : 'Active';
   if (pauseRow) pauseRow.dataset['paused'] = String(paused);
 
