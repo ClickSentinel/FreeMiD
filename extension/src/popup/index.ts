@@ -24,6 +24,7 @@ const hostVersionEl = document.getElementById('host-version') as HTMLElement | n
 const updateBanner  = document.getElementById('update-banner') as HTMLElement | null;
 const updateText    = document.getElementById('update-text')   as HTMLElement | null;
 const btnUpdate     = document.getElementById('btn-update')    as HTMLButtonElement | null;
+const btnUninstall  = document.getElementById('btn-uninstall') as HTMLButtonElement | null;
 const elapsedBar    = document.getElementById('elapsed-bar')   as HTMLElement | null;
 const elapsedLabel  = document.getElementById('elapsed-label') as HTMLElement | null;
 const elapsedTime   = document.getElementById('elapsed-time')  as HTMLElement | null;
@@ -133,6 +134,14 @@ btnOpenDiscord?.addEventListener('click', () => {
 
 btnUpdate?.addEventListener('click', () => {
   void chrome.tabs.create({ url: 'https://github.com/ClickSentinel/FreeMiD/releases/latest' });
+});
+
+btnUninstall?.addEventListener('click', () => {
+  const isWindows = /Win/i.test(navigator.platform);
+  const scriptUrl = isWindows
+    ? 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/uninstall.ps1'
+    : 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/uninstall.sh';
+  void chrome.tabs.create({ url: scriptUrl });
 });
 
 // ── Render ────────────────────────────────────────────────────────────────────
