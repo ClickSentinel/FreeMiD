@@ -99,6 +99,10 @@ else
 
     echo "→ Downloading $ARTIFACT from GitHub Releases…"
 
+    # Remove any existing binary first so curl can write a fresh inode —
+    # the old file may be held open by a running freemid process.
+    rm -f "$BIN_DST"
+
     if command -v curl &>/dev/null; then
         curl -fsSL --retry 3 -o "$BIN_DST" "$DOWNLOAD_URL"
     elif command -v wget &>/dev/null; then
