@@ -1,0 +1,61 @@
+name: Windows Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev/ux-improvements-auto-update
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-windows-artifacts:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-artifacts-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Ensure DISCORD_CLIENT_ID fallback
+        shell: pwsh
+        env:
+          DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:DISCORD_CLIENT_ID)) {
+            "DISCORD_CLIENT_ID=placeholder-ci-build" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+            "DISCORD_CLIENT_ID=$env:DISCORD_CLIENT_ID" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
+      - name: Build Windows binaries
+        run: cargo build --release -p freemid -p freemid-installer
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          Copy-Item target/release/freemid.exe artifacts/freemid-windows-x86_64.exe
+          Copy-Item target/release/freemid-setup.exe artifacts/freemid-setup.exe
+          Copy-Item install/install.ps1 artifacts/install.ps1
+          Copy-Item install/uninstall.ps1 artifacts/uninstall.ps1
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: freemid-windows-artifacts-${{ github.sha }}
+          path: artifacts/*

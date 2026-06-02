@@ -83,24 +83,15 @@ No admin rights required.
 irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps1 | iex
 ```
 
-To use a custom extension ID:
-
-```powershell
-$env:FREEMID_EXTENSION_ID = "<your-id>"
-.\freemid-setup.exe
-# or
-$env:FREEMID_EXTENSION_ID = "<your-id>"; irm .../install.ps1 | iex
-```
-
 | Platform | Binary location | Manifest registration |
 | --- | --- | --- |
 | Linux | `~/.local/bin/freemid` | `~/.config/<browser>/NativeMessagingHosts/` |
 | macOS | `~/.local/bin/freemid` | `~/Library/Application Support/<browser>/NativeMessagingHosts/` |
 | Windows | `%LOCALAPPDATA%\FreeMiD\freemid.exe` | `HKCU\Software\<browser>\NativeMessagingHosts\` |
 
-### Step 3 — Restart your browser
+### Step 3 — Reload extension (restart only if needed)
 
-Chrome caches native messaging manifests at startup. A full restart (not just extension reload) is required after installation.
+After installing the native host, reload the FreeMiD extension page once. If the host is not detected right away, restart your browser and check again.
 
 ### Step 4 — Verify
 
@@ -118,7 +109,11 @@ Click the FreeMiD icon in your toolbar. The dot should turn **green** within a f
 curl -sSL https://github.com/ClickSentinel/FreeMiD/releases/latest/download/uninstall.sh | bash
 ```
 
-**Windows (PowerShell):**
+**Windows (recommended):**
+
+Use Apps and Features uninstall for FreeMiD. This runs local Setup uninstall mode.
+
+**Windows (PowerShell fallback):**
 
 ```powershell
 irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/uninstall.ps1 | iex

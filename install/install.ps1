@@ -75,14 +75,21 @@ if ($Binary) {
         Remove-Item $BinDst -Force -ErrorAction SilentlyContinue
         exit 1
     }
-    $ExpectedHash = ($ChecksumData -split "`n" |
-        Where-Object { $_ -match "\s+$([regex]::Escape($Artifact))$" } |
-        Select-Object -First 1) -split '\s+' | Select-Object -First 1
-    if (-not $ExpectedHash) {
-        Write-Error "Could not find checksum for $Artifact in checksums.sha256"
+    $ChecksumLines = $ChecksumData -split "`n" |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ }
+
+    $ChecksumEntry = $ChecksumLines |
+        Where-Object { $_ -match "(^|\s)\*?$([regex]::Escape($Artifact))$" } |
+        Select-Object -First 1
+
+    if (-not $ChecksumEntry) {
+        $Preview = ($ChecksumLines | Select-Object -First 5) -join "`n"
+        Write-Error "Could not find checksum for $Artifact in checksums.sha256.`nFirst entries:`n$Preview"
         Remove-Item $BinDst -Force
         exit 1
     }
+    $ExpectedHash = ($ChecksumEntry -split '\s+')[0]
     $ActualHash = (Get-FileHash $BinDst -Algorithm SHA256).Hash.ToLower()
     if ($ActualHash -ne $ExpectedHash.ToLower()) {
         Write-Error "Checksum mismatch!`n  Expected: $ExpectedHash`n  Actual:   $ActualHash"
