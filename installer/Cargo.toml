@@ -12,3 +12,6 @@ path = "src/main.rs"
 
 [target.'cfg(windows)'.dependencies]
 native-windows-gui = "1"
+
+[build-dependencies]
+embed-resource = "2"
