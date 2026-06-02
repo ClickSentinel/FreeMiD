@@ -29,6 +29,29 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Verify version consistency
+        run: bash scripts/sync-version.sh --check
+
+      - name: Verify tag version matches workspace version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          workspace_version=$(awk '
+            /^\[workspace\.package\]$/ { in_section=1; next }
+            /^\[/ { in_section=0 }
+            in_section && $1 == "version" {
+              gsub(/"/, "", $3)
+              print $3
+              exit
+            }
+          ' Cargo.toml)
+          tag_version="${GITHUB_REF_NAME#v}"
+
+          if [[ "$workspace_version" != "$tag_version" ]]; then
+            echo "Tag version ($tag_version) does not match workspace version ($workspace_version)"
+            exit 1
+          fi
+
       - uses: actions/setup-node@v5
         with:
           node-version: '24'

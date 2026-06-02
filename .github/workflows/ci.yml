@@ -12,6 +12,15 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  version-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify version consistency
+        run: bash scripts/sync-version.sh --check
+
   installer-defaults:
     runs-on: ubuntu-latest
     steps:
