@@ -64,11 +64,15 @@ mod win {
                         .unwrap_or_else(|_| DEFAULT_EXTENSION_ID.to_string());
                     let result = run_install(&extension_id);
                     match result {
-                        Ok(()) => nwg::simple_message(
-                            "FreeMiD Setup",
-                            "Installation complete. Restart Chrome or Edge to activate.",
-                        ),
-                        Err(e) => nwg::simple_message("FreeMiD Setup - Error", &e),
+                        Ok(()) => {
+                            nwg::simple_message(
+                                "FreeMiD Setup",
+                                "Installation complete. Restart Chrome or Edge to activate.",
+                            );
+                        }
+                        Err(e) => {
+                            nwg::simple_message("FreeMiD Setup - Error", &e);
+                        }
                     }
                     let mut ui = ui_events.borrow_mut();
                     ui.status.set_text("Ready");
@@ -76,11 +80,15 @@ mod win {
                 E::OnButtonClick if handle == uninstall_handle => {
                     let result = run_uninstall();
                     match result {
-                        Ok(()) => nwg::simple_message(
-                            "FreeMiD Setup",
-                            "FreeMiD native host uninstalled.",
-                        ),
-                        Err(e) => nwg::simple_message("FreeMiD Setup - Error", &e),
+                        Ok(()) => {
+                            nwg::simple_message(
+                                "FreeMiD Setup",
+                                "FreeMiD native host uninstalled.",
+                            );
+                        }
+                        Err(e) => {
+                            nwg::simple_message("FreeMiD Setup - Error", &e);
+                        }
                     }
                     let mut ui = ui_events.borrow_mut();
                     ui.status.set_text("Ready");
