@@ -6,10 +6,10 @@ A fully free, open-source Discord Rich Presence bridge for web browsing — no s
 
 ## Features
 
-- Live Rich Presence for YouTube Music and YouTube
+- Live Rich Presence for YouTube Music, YouTube, and TIDAL
 - Progress bar for music (start + end timestamps via Discord's Listening activity type)
-- Album art pulled directly from YouTube's image CDN — no asset uploads required
-- "Listen on YT Music" button linking to the current song
+- Album art and service icons pulled from source URLs — no Discord asset uploads required
+- "Listen" buttons linking to the current track when available
 - Instant status clear on tab close or navigation away
 - No account, no cloud, no telemetry
 
@@ -20,9 +20,9 @@ A fully free, open-source Discord Rich Presence bridge for web browsing — no s
 FreeMiD has two parts that work together:
 
 ```text
-YouTube / YouTube Music tab
+YouTube / YouTube Music / TIDAL tab
   └─ Content script (JS, injected by Chrome)
-       reads title / artist / timestamps from mediaSession API
+  reads title / artist / timestamps from page metadata (mediaSession and DOM)
          └─ Background service worker (JS, runs in Chrome)
               └─ Native messaging port (Chrome-managed stdin/stdout pipe)
                    └─ freemid native host (Rust binary, ~400 KB)
@@ -32,7 +32,7 @@ YouTube / YouTube Music tab
 
 **Why a native host?** Discord's IPC protocol uses a local Unix socket (`$XDG_RUNTIME_DIR/discord-ipc-0` on Linux, `$TMPDIR/discord-ipc-0` on macOS). Browsers cannot open Unix sockets directly, so a small native binary bridges the gap. Chrome spawns it on demand and kills it when Chrome closes — you never have to manage it yourself.
 
-> **mediaSession** is a standard browser API (`navigator.mediaSession`) that YouTube and YouTube Music populate with track metadata. The extension reads only what the browser already exposes — it does not scrape the DOM or make additional network requests.
+> **Metadata sources:** YouTube Music primarily uses `navigator.mediaSession`; TIDAL relies on stable player DOM selectors for title/artist/timestamps. No additional API calls are made by the extension for track metadata.
 
 ---
 
@@ -95,7 +95,7 @@ After installing the native host, reload the FreeMiD extension page once. If the
 
 ### Step 4 — Verify
 
-Click the FreeMiD icon in your toolbar. The dot should turn **green** within a few seconds if Discord desktop is running. Open YouTube or YouTube Music — your status will appear in Discord.
+Click the FreeMiD icon in your toolbar. The dot should turn **green** within a few seconds if Discord desktop is running. Open YouTube, YouTube Music, or TIDAL — your status will appear in Discord.
 
 ---
 
@@ -229,6 +229,7 @@ mysite: {
 | --- | --- | --- |
 | YouTube Music | ✅ | Title, artist, album art, progress bar, song link button |
 | YouTube | ✅ | Video title, channel name |
+| TIDAL | ✅ | Track title, artist, album art, progress bar, track link button |
 
 ---
 

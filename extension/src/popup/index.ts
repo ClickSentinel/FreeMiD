@@ -1,3 +1,5 @@
+import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
+
 /**
  * FreeMiD — Popup
  */
@@ -21,6 +23,7 @@ const pauseSub  = document.getElementById('pause-sub')  as HTMLElement      | nu
 const btnPause  = document.getElementById('btn-pause')  as HTMLButtonElement | null;
 const toggleYT  = document.getElementById('toggle-youtube') as HTMLButtonElement | null;
 const toggleYTM = document.getElementById('toggle-ytm')     as HTMLButtonElement | null;
+const toggleTidal = document.getElementById('toggle-tidal') as HTMLButtonElement | null;
 const btnOpenDiscord = document.getElementById('btn-open-discord') as HTMLButtonElement | null;
 const reconnectBtn   = document.getElementById('btn-reconnect')    as HTMLButtonElement | null;
 const versionEl = document.getElementById('version');
@@ -164,6 +167,7 @@ function wireSiteToggle(btn: HTMLButtonElement | null, siteId: string): void {
 }
 wireSiteToggle(toggleYT,  'youtube');
 wireSiteToggle(toggleYTM, 'youtubemusic');
+wireSiteToggle(toggleTidal, 'tidal');
 
 // ── Open Discord ──────────────────────────────────────────────────────────────
 
@@ -227,6 +231,18 @@ function artistFromActivity(act: NonNullable<Status['lastActivity']>): string {
   return '';
 }
 
+function fallbackLogoUrl(act: NonNullable<Status['lastActivity']>): string | null {
+  const service = `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();
+  if (service.includes('tidal')) {
+    return chrome.runtime.getURL(PRESENCE_PREVIEW_ASSETS.tidalLogo);
+  }
+  if (service.includes('youtube music') || service.includes('yt music')) {
+    return chrome.runtime.getURL(PRESENCE_PREVIEW_ASSETS.ytmusicLogo);
+  }
+  if (service.includes('youtube')) return 'https://www.youtube.com/s/desktop/6cfcd65f/img/logos/favicon_32x32.png';
+  return null;
+}
+
 function setToggle(btn: HTMLButtonElement | null, checked: boolean): void {
   btn?.setAttribute('aria-checked', String(checked));
 }
@@ -275,6 +291,7 @@ function render(status: Status | null): void {
   // Site toggles
   setToggle(toggleYT,  status.enabledSites?.['youtube']      ?? true);
   setToggle(toggleYTM, status.enabledSites?.['youtubemusic'] ?? true);
+  setToggle(toggleTidal, status.enabledSites?.['tidal'] ?? true);
 
   if (!status.hostConnected) {
     if (discordCheckTimer) { clearTimeout(discordCheckTimer); discordCheckTimer = null; }
@@ -370,7 +387,7 @@ function render(status: Status | null): void {
     }
 
     if (activityLogo) {
-      const logoUrl = urlLike(act.smallImageKey) ? act.smallImageKey : null;
+      const logoUrl = urlLike(act.smallImageKey) ? act.smallImageKey : fallbackLogoUrl(act);
       if (logoUrl) {
         activityLogo.src = logoUrl;
         activityLogo.hidden = false;
