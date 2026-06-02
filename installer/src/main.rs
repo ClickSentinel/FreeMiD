@@ -1,7 +1,7 @@
 // FreeMiD Windows Installer
 //
-// Double-click freemid-setup.exe to install the FreeMiD native messaging host.
-// Re-running is safe — kills the running process first so the file is never locked.
+// Double-click freemid-setup.exe to open a small Windows GUI with install and
+// uninstall actions.
 //
 // To use a custom extension ID:
 //   set FREEMID_EXTENSION_ID=yourextensionid && freemid-setup.exe
@@ -22,6 +22,8 @@ mod win {
     use std::path::PathBuf;
     use std::process::Command;
 
+    use native_windows_gui as nwg;
+
     const GITHUB_REPO: &str = "ClickSentinel/FreeMiD";
     const ARTIFACT: &str = "freemid-windows-x86_64.exe";
     const HOST_NAME: &str = "com.clicksentinel.freemid";
@@ -29,36 +31,153 @@ mod win {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
     const LOCAL_BINARY_ENV: &str = "FREEMID_BINARY";
     const UNINSTALL_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\FreeMiD";
+    const README_URL: &str = "https://github.com/ClickSentinel/FreeMiD#installation";
 
     pub fn run_main() {
+        if let Err(e) = run_gui() {
+            eprintln!("ERROR: {}", e);
+        }
+    }
+
+    fn run_gui() -> Result<(), String> {
+        nwg::init().map_err(|e| format!("Failed to initialize GUI: {}", e))?;
+        nwg::Font::set_global_family("Segoe UI").map_err(|e| format!("Failed to set UI font: {}", e))?;
+
+        let ui = Ui::build().map_err(|e| format!("Failed to build UI: {}", e))?;
+        let install_handle = ui.install_button.handle.clone();
+        let uninstall_handle = ui.uninstall_button.handle.clone();
+        let docs_handle = ui.docs_button.handle.clone();
+        let window_handle = ui.window.handle.clone();
+
+        let ui = std::rc::Rc::new(std::cell::RefCell::new(ui));
+        let ui_events = std::rc::Rc::clone(&ui);
+
+        let evt_handler = nwg::full_bind_event_handler(&window_handle, move |evt, _evt_data, handle| {
+            use nwg::Event as E;
+
+            match evt {
+                E::OnWindowClose => {
+                    nwg::stop_thread_dispatch();
+                }
+                E::OnButtonClick if handle == install_handle => {
+                    let extension_id = std::env::var("FREEMID_EXTENSION_ID")
+                        .unwrap_or_else(|_| DEFAULT_EXTENSION_ID.to_string());
+                    let result = run_install(&extension_id);
+                    match result {
+                        Ok(()) => nwg::simple_message(
+                            "FreeMiD Setup",
+                            "Installation complete. Restart Chrome or Edge to activate.",
+                        ),
+                        Err(e) => nwg::simple_message("FreeMiD Setup - Error", &e),
+                    }
+                    let mut ui = ui_events.borrow_mut();
+                    ui.status.set_text("Ready");
+                }
+                E::OnButtonClick if handle == uninstall_handle => {
+                    let result = run_uninstall();
+                    match result {
+                        Ok(()) => nwg::simple_message(
+                            "FreeMiD Setup",
+                            "FreeMiD native host uninstalled.",
+                        ),
+                        Err(e) => nwg::simple_message("FreeMiD Setup - Error", &e),
+                    }
+                    let mut ui = ui_events.borrow_mut();
+                    ui.status.set_text("Ready");
+                }
+                E::OnButtonClick if handle == docs_handle => {
+                    open_docs();
+                }
+                _ => {}
+            }
+        });
+
+        ui.borrow_mut().evt_handler = Some(evt_handler);
+        nwg::dispatch_thread_events();
+        Ok(())
+    }
+
+    struct Ui {
+        window: nwg::Window,
+        title: nwg::Label,
+        status: nwg::Label,
+        install_button: nwg::Button,
+        uninstall_button: nwg::Button,
+        docs_button: nwg::Button,
+        evt_handler: Option<nwg::EventHandler>,
+    }
+
+    impl Ui {
+        fn build() -> Result<Self, nwg::NwgError> {
+            let mut window = nwg::Window::default();
+            let mut title = nwg::Label::default();
+            let mut status = nwg::Label::default();
+            let mut install_button = nwg::Button::default();
+            let mut uninstall_button = nwg::Button::default();
+            let mut docs_button = nwg::Button::default();
+
+            nwg::Window::builder()
+                .size((420, 210))
+                .position((300, 300))
+                .title(&format!("FreeMiD Setup v{}", VERSION))
+                .flags(nwg::WindowFlags::MAIN_WINDOW | nwg::WindowFlags::VISIBLE)
+                .build(&mut window)?;
+
+            nwg::Label::builder()
+                .text("Choose what you want to do with FreeMiD.")
+                .parent(&window)
+                .position((16, 16))
+                .size((388, 24))
+                .build(&mut title)?;
+
+            nwg::Label::builder()
+                .text("Ready")
+                .parent(&window)
+                .position((16, 48))
+                .size((388, 24))
+                .build(&mut status)?;
+
+            nwg::Button::builder()
+                .text("Install or Update")
+                .parent(&window)
+                .position((16, 92))
+                .size((120, 36))
+                .build(&mut install_button)?;
+
+            nwg::Button::builder()
+                .text("Uninstall")
+                .parent(&window)
+                .position((148, 92))
+                .size((120, 36))
+                .build(&mut uninstall_button)?;
+
+            nwg::Button::builder()
+                .text("Troubleshooting")
+                .parent(&window)
+                .position((280, 92))
+                .size((120, 36))
+                .build(&mut docs_button)?;
+
+            Ok(Self {
+                window,
+                title,
+                status,
+                install_button,
+                uninstall_button,
+                docs_button,
+                evt_handler: None,
+            })
+        }
+    }
+
+    fn run_install(extension_id: &str) -> Result<(), String> {
+        set_status("Installing...");
+
         println!("FreeMiD Setup  v{}", VERSION);
         println!("{}", "-".repeat(38));
         println!();
 
-        match run() {
-            Ok(()) => {
-                println!();
-                println!("Installation complete. Restart Chrome or Edge to activate.");
-                show_message(
-                    "FreeMiD Setup",
-                    "Installation complete. Restart Chrome or Edge to activate.",
-                    false,
-                );
-            }
-            Err(e) => {
-                eprintln!();
-                eprintln!("ERROR: {}", e);
-                show_message("FreeMiD Setup - Error", &e, true);
-            }
-        }
-    }
-
-    fn run() -> Result<(), String> {
-        let extension_id = std::env::var("FREEMID_EXTENSION_ID")
-            .unwrap_or_else(|_| DEFAULT_EXTENSION_ID.to_string());
-
         println!("[1/5] Stopping any running FreeMiD process...");
-        // taskkill exits non-zero if the process is not running — that is fine.
         let _ = Command::new("taskkill")
             .args(["/F", "/IM", "freemid.exe", "/T"])
             .output();
@@ -72,7 +191,6 @@ mod win {
         std::fs::create_dir_all(&install_dir)
             .map_err(|e| format!("Cannot create install directory: {}", e))?;
 
-        // Wait up to 5 s for freemid.exe to release its file handle.
         if bin_dst.exists() {
             let mut unlocked = false;
             for _ in 0..10 {
@@ -84,8 +202,7 @@ mod win {
             }
             if !unlocked {
                 return Err(format!(
-                    "freemid.exe is still locked after 5 s. \
-                     Close any application using it and re-run the installer."
+                    "freemid.exe is still locked after 5 s. Close any application using it and re-run the installer."
                 ));
             }
         }
@@ -118,7 +235,6 @@ mod win {
             println!("      Downloaded ({:.2} MB)", size_mb);
 
             println!("[3/6] Verifying SHA256 checksum...");
-            // .Content is byte[] on PS5 when Content-Type is octet-stream; decode explicitly.
             let checksums_raw = ps_output(&format!(
                 "[System.Text.Encoding]::UTF8.GetString((Invoke-WebRequest -Uri '{}' -UseBasicParsing).Content)",
                 checksums_url
@@ -147,7 +263,7 @@ mod win {
             println!("      OK  {}...", &actual[..16]);
         }
 
-        println!("[4/5] Writing native messaging manifest...");
+        println!("[4/6] Writing native messaging manifest...");
         let bin_path_json = bin_dst.display().to_string().replace('\\', "\\\\");
         let manifest = format!(
             "{{\n  \"name\": \"{host}\",\n  \"description\": \"FreeMiD native messaging host\",\n  \"path\": \"{path}\",\n  \"type\": \"stdio\",\n  \"allowed_origins\": [\n    \"chrome-extension://{ext_id}/\"\n  ]\n}}",
@@ -162,7 +278,7 @@ mod win {
         let manifest_str = manifest_path.display().to_string();
         for (name, parent) in [
             ("Chrome", r"HKCU\Software\Google\Chrome\NativeMessagingHosts"),
-            ("Edge",   r"HKCU\Software\Microsoft\Edge\NativeMessagingHosts"),
+            ("Edge", r"HKCU\Software\Microsoft\Edge\NativeMessagingHosts"),
         ] {
             let key = format!(r"{}\{}", parent, HOST_NAME);
             match reg_set(&key, &manifest_str) {
@@ -180,7 +296,56 @@ mod win {
         println!("  Extension:  {}", extension_id);
         println!("  ARP Key:    {}", UNINSTALL_KEY);
 
+        set_status("Ready");
         Ok(())
+    }
+
+    fn run_uninstall() -> Result<(), String> {
+        set_status("Uninstalling...");
+
+        let local_app_data = std::env::var("LOCALAPPDATA")
+            .map_err(|_| "%LOCALAPPDATA% not set".to_string())?;
+        let install_dir = PathBuf::from(local_app_data).join("FreeMiD");
+        let manifest_path = install_dir.join(format!("{}.json", HOST_NAME));
+        let bin_dst = install_dir.join("freemid.exe");
+
+        let _ = Command::new("taskkill")
+            .args(["/F", "/IM", "freemid.exe", "/T"])
+            .output();
+
+        for key in [
+            UNINSTALL_KEY.to_string(),
+            r"HKCU\Software\Google\Chrome\NativeMessagingHosts\com.clicksentinel.freemid".to_string(),
+            r"HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.clicksentinel.freemid".to_string(),
+        ] {
+            let _ = reg_delete(&key);
+        }
+
+        let _ = std::fs::remove_file(&manifest_path);
+        let _ = std::fs::remove_file(&bin_dst);
+
+        if install_dir.exists() {
+            let has_remaining = std::fs::read_dir(&install_dir)
+                .ok()
+                .and_then(|mut it| it.next())
+                .is_some();
+            if !has_remaining {
+                let _ = std::fs::remove_dir(&install_dir);
+            }
+        }
+
+        set_status("Ready");
+        Ok(())
+    }
+
+    fn open_docs() {
+        let _ = Command::new("cmd")
+            .args(["/C", "start", "", README_URL])
+            .status();
+    }
+
+    fn set_status(status: &str) {
+        let _ = status;
     }
 
     fn build_urls(tag: &str) -> (String, String) {
@@ -250,6 +415,18 @@ mod win {
         }
     }
 
+    fn reg_delete(key: &str) -> Result<(), String> {
+        let status = Command::new("reg")
+            .args(["delete", key, "/f"])
+            .status()
+            .map_err(|e| format!("Failed to spawn reg.exe: {}", e))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("reg delete failed for key: {}", key))
+        }
+    }
+
     fn register_arp(install_dir: &PathBuf, bin_dst: &PathBuf) -> Result<(), String> {
         let install_location = install_dir.display().to_string();
         let display_icon = bin_dst.display().to_string();
@@ -268,21 +445,6 @@ mod win {
         reg_set_named(UNINSTALL_KEY, "NoRepair", "REG_DWORD", "1")?;
 
         Ok(())
-    }
-
-    fn show_message(title: &str, body: &str, is_error: bool) {
-        let icon = if is_error { "Error" } else { "Information" };
-        let cmd = format!(
-            "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('{body}','{title}','OK','{icon}') | Out-Null",
-            body = ps_quote(body),
-            title = ps_quote(title),
-            icon = icon,
-        );
-        let _ = ps_run(&cmd);
-    }
-
-    fn ps_quote(s: &str) -> String {
-        s.replace('\\', "\\\\").replace('\'', "''")
     }
 }
 

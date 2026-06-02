@@ -9,3 +9,6 @@ description = "FreeMiD Windows installer"
 [[bin]]
 name = "freemid-setup"
 path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+native-windows-gui = "1"
