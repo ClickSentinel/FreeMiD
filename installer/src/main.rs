@@ -27,6 +27,7 @@ mod win {
     const HOST_NAME: &str = "com.clicksentinel.freemid";
     const DEFAULT_EXTENSION_ID: &str = "gaonohfjfpdlfapccfaanenfcojfknli";
     const VERSION: &str = env!("CARGO_PKG_VERSION");
+    const UNINSTALL_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\FreeMiD";
 
     pub fn run_main() {
         println!("FreeMiD Setup  v{}", VERSION);
@@ -144,7 +145,7 @@ mod win {
         std::fs::write(&manifest_path, &manifest)
             .map_err(|e| format!("Cannot write manifest: {}", e))?;
 
-        println!("[5/5] Registering native messaging host...");
+        println!("[5/6] Registering native messaging host...");
         let manifest_str = manifest_path.display().to_string();
         for (name, parent) in [
             ("Chrome", r"HKCU\Software\Google\Chrome\NativeMessagingHosts"),
@@ -157,10 +158,14 @@ mod win {
             }
         }
 
+        println!("[6/6] Registering Apps & Features entry...");
+        register_arp(&install_dir, &bin_dst)?;
+
         println!();
         println!("  Binary:     {}", bin_dst.display());
         println!("  Manifest:   {}", manifest_path.display());
         println!("  Extension:  {}", extension_id);
+        println!("  ARP Key:    {}", UNINSTALL_KEY);
 
         Ok(())
     }
@@ -218,6 +223,38 @@ mod win {
         } else {
             Err(format!("reg add failed for key: {}", key))
         }
+    }
+
+    fn reg_set_named(key: &str, name: &str, typ: &str, value: &str) -> Result<(), String> {
+        let status = Command::new("reg")
+            .args(["add", key, "/v", name, "/t", typ, "/d", value, "/f"])
+            .status()
+            .map_err(|e| format!("Failed to spawn reg.exe: {}", e))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("reg add failed for key {} value {}", key, name))
+        }
+    }
+
+    fn register_arp(install_dir: &PathBuf, bin_dst: &PathBuf) -> Result<(), String> {
+        let install_location = install_dir.display().to_string();
+        let display_icon = bin_dst.display().to_string();
+        let uninstall_cmd = format!(
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://github.com/{}/releases/latest/download/uninstall.ps1 | iex\"",
+            GITHUB_REPO
+        );
+
+        reg_set_named(UNINSTALL_KEY, "DisplayName", "REG_SZ", "FreeMiD")?;
+        reg_set_named(UNINSTALL_KEY, "DisplayVersion", "REG_SZ", VERSION)?;
+        reg_set_named(UNINSTALL_KEY, "Publisher", "REG_SZ", "ClickSentinel")?;
+        reg_set_named(UNINSTALL_KEY, "InstallLocation", "REG_SZ", &install_location)?;
+        reg_set_named(UNINSTALL_KEY, "DisplayIcon", "REG_SZ", &display_icon)?;
+        reg_set_named(UNINSTALL_KEY, "UninstallString", "REG_SZ", &uninstall_cmd)?;
+        reg_set_named(UNINSTALL_KEY, "NoModify", "REG_DWORD", "1")?;
+        reg_set_named(UNINSTALL_KEY, "NoRepair", "REG_DWORD", "1")?;
+
+        Ok(())
     }
 
     fn show_message(title: &str, body: &str, is_error: bool) {
