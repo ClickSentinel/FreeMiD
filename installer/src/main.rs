@@ -9,6 +9,8 @@
 // To install a specific release tag:
 //   set FREEMID_RELEASE_TAG=v0.3.1 && freemid-setup.exe
 
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 #[cfg(not(target_os = "windows"))]
 fn main() {
     eprintln!("freemid-setup is a Windows-only installer.");
@@ -17,7 +19,6 @@ fn main() {
 
 #[cfg(target_os = "windows")]
 mod win {
-    use std::io::{self, Read, Write};
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -36,14 +37,18 @@ mod win {
             Ok(()) => {
                 println!();
                 println!("Installation complete. Restart Chrome or Edge to activate.");
+                show_message(
+                    "FreeMiD Setup",
+                    "Installation complete. Restart Chrome or Edge to activate.",
+                    false,
+                );
             }
             Err(e) => {
                 eprintln!();
                 eprintln!("ERROR: {}", e);
+                show_message("FreeMiD Setup - Error", &e, true);
             }
         }
-
-        pause();
     }
 
     fn run() -> Result<(), String> {
@@ -215,11 +220,19 @@ mod win {
         }
     }
 
-    fn pause() {
-        print!("\nPress Enter to exit...");
-        let _ = io::stdout().flush();
-        let mut buf = [0u8; 1];
-        let _ = io::stdin().read(&mut buf);
+    fn show_message(title: &str, body: &str, is_error: bool) {
+        let icon = if is_error { "Error" } else { "Information" };
+        let cmd = format!(
+            "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('{body}','{title}','OK','{icon}') | Out-Null",
+            body = ps_quote(body),
+            title = ps_quote(title),
+            icon = icon,
+        );
+        let _ = ps_run(&cmd);
+    }
+
+    fn ps_quote(s: &str) -> String {
+        s.replace('\\', "\\\\").replace('\'', "''")
     }
 }
 
