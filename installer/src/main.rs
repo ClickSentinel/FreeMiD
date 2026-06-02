@@ -19,6 +19,7 @@ fn main() {
 
 #[cfg(target_os = "windows")]
 mod win {
+    use std::os::windows::process::CommandExt;
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -32,6 +33,7 @@ mod win {
     const LOCAL_BINARY_ENV: &str = "FREEMID_BINARY";
     const UNINSTALL_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\FreeMiD";
     const README_URL: &str = "https://github.com/ClickSentinel/FreeMiD#installation";
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     pub fn run_main() {
         if let Err(e) = run_gui() {
@@ -67,15 +69,17 @@ mod win {
                         Ok(()) => {
                             nwg::simple_message(
                                 "FreeMiD Setup",
-                                "Installation complete. Restart Chrome or Edge to activate.",
+                                "Installation complete. Install or enable the FreeMiD extension, then reload the extension page if needed.",
                             );
+                            let mut ui = ui_events.borrow_mut();
+                            ui.status.set_text("Status: \u{2714} Installed");
                         }
                         Err(e) => {
                             nwg::simple_message("FreeMiD Setup - Error", &e);
+                            let mut ui = ui_events.borrow_mut();
+                            ui.status.set_text("Status: Failed");
                         }
                     }
-                    let mut ui = ui_events.borrow_mut();
-                    ui.status.set_text("Ready");
                 }
                 E::OnButtonClick if handle == uninstall_handle => {
                     let result = run_uninstall();
@@ -85,13 +89,15 @@ mod win {
                                 "FreeMiD Setup",
                                 "FreeMiD native host uninstalled.",
                             );
+                            let mut ui = ui_events.borrow_mut();
+                            ui.status.set_text("Status: \u{2714} Uninstalled");
                         }
                         Err(e) => {
                             nwg::simple_message("FreeMiD Setup - Error", &e);
+                            let mut ui = ui_events.borrow_mut();
+                            ui.status.set_text("Status: Failed");
                         }
                     }
-                    let mut ui = ui_events.borrow_mut();
-                    ui.status.set_text("Ready");
                 }
                 E::OnButtonClick if handle == docs_handle => {
                     open_docs();
@@ -186,7 +192,7 @@ mod win {
         println!();
 
         println!("[1/5] Stopping any running FreeMiD process...");
-        let _ = Command::new("taskkill")
+        let _ = hidden_command("taskkill")
             .args(["/F", "/IM", "freemid.exe", "/T"])
             .output();
 
@@ -318,6 +324,7 @@ mod win {
         let bin_dst = install_dir.join("freemid.exe");
 
         let _ = Command::new("taskkill")
+            .creation_flags(CREATE_NO_WINDOW)
             .args(["/F", "/IM", "freemid.exe", "/T"])
             .output();
 
@@ -347,7 +354,7 @@ mod win {
     }
 
     fn open_docs() {
-        let _ = Command::new("cmd")
+        let _ = hidden_command("cmd")
             .args(["/C", "start", "", README_URL])
             .status();
     }
@@ -373,7 +380,7 @@ mod win {
     }
 
     fn ps_run(cmd: &str) -> Result<(), String> {
-        let status = Command::new("powershell")
+        let status = hidden_command("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", cmd])
             .status()
             .map_err(|e| format!("Failed to spawn PowerShell: {}", e))?;
@@ -385,7 +392,7 @@ mod win {
     }
 
     fn ps_output(cmd: &str) -> Result<String, String> {
-        let out = Command::new("powershell")
+        let out = hidden_command("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", cmd])
             .output()
             .map_err(|e| format!("Failed to spawn PowerShell: {}", e))?;
@@ -400,7 +407,7 @@ mod win {
     }
 
     fn reg_set(key: &str, value: &str) -> Result<(), String> {
-        let status = Command::new("reg")
+        let status = hidden_command("reg")
             .args(["add", key, "/ve", "/t", "REG_SZ", "/d", value, "/f"])
             .status()
             .map_err(|e| format!("Failed to spawn reg.exe: {}", e))?;
@@ -412,7 +419,7 @@ mod win {
     }
 
     fn reg_set_named(key: &str, name: &str, typ: &str, value: &str) -> Result<(), String> {
-        let status = Command::new("reg")
+        let status = hidden_command("reg")
             .args(["add", key, "/v", name, "/t", typ, "/d", value, "/f"])
             .status()
             .map_err(|e| format!("Failed to spawn reg.exe: {}", e))?;
@@ -424,7 +431,7 @@ mod win {
     }
 
     fn reg_delete(key: &str) -> Result<(), String> {
-        let status = Command::new("reg")
+        let status = hidden_command("reg")
             .args(["delete", key, "/f"])
             .status()
             .map_err(|e| format!("Failed to spawn reg.exe: {}", e))?;
@@ -453,6 +460,12 @@ mod win {
         reg_set_named(UNINSTALL_KEY, "NoRepair", "REG_DWORD", "1")?;
 
         Ok(())
+    }
+
+    fn hidden_command(program: &str) -> Command {
+        let mut cmd = Command::new(program);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd
     }
 }
 

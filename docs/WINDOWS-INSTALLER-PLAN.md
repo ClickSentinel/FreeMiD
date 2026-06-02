@@ -88,6 +88,7 @@
    - prefer GUI setup executable when available
    - fallback to script URLs when not available
 3. Add troubleshooting section for checksum/artifact mismatch.
+4. Update installer completion copy to avoid browser restart requirement and instead guide users to install or enable the extension.
 
 ## Validation Checklist (Release Gate)
 
@@ -113,3 +114,4 @@
 2. Keep registry writes under `HKCU` only.
 3. Keep `uninstall.ps1` as permanent fallback even after GUI uninstall is shipped.
 4. Keep checksum verification mandatory for downloaded binaries.
+5. Do not require browser restart in installer messaging; guide extension install/enable actions instead.
