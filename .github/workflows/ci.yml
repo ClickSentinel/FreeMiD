@@ -12,6 +12,35 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  installer-defaults:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify installer default extension ID consistency
+        run: |
+          set -euo pipefail
+
+          sh_id=$(sed -n 's/^DEFAULT_EXTENSION_ID="\([a-z0-9]\+\)"$/\1/p' install/install.sh)
+          ps_id=$(sed -n 's/^\$DefaultExtensionId = "\([a-z0-9]\+\)"$/\1/p' install/install.ps1)
+          rs_id=$(sed -n 's/^    const DEFAULT_EXTENSION_ID: &str = "\([a-z0-9]\+\)";$/\1/p' installer/src/main.rs)
+
+          if [[ -z "$sh_id" || -z "$ps_id" || -z "$rs_id" ]]; then
+            echo "Failed to parse one or more default extension IDs"
+            exit 1
+          fi
+
+          if [[ "$sh_id" != "$ps_id" || "$sh_id" != "$rs_id" ]]; then
+            echo "Installer default extension IDs are inconsistent"
+            echo "install.sh: $sh_id"
+            echo "install.ps1: $ps_id"
+            echo "installer/src/main.rs: $rs_id"
+            exit 1
+          fi
+
+          echo "Default extension ID is consistent: $sh_id"
+
   extension:
     runs-on: ubuntu-latest
     defaults:
