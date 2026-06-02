@@ -27,6 +27,7 @@ mod win {
     const HOST_NAME: &str = "com.clicksentinel.freemid";
     const DEFAULT_EXTENSION_ID: &str = "gaonohfjfpdlfapccfaanenfcojfknli";
     const VERSION: &str = env!("CARGO_PKG_VERSION");
+    const LOCAL_BINARY_ENV: &str = "FREEMID_BINARY";
     const UNINSTALL_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\FreeMiD";
 
     pub fn run_main() {
@@ -89,50 +90,62 @@ mod win {
             }
         }
 
-        let tag = std::env::var("FREEMID_RELEASE_TAG").unwrap_or_else(|_| "latest".to_string());
-        let (download_url, checksums_url) = build_urls(&tag);
+        if let Ok(local_binary) = std::env::var(LOCAL_BINARY_ENV) {
+            println!("[2/6] Installing from local binary...");
+            println!("      From: {}", local_binary);
+            std::fs::copy(&local_binary, &bin_dst)
+                .map_err(|e| format!("Failed to copy local binary {}: {}", local_binary, e))?;
+            let size_mb = std::fs::metadata(&bin_dst)
+                .map(|m| m.len() as f64 / 1_048_576.0)
+                .unwrap_or(0.0);
+            println!("      Installed ({:.2} MB)", size_mb);
+            println!("[3/6] Skipping checksum (local binary mode)...");
+        } else {
+            let tag = std::env::var("FREEMID_RELEASE_TAG").unwrap_or_else(|_| "latest".to_string());
+            let (download_url, checksums_url) = build_urls(&tag);
 
-        println!("[2/5] Downloading {} ...", ARTIFACT);
-        println!("      From: {}", download_url);
-        ps_run(&format!(
-            "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
-            download_url,
-            bin_dst.display()
-        ))?;
+            println!("[2/6] Downloading {} ...", ARTIFACT);
+            println!("      From: {}", download_url);
+            ps_run(&format!(
+                "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                download_url,
+                bin_dst.display()
+            ))?;
 
-        let size_mb = std::fs::metadata(&bin_dst)
-            .map(|m| m.len() as f64 / 1_048_576.0)
-            .unwrap_or(0.0);
-        println!("      Downloaded ({:.2} MB)", size_mb);
+            let size_mb = std::fs::metadata(&bin_dst)
+                .map(|m| m.len() as f64 / 1_048_576.0)
+                .unwrap_or(0.0);
+            println!("      Downloaded ({:.2} MB)", size_mb);
 
-        println!("[3/5] Verifying SHA256 checksum...");
-        // .Content is byte[] on PS5 when Content-Type is octet-stream; decode explicitly.
-        let checksums_raw = ps_output(&format!(
-            "[System.Text.Encoding]::UTF8.GetString((Invoke-WebRequest -Uri '{}' -UseBasicParsing).Content)",
-            checksums_url
-        ))?;
+            println!("[3/6] Verifying SHA256 checksum...");
+            // .Content is byte[] on PS5 when Content-Type is octet-stream; decode explicitly.
+            let checksums_raw = ps_output(&format!(
+                "[System.Text.Encoding]::UTF8.GetString((Invoke-WebRequest -Uri '{}' -UseBasicParsing).Content)",
+                checksums_url
+            ))?;
 
-        let expected = checksums_raw
-            .lines()
-            .find(|l| l.trim_end().ends_with(ARTIFACT))
-            .and_then(|l| l.split_whitespace().next())
-            .ok_or_else(|| format!("Entry for {} not found in checksums.sha256", ARTIFACT))?
-            .to_lowercase();
+            let expected = checksums_raw
+                .lines()
+                .find(|l| l.trim_end().ends_with(ARTIFACT))
+                .and_then(|l| l.split_whitespace().next())
+                .ok_or_else(|| format!("Entry for {} not found in checksums.sha256", ARTIFACT))?
+                .to_lowercase();
 
-        let actual = ps_output(&format!(
-            "(Get-FileHash '{}' -Algorithm SHA256).Hash.ToLower()",
-            bin_dst.display()
-        ))?;
-        let actual = actual.trim().to_lowercase();
+            let actual = ps_output(&format!(
+                "(Get-FileHash '{}' -Algorithm SHA256).Hash.ToLower()",
+                bin_dst.display()
+            ))?;
+            let actual = actual.trim().to_lowercase();
 
-        if actual != expected {
-            let _ = std::fs::remove_file(&bin_dst);
-            return Err(format!(
-                "Checksum mismatch!\n  Expected: {}\n  Actual:   {}",
-                expected, actual
-            ));
+            if actual != expected {
+                let _ = std::fs::remove_file(&bin_dst);
+                return Err(format!(
+                    "Checksum mismatch!\n  Expected: {}\n  Actual:   {}",
+                    expected, actual
+                ));
+            }
+            println!("      OK  {}...", &actual[..16]);
         }
-        println!("      OK  {}...", &actual[..16]);
 
         println!("[4/5] Writing native messaging manifest...");
         let bin_path_json = bin_dst.display().to_string().replace('\\', "\\\\");
