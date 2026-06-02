@@ -98,9 +98,9 @@ $env:FREEMID_EXTENSION_ID = "<your-id>"; irm .../install.ps1 | iex
 | macOS | `~/.local/bin/freemid` | `~/Library/Application Support/<browser>/NativeMessagingHosts/` |
 | Windows | `%LOCALAPPDATA%\FreeMiD\freemid.exe` | `HKCU\Software\<browser>\NativeMessagingHosts\` |
 
-### Step 3 — Restart your browser
+### Step 3 — Reload extension (restart only if needed)
 
-Chrome caches native messaging manifests at startup. A full restart (not just extension reload) is required after installation.
+After installing the native host, reload the FreeMiD extension page once. If the host is not detected right away, restart your browser and check again.
 
 ### Step 4 — Verify
 

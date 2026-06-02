@@ -36,6 +36,19 @@ const timelineTotal   = document.getElementById('timeline-total')   as HTMLEleme
 
 if (versionEl) versionEl.textContent = `v${chrome.runtime.getManifest().version}`;
 
+// Clarify button behavior by platform so Windows users know these actions open Setup.
+const isWindowsPlatform = /Win/i.test(navigator.platform);
+if (isWindowsPlatform) {
+  if (btnUpdate) {
+    btnUpdate.textContent = 'Open Setup ↗';
+    btnUpdate.title = 'Open the latest FreeMiD setup executable';
+  }
+  if (btnUninstall) {
+    btnUninstall.textContent = 'Open Setup';
+    btnUninstall.title = 'Open setup and choose Uninstall';
+  }
+}
+
 // ── Uptime ────────────────────────────────────────────────────────────────────
 
 let uptimeInterval: ReturnType<typeof setInterval> | null = null;
@@ -159,11 +172,10 @@ btnOpenDiscord?.addEventListener('click', () => {
 });
 
 btnUpdate?.addEventListener('click', () => {
-  const isWindows = /Win/i.test(navigator.platform);
-  const scriptUrl = isWindows
-    ? 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps1'
+  const url = isWindowsPlatform
+    ? 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/freemid-setup.exe'
     : 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.sh';
-  void chrome.tabs.create({ url: scriptUrl });
+  void chrome.tabs.create({ url });
 });
 
 btnInstallHost?.addEventListener('click', () => {
@@ -172,11 +184,10 @@ btnInstallHost?.addEventListener('click', () => {
 });
 
 btnUninstall?.addEventListener('click', () => {
-  const isWindows = /Win/i.test(navigator.platform);
-  const scriptUrl = isWindows
-    ? 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/uninstall.ps1'
+  const url = isWindowsPlatform
+    ? 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/freemid-setup.exe'
     : 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/uninstall.sh';
-  void chrome.tabs.create({ url: scriptUrl });
+  void chrome.tabs.create({ url });
 });
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -246,7 +257,11 @@ function render(status: Status | null): void {
   if (updateBanner) {
     if (status.updateAvailable && status.latestVersion) {
       updateBanner.classList.remove('hidden');
-      if (updateText) updateText.textContent = `Host update available: v${status.latestVersion}`;
+      if (updateText) {
+        updateText.textContent = isWindowsPlatform
+          ? `Host update available: v${status.latestVersion} (opens Setup)`
+          : `Host update available: v${status.latestVersion}`;
+      }
     } else {
       updateBanner.classList.add('hidden');
     }
