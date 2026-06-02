@@ -159,7 +159,11 @@ btnOpenDiscord?.addEventListener('click', () => {
 });
 
 btnUpdate?.addEventListener('click', () => {
-  void chrome.tabs.create({ url: 'https://github.com/ClickSentinel/FreeMiD/releases/latest' });
+  const isWindows = /Win/i.test(navigator.platform);
+  const scriptUrl = isWindows
+    ? 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps1'
+    : 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.sh';
+  void chrome.tabs.create({ url: scriptUrl });
 });
 
 btnInstallHost?.addEventListener('click', () => {
