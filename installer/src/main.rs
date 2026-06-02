@@ -24,7 +24,7 @@ mod win {
     const GITHUB_REPO: &str = "ClickSentinel/FreeMiD";
     const ARTIFACT: &str = "freemid-windows-x86_64.exe";
     const HOST_NAME: &str = "com.clicksentinel.freemid";
-    const DEFAULT_EXTENSION_ID: &str = "hkhbfipnjmaaookghalliomoejfagppi";
+    const DEFAULT_EXTENSION_ID: &str = "gaonohfjfpdlfapccfaanenfcojfknli";
     const VERSION: &str = env!("CARGO_PKG_VERSION");
 
     pub fn run_main() {

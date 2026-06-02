@@ -20,7 +20,7 @@ set -euo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────────
 HOST_NAME="${FREEMID_HOST_NAME:-com.clicksentinel.freemid}"
-DEFAULT_EXTENSION_ID="hkhbfipnjmaaookghalliomoejfagppi"
+DEFAULT_EXTENSION_ID="gaonohfjfpdlfapccfaanenfcojfknli"
 GITHUB_REPO="ClickSentinel/FreeMiD"
 GITHUB_RELEASES="https://github.com/${GITHUB_REPO}/releases"
 

@@ -25,7 +25,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-$DefaultExtensionId = "hkhbfipnjmaaookghalliomoejfagppi"
+$DefaultExtensionId = "gaonohfjfpdlfapccfaanenfcojfknli"
 $GithubRepo        = "ClickSentinel/FreeMiD"
 $Artifact          = "freemid-windows-x86_64.exe"
 
