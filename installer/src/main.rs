@@ -134,7 +134,7 @@ mod win {
                 }
                 E::OnButtonClick if handle == install_handle => {
                     let result = run_install(DEFAULT_EXTENSION_ID, |msg| {
-                        let mut ui = ui_events.borrow_mut();
+                        let ui = ui_events.borrow_mut();
                         ui.status.set_text(msg);
                     });
                     match result {
@@ -143,7 +143,7 @@ mod win {
                                 "FreeMiD Setup",
                                 "Installation complete. Make sure the FreeMiD extension is installed and enabled. If the host is not detected right away, reload the extension page or restart the browser.",
                             );
-                            let mut ui = ui_events.borrow_mut();
+                            let ui = ui_events.borrow_mut();
                             ui.status.set_text("Status: \u{2714} Installed");
                         }
                         Err(e) => {
@@ -154,14 +154,14 @@ mod win {
                                     e
                                 ),
                             );
-                            let mut ui = ui_events.borrow_mut();
+                            let ui = ui_events.borrow_mut();
                             ui.status.set_text("Status: Failed");
                         }
                     }
                 }
                 E::OnButtonClick if handle == uninstall_handle => {
                     let result = run_uninstall(|msg| {
-                        let mut ui = ui_events.borrow_mut();
+                        let ui = ui_events.borrow_mut();
                         ui.status.set_text(msg);
                     });
                     match result {
@@ -170,7 +170,7 @@ mod win {
                                 "FreeMiD Setup",
                                 "FreeMiD native host uninstalled.",
                             );
-                            let mut ui = ui_events.borrow_mut();
+                            let ui = ui_events.borrow_mut();
                             ui.status.set_text("Status: \u{2714} Uninstalled");
                         }
                         Err(e) => {
@@ -181,7 +181,7 @@ mod win {
                                     e
                                 ),
                             );
-                            let mut ui = ui_events.borrow_mut();
+                            let ui = ui_events.borrow_mut();
                             ui.status.set_text("Status: Failed");
                         }
                     }
@@ -200,9 +200,9 @@ mod win {
 
     struct Ui {
         window: nwg::Window,
-        title: nwg::Label,
+        _title: nwg::Label,
         status: nwg::Label,
-        note: nwg::Label,
+        _note: nwg::Label,
         install_button: nwg::Button,
         uninstall_button: nwg::Button,
         docs_button: nwg::Button,
@@ -270,9 +270,9 @@ mod win {
 
             Ok(Self {
                 window,
-                title,
+                _title: title,
                 status,
-                note,
+                _note: note,
                 install_button,
                 uninstall_button,
                 docs_button,

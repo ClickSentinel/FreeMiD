@@ -56,7 +56,6 @@
    - Complete or failed
 4. Show actionable error dialogs with copyable details.
 5. Keep advanced options hidden by default:
-   - custom extension ID
    - release tag override
 
 ## Phase 4: GUI Uninstaller Support
@@ -75,11 +74,31 @@
    - DisplayName
    - DisplayVersion
    - Publisher
-   - UninstallString (pointing to GUI uninstaller mode)
+   - UninstallString (pointing to local setup uninstaller mode, no remote script fetch)
 2. Add Start Menu shortcuts:
    - FreeMiD Setup
    - Uninstall FreeMiD
 3. Optional: add file version metadata and code signing preparation notes.
+
+## Safety Hardening Steps (Current Priority)
+
+1. Make Apps and Features uninstall local and deterministic.
+   - Set `UninstallString` to local `freemid-setup.exe --uninstall`.
+   - Do not use remote `irm ... | iex` in ARP uninstall path.
+2. Add explicit installer CLI uninstall mode.
+   - Ensure `freemid-setup.exe --uninstall` runs the same uninstall logic as GUI uninstall.
+   - Use `--silent` for ARP-triggered uninstall flows.
+3. Remove installer runtime dependency on PowerShell for download and hashing.
+   - Replace PowerShell `Invoke-WebRequest` and `Get-FileHash` with native Rust HTTP + SHA256.
+4. Fail install when browser host registration did not succeed for any target browser.
+   - Keep per-browser warnings for diagnostics but return a user-visible install failure on zero successful registrations.
+
+Status in this branch:
+
+- Step 1 implemented: ARP uninstall now targets local setup uninstall mode.
+- Step 2 implemented: `--uninstall` mode and `--silent` mode added to setup executable.
+- Step 3 implemented: setup now uses native Rust HTTP and SHA256 for download/checksum verification.
+- Step 4 implemented: setup fails install when browser host registration succeeds for zero target browsers.
 
 ## Phase 6: Docs and Extension UX Alignment
 
