@@ -32,7 +32,7 @@ mod win {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
     const LOCAL_BINARY_ENV: &str = "FREEMID_BINARY";
     const UNINSTALL_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\FreeMiD";
-    const README_URL: &str = "https://github.com/ClickSentinel/FreeMiD#installation";
+    const LATEST_SETUP_URL: &str = "https://github.com/ClickSentinel/FreeMiD/releases/latest/download/freemid-setup.exe";
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     pub fn run_main() {
@@ -118,7 +118,7 @@ mod win {
                     }
                 }
                 E::OnButtonClick if handle == docs_handle => {
-                    open_docs();
+                    open_latest_setup();
                 }
                 _ => {}
             }
@@ -151,53 +151,53 @@ mod win {
             let mut docs_button = nwg::Button::default();
 
             nwg::Window::builder()
-                .size((420, 246))
+                .size((420, 236))
                 .position((300, 300))
                 .title(&format!("FreeMiD Setup v{}", VERSION))
                 .flags(nwg::WindowFlags::MAIN_WINDOW | nwg::WindowFlags::VISIBLE)
                 .build(&mut window)?;
 
             nwg::Label::builder()
-                .text("Choose what you want to do with FreeMiD.")
+                .text("Install or manage FreeMiD on this device.")
                 .parent(&window)
                 .position((16, 16))
                 .size((388, 24))
                 .build(&mut title)?;
 
             nwg::Label::builder()
+                .text("This setup installs the latest host by default.")
+                .parent(&window)
+                .position((16, 42))
+                .size((388, 20))
+                .build(&mut note)?;
+
+            nwg::Label::builder()
                 .text("Status: Ready")
                 .parent(&window)
-                .position((16, 48))
+                .position((16, 72))
                 .size((388, 24))
                 .build(&mut status)?;
 
             nwg::Button::builder()
                 .text("Install or Update")
                 .parent(&window)
-                .position((16, 92))
-                .size((120, 36))
+                .position((16, 104))
+                .size((388, 40))
                 .build(&mut install_button)?;
 
             nwg::Button::builder()
                 .text("Uninstall")
                 .parent(&window)
-                .position((148, 92))
-                .size((120, 36))
+                .position((16, 156))
+                .size((188, 34))
                 .build(&mut uninstall_button)?;
 
             nwg::Button::builder()
-                .text("Help / Latest Setup")
+                .text("Get Latest Setup")
                 .parent(&window)
-                .position((280, 92))
-                .size((120, 36))
+                .position((216, 156))
+                .size((188, 34))
                 .build(&mut docs_button)?;
-
-            nwg::Label::builder()
-                .text("Setup installs the latest host by default. Use Help / Latest Setup to download the newest setup binary.")
-                .parent(&window)
-                .position((16, 142))
-                .size((388, 62))
-                .build(&mut note)?;
 
             Ok(Self {
                 window,
@@ -396,9 +396,9 @@ mod win {
         Ok(())
     }
 
-    fn open_docs() {
+    fn open_latest_setup() {
         let _ = hidden_command("cmd")
-            .args(["/C", "start", "", README_URL])
+            .args(["/C", "start", "", LATEST_SETUP_URL])
             .status();
     }
 
