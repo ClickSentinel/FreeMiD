@@ -25,4 +25,9 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityMeta> = {
     name: 'YouTube Music',
     matches: ['*://music.youtube.com/*'],
   },
+  tidal: {
+    id: 'tidal',
+    name: 'TIDAL',
+    matches: ['*://tidal.com/*', '*://listen.tidal.com/*'],
+  },
 };

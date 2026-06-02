@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "FreeMiD",
   "version": "0.3.12",
-  "description": "Free, open-source Discord Rich Presence for YouTube and YouTube Music.",
+  "description": "Free, open-source Discord Rich Presence for YouTube, YouTube Music, and TIDAL.",
 
   "permissions": [
     "tabs",
@@ -16,6 +16,8 @@
     "*://www.youtube.com/*",
     "*://youtube.com/*",
     "*://music.youtube.com/*",
+    "*://tidal.com/*",
+    "*://listen.tidal.com/*",
     "https://api.github.com/*"
   ],
 

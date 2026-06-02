@@ -125,6 +125,16 @@ fn ensure_connected(slot: &mut std::sync::MutexGuard<'_, Option<DiscordIpc>>) ->
     Ok(())
 }
 
+fn is_transient_ipc_error(err: &IpcError) -> bool {
+    match err {
+        IpcError::Io(e) => matches!(
+            e.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
+        ),
+        _ => false,
+    }
+}
+
 /// Run `f` on the live IPC, reconnecting once on failure.
 fn with_reconnect<F>(ipc: &Mutex<Option<DiscordIpc>>, mut f: F) -> Result<(), IpcError>
 where
@@ -140,6 +150,15 @@ where
             Err(e) => e,
         },
     };
+
+    if is_transient_ipc_error(&first_err) {
+        eprintln!(
+            "[FreeMiD] IPC transient error ({}); keeping current connection and retrying on next tick",
+            first_err
+        );
+        return Ok(());
+    }
+
     eprintln!("[FreeMiD] IPC call failed ({}) — dropping & reconnecting", first_err);
     *guard = None;
     ensure_connected(&mut guard)?;

@@ -1,4 +1,5 @@
 import { Presence } from '../../presence/Presence';
+import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
 
 const presence = new Presence({ clientId: import.meta.env.VITE_DISCORD_CLIENT_ID });
 
@@ -211,7 +212,7 @@ presence.on('UpdateData', () => {
     largeImageKey: artUrl,
     largeImageText: ms?.metadata?.album || title,
     largeImageUrl: songUrl,
-    smallImageKey: 'https://music.youtube.com/img/favicon_144.png',
+    smallImageKey: PRESENCE_ASSET_KEYS.ytmusicLogo,
     smallImageText: 'YouTube Music',
     buttons: songUrl ? [{ label: 'Listen on YT Music', url: songUrl }] : undefined,
   });

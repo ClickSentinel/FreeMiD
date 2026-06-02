@@ -35,7 +35,7 @@ let lastActivity: {
   firstButtonLabel?: string;
 } | null = null;
 let discordConnectedSince: number | null = null;
-let enabledSites: Record<string, boolean> = { youtube: true, youtubemusic: true };
+let enabledSites: Record<string, boolean> = { youtube: true, youtubemusic: true, tidal: true };
 let hostVersion: string | null = null;
 let latestVersion: string | null = null;
 
@@ -174,7 +174,7 @@ export function clearActivity(): void {
 function notifyConnectionChange(connected: boolean): void {
   chrome.notifications.create('freemid-status', {
     type: 'basic',
-    iconUrl: 'icons/icon48.png',
+    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
     title: 'FreeMiD',
     message: connected ? 'Connected to Discord' : 'Disconnected from Discord',
     silent: true,
