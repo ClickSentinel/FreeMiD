@@ -1,5 +1,7 @@
 # Windows Installer and Uninstaller Plan
 
+This is the canonical Windows installer planning and release-readiness doc. It supersedes the prior standalone readiness draft to avoid drift.
+
 ## Goals
 
 1. Ship a dead-simple Windows GUI installer experience.
@@ -107,7 +109,7 @@ Status in this branch:
    - prefer GUI setup executable when available
    - fallback to script URLs when not available
 3. Add troubleshooting section for checksum/artifact mismatch.
-4. Update installer completion copy to avoid browser restart requirement and instead guide users to install or enable the extension.
+4. Update installer completion copy to avoid browser restart requirement and instead guide users to open chrome://extensions and reload the extension.
 
 ## Validation Checklist (Release Gate)
 
@@ -117,7 +119,30 @@ Status in this branch:
 4. `checksums.sha256` contains all required release files.
 5. Default extension ID is identical across all installer entrypoints.
 6. Reinstall over existing version works without admin rights.
-7. Browser restart guidance appears after successful install.
+7. Reload-the-extension guidance appears after successful install.
+
+## Release Readiness Notes (Current)
+
+1. Setup defaults to the production extension ID in the current GUI install flow.
+2. Popup `Open Setup` is a download flow: browser opens the release URL and user runs the downloaded EXE.
+3. Apps and Features uninstall is local and deterministic via `freemid-setup.exe --uninstall --silent`.
+4. Setup downloads host artifacts from GitHub Releases at install time and requires network reachability.
+5. Unsigned EXE trust prompts are expected until code signing is introduced.
+
+## Pre-Tag Checklist (Windows)
+
+- [ ] Clean Windows 11 install from GitHub release on Chrome
+- [ ] Clean Windows 11 install from GitHub release on Edge
+- [ ] Clean Windows 11 install from GitHub release on Brave
+- [ ] Clean Windows 11 install from GitHub release on Chromium
+- [ ] Clean Windows 11 install from GitHub release on Vivaldi
+- [ ] Clean Windows 11 install from Chrome Web Store package using the default extension ID
+- [ ] Verify manifest `allowed_origins` value matches the extension ID in use
+- [ ] Popup `Open Setup` update flow tested from an installed extension
+- [ ] Popup uninstall flow tested from an installed extension
+- [ ] Apps and Features uninstall tested while online
+- [ ] Browser warning and SmartScreen behavior captured with screenshots
+- [ ] Release notes include reload-first guidance and setup-download wording
 
 ## Delivery Sequence
 

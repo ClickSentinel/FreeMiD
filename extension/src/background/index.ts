@@ -11,6 +11,8 @@
  */
 
 import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
+import { GITHUB_REPO } from '../constants/github';
+import { STORAGE_KEYS } from '../constants/storageKeys';
 
 const NATIVE_HOST_NAME = 'com.clicksentinel.freemid';
 
@@ -39,7 +41,12 @@ let enabledSites: Record<string, boolean> = { youtube: true, youtubemusic: true,
 let hostVersion: string | null = null;
 let latestVersion: string | null = null;
 
-const GITHUB_REPO = 'ClickSentinel/FreeMiD';
+function resetHostConnection(error?: string): void {
+  nativePort = null;
+  hostConnected = false;
+  discordConnected = false;
+  lastError = error ?? null;
+}
 
 function connectNativeHost(): void {
   if (nativePort) return;
@@ -75,20 +82,14 @@ function connectNativeHost(): void {
     nativePort.onDisconnect.addListener(() => {
       const err = chrome.runtime.lastError?.message ?? 'disconnected';
       console.warn(`[FreeMiD] Native host disconnected: ${err}`);
-      nativePort = null;
-      hostConnected = false;
-      discordConnected = false;
-      lastError = err;
+      resetHostConnection(err);
       broadcastStatus();
     });
 
     // Ask for an initial status update.
     sendToHost({ type: 'PING' });
   } catch (e) {
-    nativePort = null;
-    hostConnected = false;
-    discordConnected = false;
-    lastError = e instanceof Error ? e.message : String(e);
+    resetHostConnection(e instanceof Error ? e.message : String(e));
     console.error('[FreeMiD] Failed to connect to native host:', lastError);
     broadcastStatus();
   }
@@ -104,10 +105,7 @@ function sendToHost(payload: object): boolean {
     return true;
   } catch (e) {
     console.error('[FreeMiD] postMessage failed:', e);
-    nativePort = null;
-    hostConnected = false;
-    discordConnected = false;
-    lastError = e instanceof Error ? e.message : String(e);
+    resetHostConnection(e instanceof Error ? e.message : String(e));
     broadcastStatus();
     return false;
   }
@@ -234,18 +232,12 @@ async function handleTabNavigation(tabId: number, url: string): Promise<void> {
   const meta = matchActivity(url);
 
   if (!meta) {
-    if (activeActivityTabs.has(tabId)) {
-      activeActivityTabs.delete(tabId);
-      clearActivity();
-    }
+    clearTabActivity(tabId);
     return;
   }
 
   if (!enabledSites[meta.id]) {
-    if (activeActivityTabs.has(tabId)) {
-      activeActivityTabs.delete(tabId);
-      clearActivity();
-    }
+    clearTabActivity(tabId);
     return;
   }
 
@@ -282,10 +274,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (activeActivityTabs.has(tabId)) {
-    activeActivityTabs.delete(tabId);
-    clearActivity();
-  }
+  clearTabActivity(tabId);
 });
 
 // Messages from injected activity scripts and the popup.
@@ -305,8 +294,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
   if (msg.type === 'SET_PAUSED') {
     paused = msg.value as boolean;
-    void chrome.storage.local.set({ paused });
-    if (paused) { lastActivity = null; sendToHost({ type: 'CLEAR_ACTIVITY' }); }
+    void chrome.storage.local.set({ [STORAGE_KEYS.paused]: paused });
+    if (paused) clearActivity();
     broadcastStatus();
     return;
   }
@@ -315,7 +304,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     const siteId = msg.siteId as string;
     const enabled = msg.enabled as boolean;
     enabledSites[siteId] = enabled;
-    void chrome.storage.local.set({ enabledSites });
+    void chrome.storage.local.set({ [STORAGE_KEYS.enabledSites]: enabledSites });
     if (!enabled && [...activeActivityTabs.values()].includes(siteId)) {
       clearActivity();
     }
@@ -376,6 +365,12 @@ function broadcastStatus(): void {
     });
 }
 
+function clearTabActivity(tabId: number): void {
+  if (!activeActivityTabs.has(tabId)) return;
+  activeActivityTabs.delete(tabId);
+  clearActivity();
+}
+
 // ── Version & update check ────────────────────────────────────────────────────
 
 function compareVersions(a: string, b: string): number {
@@ -404,7 +399,7 @@ async function checkForUpdates(): Promise<void> {
     const tag = (data.tag_name ?? '').replace(/^v/, '');
     if (tag) {
       latestVersion = tag;
-      await chrome.storage.local.set({ latestVersion });
+      await chrome.storage.local.set({ [STORAGE_KEYS.latestVersion]: latestVersion });
       broadcastStatus();
     }
   } catch (e) {
@@ -415,12 +410,12 @@ async function checkForUpdates(): Promise<void> {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 // Load persisted state (pause flag, site toggles) before connecting.
-void chrome.storage.local.get(['paused', 'enabledSites', 'latestVersion']).then((stored) => {
-  if (typeof stored['paused'] === 'boolean') paused = stored['paused'] as boolean;
-  if (stored['enabledSites'] && typeof stored['enabledSites'] === 'object') {
-    enabledSites = { ...enabledSites, ...(stored['enabledSites'] as Record<string, boolean>) };
+void chrome.storage.local.get([STORAGE_KEYS.paused, STORAGE_KEYS.enabledSites, STORAGE_KEYS.latestVersion]).then((stored) => {
+  if (typeof stored[STORAGE_KEYS.paused] === 'boolean') paused = stored[STORAGE_KEYS.paused] as boolean;
+  if (stored[STORAGE_KEYS.enabledSites] && typeof stored[STORAGE_KEYS.enabledSites] === 'object') {
+    enabledSites = { ...enabledSites, ...(stored[STORAGE_KEYS.enabledSites] as Record<string, boolean>) };
   }
-  if (typeof stored['latestVersion'] === 'string') latestVersion = stored['latestVersion'] as string;
+  if (typeof stored[STORAGE_KEYS.latestVersion] === 'string') latestVersion = stored[STORAGE_KEYS.latestVersion] as string;
   connectNativeHost();
   // Schedule daily update check — only create if not already scheduled so a
   // service-worker restart doesn't reset the 24 h timer.

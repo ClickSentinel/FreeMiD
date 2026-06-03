@@ -141,7 +141,7 @@ mod win {
                         Ok(()) => {
                             nwg::simple_message(
                                 "FreeMiD Setup",
-                                "Installation complete. Make sure the FreeMiD extension is installed and enabled. If the host is not detected right away, reload the extension page or restart the browser.",
+                                "Installation complete. Make sure the FreeMiD extension is installed and enabled. If the host is not detected right away, open chrome://extensions and click Reload on FreeMiD.",
                             );
                             let ui = ui_events.borrow_mut();
                             ui.status.set_text("Status: \u{2714} Installed");

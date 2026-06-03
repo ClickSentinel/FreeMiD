@@ -1,4 +1,5 @@
 import { Presence } from '../../presence/Presence';
+import { SERVICE_ICON_URLS } from '../../constants/serviceIcons';
 
 // Replace with your own Discord Application ID if you want custom artwork.
 // Create a free app at https://discord.com/developers/applications
@@ -34,7 +35,7 @@ presence.on('UpdateData', () => {
     presence.setActivity({
       type: 3, // Watching
       details: 'Browsing YouTube',
-      largeImageKey: 'https://www.gstatic.com/youtube/img/branding/favicon/favicon_32x32.png',
+      largeImageKey: SERVICE_ICON_URLS.youtube,
       largeImageText: 'YouTube',
     });
     return;
@@ -58,7 +59,7 @@ presence.on('UpdateData', () => {
     type: 3,
     details: title.substring(0, 128),
     state: `By ${channel}`,
-    largeImageKey: 'https://www.gstatic.com/youtube/img/branding/favicon/favicon_32x32.png',
+    largeImageKey: SERVICE_ICON_URLS.youtube,
     largeImageText: 'YouTube',
     smallImageKey: paused
       ? 'https://www.freemid.app/assets/pause.png'

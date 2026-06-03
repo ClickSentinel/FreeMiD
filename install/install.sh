@@ -225,4 +225,4 @@ fi
 
 echo
 echo "✓ FreeMiD native host installed."
-echo "  Restart your browser, then reload the FreeMiD extension."
+echo "  Open chrome://extensions and click Reload on FreeMiD."

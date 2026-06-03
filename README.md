@@ -8,7 +8,7 @@ A fully free, open-source Discord Rich Presence bridge for web browsing — no s
 
 - Live Rich Presence for YouTube Music, YouTube, and TIDAL
 - Progress bar for music (start + end timestamps via Discord's Listening activity type)
-- Album art and service icons pulled from source URLs — no Discord asset uploads required
+- Album art pulled from source URLs, with stable Discord asset keys for service icons
 - "Listen" buttons linking to the current track when available
 - Instant status clear on tab close or navigation away
 - No account, no cloud, no telemetry
@@ -55,7 +55,6 @@ YouTube / YouTube Music / TIDAL tab
 2. Open `chrome://extensions`
 3. Enable **Developer mode** (top-right toggle)
 4. Click **Load unpacked** → select the unzipped folder
-5. Note the extension ID shown on the card (you'll need it in step 3)
 
 ### Step 2 — Install the native host
 
@@ -89,9 +88,9 @@ irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps
 | macOS | `~/.local/bin/freemid` | `~/Library/Application Support/<browser>/NativeMessagingHosts/` |
 | Windows | `%LOCALAPPDATA%\FreeMiD\freemid.exe` | `HKCU\Software\<browser>\NativeMessagingHosts\` |
 
-### Step 3 — Reload extension (restart only if needed)
+### Step 3 — Reload extension
 
-After installing the native host, reload the FreeMiD extension page once. If the host is not detected right away, restart your browser and check again.
+After installing the native host, open chrome://extensions and click Reload on FreeMiD.
 
 ### Step 4 — Verify
 
