@@ -1,5 +1,5 @@
 import { Presence } from '../../presence/Presence';
-import { SERVICE_ICON_URLS } from '../../constants/serviceIcons';
+import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
 
 // Replace with your own Discord Application ID if you want custom artwork.
 // Create a free app at https://discord.com/developers/applications
@@ -19,23 +19,130 @@ function getTitle(): string {
 }
 
 function getChannel(): string {
-  return (
-    document.querySelector<HTMLAnchorElement>('#channel-name a, .ytd-channel-name a')
-      ?.textContent
-      ?.trim() ?? 'YouTube'
-  );
+  const selectors = [
+    '#channel-name a',
+    '.ytd-channel-name a',
+    'ytd-watch-metadata #owner a[href^="/"]',
+    'ytd-video-owner-renderer a[href^="/"]',
+  ] as const;
+
+  const names = new Set<string>();
+
+  for (const selector of selectors) {
+    for (const node of document.querySelectorAll<HTMLAnchorElement>(selector)) {
+      const value = node.textContent?.trim();
+      if (value) names.add(value);
+    }
+  }
+
+  if (names.size > 0) {
+    return Array.from(names).join(', ');
+  }
+
+  return 'YouTube';
 }
 
 function getVideoEl(): HTMLVideoElement | null {
   return document.querySelector<HTMLVideoElement>('video.html5-main-video, video');
 }
 
+function getVideoId(): string | null {
+  const id = new URLSearchParams(window.location.search).get('v');
+  if (id) return id;
+
+  const match = window.location.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  return match?.[1] ?? null;
+}
+
+function getVideoUrl(): string {
+  const videoId = getVideoId();
+  if (videoId) {
+    return `https://www.youtube.com/watch?v=${videoId}`;
+  }
+
+  return window.location.href;
+}
+
+function normalizeChannelIconUrl(url: string): string {
+  let out = url;
+
+  // Common YouTube avatar path segment, e.g. /s88-c-k-c0x00ffffff-no-rj/
+  out = out.replace(/\/s\d+(-[a-z0-9-]+)?\//i, '/s800$1/');
+
+  // Common avatar suffix, e.g. =s88-c-k-c0x00ffffff-no-rj
+  out = out.replace(/=s\d+(-[a-z0-9-]+)?$/i, '=s800$1');
+
+  try {
+    const parsed = new URL(out);
+    if (parsed.searchParams.has('sz')) {
+      parsed.searchParams.set('sz', '800');
+      out = parsed.toString();
+    }
+  } catch {
+    // Keep original URL if parsing fails.
+  }
+
+  return out;
+}
+
+function getChannelIconUrl(): string | undefined {
+  const selectors = [
+    'ytd-watch-metadata #avatar img#img',
+    'ytd-video-owner-renderer #avatar img#img',
+    '#owner #avatar img#img',
+  ] as const;
+
+  for (const selector of selectors) {
+    const img = document.querySelector<HTMLImageElement>(selector);
+    if (!img) continue;
+
+    const srcSet = img.getAttribute('srcset')?.trim();
+    if (srcSet) {
+      const candidates = srcSet
+        .split(',')
+        .map((entry) => entry.trim().split(/\s+/)[0])
+        .filter((entry): entry is string => !!entry && /^https?:\/\//i.test(entry));
+
+      // srcset is ordered low to high resolution; use the highest candidate.
+      const best = candidates[candidates.length - 1];
+      if (best) {
+        return normalizeChannelIconUrl(best);
+      }
+    }
+
+    const src = img.src?.trim();
+    if (src && /^https?:\/\//i.test(src)) {
+      return normalizeChannelIconUrl(src);
+    }
+  }
+
+  return undefined;
+}
+
+function getVideoThumbnailUrl(): string | undefined {
+  const ogImage = document
+    .querySelector<HTMLMetaElement>('meta[property="og:image"]')
+    ?.content
+    ?.trim();
+  if (ogImage && /^https?:\/\//i.test(ogImage)) {
+    return ogImage;
+  }
+
+  const videoId = getVideoId();
+  if (videoId) {
+    return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+  }
+
+  return undefined;
+}
+
 presence.on('UpdateData', () => {
   if (!isWatchPage()) {
     presence.setActivity({
+      name: 'YouTube',
       type: 3, // Watching
       details: 'Browsing YouTube',
-      largeImageKey: SERVICE_ICON_URLS.youtube,
+      largeImageKey: PRESENCE_ASSET_KEYS.youtubeLogo,
       largeImageText: 'YouTube',
     });
     return;
@@ -48,6 +155,10 @@ presence.on('UpdateData', () => {
   const duration = video?.duration ?? 0;
   const elapsed  = video?.currentTime ?? 0;
   const nowSec   = Math.floor(Date.now() / 1000);
+  const channelIcon = getChannelIconUrl();
+  const videoThumbnail = getVideoThumbnailUrl();
+  const largeImage = channelIcon ?? videoThumbnail ?? PRESENCE_ASSET_KEYS.youtubeLogo;
+  const videoUrl = getVideoUrl();
 
   const hasProgress = !paused && duration > 0;
   const startTimestamp = hasProgress ? nowSec - Math.floor(elapsed) : undefined;
@@ -56,18 +167,18 @@ presence.on('UpdateData', () => {
     : undefined;
 
   presence.setActivity({
+    name: 'YouTube',
     type: 3,
     details: title.substring(0, 128),
     state: `By ${channel}`,
-    largeImageKey: SERVICE_ICON_URLS.youtube,
-    largeImageText: 'YouTube',
-    smallImageKey: paused
-      ? 'https://www.freemid.app/assets/pause.png'
-      : 'https://www.freemid.app/assets/play.png',
-    smallImageText: paused ? 'Paused' : 'Playing',
+    largeImageKey: largeImage,
+    largeImageText: channel,
+    largeImageUrl: videoUrl,
+    smallImageKey: PRESENCE_ASSET_KEYS.youtubeLogo,
+    smallImageText: 'YouTube',
     // Provide both timestamps so popup and Discord can render synced progress.
     startTimestamp,
     endTimestamp,
-    buttons: [{ label: 'Watch on YouTube', url: window.location.href.split('&')[0]! }],
+    buttons: [{ label: 'Watch on YouTube', url: videoUrl }],
   });
 });

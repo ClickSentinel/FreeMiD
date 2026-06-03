@@ -6,21 +6,11 @@ A fully free, open-source Discord Rich Presence bridge for web browsing — no s
 
 ## Installation
 
-### Step 1 — Install the extension
+### Default stable path
 
-Recommended (stable):
-
-1. Install FreeMiD from the Chrome Web Store: [FreeMiD on Chrome Web Store](https://chromewebstore.google.com/detail/freemid/gaonohfjfpdlfapccfaanenfcojfknli)
-
-Alternative (local/dev build):
-
-1. Download `freemid-extension.zip` from [Releases](https://github.com/ClickSentinel/FreeMiD/releases) and unzip it
-2. Open `chrome://extensions`
-3. Enable **Developer mode** (top-right toggle)
-4. Click **Load unpacked** → select the unzipped folder
-5. If you use install scripts, pass the unpacked extension ID explicitly with `--extension-id`.
-
-### Step 2 — Install the native host
+1. Install extension from Chrome Web Store:
+  [FreeMiD on Chrome Web Store](https://chromewebstore.google.com/detail/freemid/gaonohfjfpdlfapccfaanenfcojfknli)
+2. Install the native host:
 
 **Linux / macOS:**
 
@@ -52,13 +42,28 @@ irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps
 | macOS | `~/.local/bin/freemid` | `~/Library/Application Support/<browser>/NativeMessagingHosts/` |
 | Windows | `%LOCALAPPDATA%\FreeMiD\freemid.exe` | `HKCU\Software\<browser>\NativeMessagingHosts\` |
 
-### Step 3 — Reload extension
+1. Reload extension:
+  Open `chrome://extensions` and click Reload on FreeMiD.
+2. Verify:
+  Open YouTube, YouTube Music, or TIDAL, then confirm the FreeMiD toolbar dot is green.
 
-After installing the native host, open chrome://extensions and click Reload on FreeMiD.
+### Local build
 
-### Step 4 — Verify
+1. Build extension and native host from source using [Building from source](#building-from-source).
+2. Load `extension/dist` via `chrome://extensions` -> **Load unpacked**.
+3. Install the native host with your unpacked extension ID:
 
-Click the FreeMiD icon in your toolbar. The dot should turn **green** within a few seconds if Discord desktop is running. Open YouTube, YouTube Music, or TIDAL — your status will appear in Discord.
+```bash
+./install/install.sh --extension-id <your-extension-id>
+```
+
+or on Windows PowerShell:
+
+```powershell
+irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps1 | iex -ExtensionId <your-extension-id>
+```
+
+1. Reload extension and verify presence updates.
 
 ---
 
@@ -91,6 +96,14 @@ YouTube / YouTube Music / TIDAL tab
 **Why a native host?** Discord's IPC protocol uses a local Unix socket (`$XDG_RUNTIME_DIR/discord-ipc-0` on Linux, `$TMPDIR/discord-ipc-0` on macOS). Browsers cannot open Unix sockets directly, so a small native binary bridges the gap. Chrome spawns it on demand and kills it when Chrome closes — you never have to manage it yourself.
 
 > **Metadata sources:** YouTube Music primarily uses `navigator.mediaSession`; TIDAL relies on stable player DOM selectors for title/artist/timestamps. No additional API calls are made by the extension for track metadata.
+
+### Native host lifecycle (Chrome)
+
+- Chrome starts the native host only when the extension opens a native messaging connection.
+- The host stays alive while that connection is open.
+- If the extension disconnects, reloads, or its MV3 service worker is suspended, Chrome closes the pipe and the host exits.
+- On the next reconnect, Chrome launches the host again automatically.
+- When Chrome closes, native host processes it started are also terminated.
 
 ---
 

@@ -13,6 +13,7 @@ These files are packaged with the Chrome extension and are used by the manifest,
 
 These are uploaded in the Discord Developer Portal for the FreeMiD application and referenced by asset key in presence payloads.
 
+- `youtube-logo-1024` - YouTube service icon
 - `ytmusic-logo-1024` - YouTube Music service icon
 - `tidal-logo-1024` - TIDAL service icon
 
@@ -20,6 +21,7 @@ These are uploaded in the Discord Developer Portal for the FreeMiD application a
 
 These PNGs ship with the extension and are used by the popup service-logo preview.
 
+- `extension/public/icons/youtube-logo-1024.png`
 - `extension/public/icons/ytmusic-logo-1024.png`
 - `extension/public/icons/tidal-logo-1024.png`
 
