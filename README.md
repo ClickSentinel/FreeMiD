@@ -49,12 +49,19 @@ YouTube / YouTube Music / TIDAL tab
 
 ## Installation
 
-### Step 1 — Load the extension
+### Step 1 — Install the extension
+
+Recommended (stable users):
+
+1. Install FreeMiD from the Chrome Web Store: [FreeMiD on Chrome Web Store](https://chromewebstore.google.com/detail/freemid/gaonohfjfpdlfapccfaanenfcojfknli)
+
+Alternative (local/dev build):
 
 1. Download `freemid-extension.zip` from [Releases](https://github.com/ClickSentinel/FreeMiD/releases) and unzip it
 2. Open `chrome://extensions`
 3. Enable **Developer mode** (top-right toggle)
 4. Click **Load unpacked** → select the unzipped folder
+5. If you use install scripts, pass the unpacked extension ID explicitly with `--extension-id`.
 
 ### Step 2 — Install the native host
 

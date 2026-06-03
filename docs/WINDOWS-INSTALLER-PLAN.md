@@ -124,6 +124,7 @@ Status in this branch:
 ## Release Readiness Notes (Current)
 
 1. Setup defaults to the production extension ID in the current GUI install flow.
+   - Chrome Web Store listing: https://chromewebstore.google.com/detail/freemid/gaonohfjfpdlfapccfaanenfcojfknli
 2. Popup `Open Setup` is a download flow: browser opens the release URL and user runs the downloaded EXE.
 3. Apps and Features uninstall is local and deterministic via `freemid-setup.exe --uninstall --silent`.
 4. Setup downloads host artifacts from GitHub Releases at install time and requires network reachability.
