@@ -4,54 +4,11 @@ A fully free, open-source Discord Rich Presence bridge for web browsing — no s
 
 ---
 
-## Features
-
-- Live Rich Presence for YouTube Music, YouTube, and TIDAL
-- Progress bar for music (start + end timestamps via Discord's Listening activity type)
-- Album art pulled from source URLs, with stable Discord asset keys for service icons
-- "Listen" buttons linking to the current track when available
-- Instant status clear on tab close or navigation away
-- No account, no cloud, no telemetry
-
----
-
-## How it works
-
-FreeMiD has two parts that work together:
-
-```text
-YouTube / YouTube Music / TIDAL tab
-  └─ Content script (JS, injected by Chrome)
-  reads title / artist / timestamps from page metadata (mediaSession and DOM)
-         └─ Background service worker (JS, runs in Chrome)
-              └─ Native messaging port (Chrome-managed stdin/stdout pipe)
-                   └─ freemid native host (Rust binary, ~400 KB)
-                        └─ Discord IPC socket (Unix socket on disk)
-                             └─ Discord desktop app
-```
-
-**Why a native host?** Discord's IPC protocol uses a local Unix socket (`$XDG_RUNTIME_DIR/discord-ipc-0` on Linux, `$TMPDIR/discord-ipc-0` on macOS). Browsers cannot open Unix sockets directly, so a small native binary bridges the gap. Chrome spawns it on demand and kills it when Chrome closes — you never have to manage it yourself.
-
-> **Metadata sources:** YouTube Music primarily uses `navigator.mediaSession`; TIDAL relies on stable player DOM selectors for title/artist/timestamps. No additional API calls are made by the extension for track metadata.
-
----
-
-## Platform support
-
-| Platform | Native host | Status |
-| --- | --- | --- |
-| Linux (x86_64) | `freemid-linux-x86_64` | ✅ Supported |
-| macOS (Apple Silicon) | `freemid-macos-arm64` | ✅ Supported |
-| macOS (Intel) | `freemid-macos-x86_64` | ✅ Supported |
-| Windows | `freemid-setup.exe` / `freemid-windows-x86_64.exe` | ✅ Supported |
-
----
-
 ## Installation
 
 ### Step 1 — Install the extension
 
-Recommended (stable users):
+Recommended (stable):
 
 1. Install FreeMiD from the Chrome Web Store: [FreeMiD on Chrome Web Store](https://chromewebstore.google.com/detail/freemid/gaonohfjfpdlfapccfaanenfcojfknli)
 
@@ -102,6 +59,49 @@ After installing the native host, open chrome://extensions and click Reload on F
 ### Step 4 — Verify
 
 Click the FreeMiD icon in your toolbar. The dot should turn **green** within a few seconds if Discord desktop is running. Open YouTube, YouTube Music, or TIDAL — your status will appear in Discord.
+
+---
+
+## Features
+
+- Live Rich Presence for YouTube Music, YouTube, and TIDAL
+- Progress bar for music (start + end timestamps via Discord's Listening activity type)
+- Album art pulled from source URLs, with stable Discord asset keys for service icons
+- "Listen" buttons linking to the current track when available
+- Instant status clear on tab close or navigation away
+- No account, no cloud, no telemetry
+
+---
+
+## How it works
+
+FreeMiD has two parts that work together:
+
+```text
+YouTube / YouTube Music / TIDAL tab
+  └─ Content script (JS, injected by Chrome)
+  reads title / artist / timestamps from page metadata (mediaSession and DOM)
+         └─ Background service worker (JS, runs in Chrome)
+              └─ Native messaging port (Chrome-managed stdin/stdout pipe)
+                   └─ freemid native host (Rust binary, ~400 KB)
+                        └─ Discord IPC socket (Unix socket on disk)
+                             └─ Discord desktop app
+```
+
+**Why a native host?** Discord's IPC protocol uses a local Unix socket (`$XDG_RUNTIME_DIR/discord-ipc-0` on Linux, `$TMPDIR/discord-ipc-0` on macOS). Browsers cannot open Unix sockets directly, so a small native binary bridges the gap. Chrome spawns it on demand and kills it when Chrome closes — you never have to manage it yourself.
+
+> **Metadata sources:** YouTube Music primarily uses `navigator.mediaSession`; TIDAL relies on stable player DOM selectors for title/artist/timestamps. No additional API calls are made by the extension for track metadata.
+
+---
+
+## Platform support
+
+| Platform | Native host | Status |
+| --- | --- | --- |
+| Linux (x86_64) | `freemid-linux-x86_64` | ✅ Supported |
+| macOS (Apple Silicon) | `freemid-macos-arm64` | ✅ Supported |
+| macOS (Intel) | `freemid-macos-x86_64` | ✅ Supported |
+| Windows | `freemid-setup.exe` / `freemid-windows-x86_64.exe` | ✅ Supported |
 
 ---
 
