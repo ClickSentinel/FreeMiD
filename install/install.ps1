@@ -152,4 +152,4 @@ if (-not $RegisteredAny) {
 
 Write-Host ""
 Write-Host "FreeMiD native host installed."
-Write-Host "Restart your browser, then reload the FreeMiD extension."
+Write-Host "Open chrome://extensions and click Reload on FreeMiD."

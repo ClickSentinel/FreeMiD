@@ -30,20 +30,14 @@
 
 **GitHub Actions — pin to commit SHAs instead of tags:**
 
-Tags like `actions/checkout@v4` can be silently moved. Replace with pinned SHAs:
+Tags can be silently moved. Pin the exact actions currently referenced in `.github/workflows/release.yml`.
 
-| Action | Current | Pinned SHA |
-| --- | --- | --- |
-| `actions/checkout` | `@v4` | look up on release page |
-| `actions/setup-node` | `@v4` | look up |
-| `actions/cache` | `@v4` | look up |
-| `actions/upload-artifact` | `@v4` | look up |
-| `actions/download-artifact` | `@v4` | look up |
-| `dtolnay/rust-toolchain` | `@stable` | look up |
-| `softprops/action-gh-release` | `@v2` | look up |
-| `nicedoc/chrome-webstore-upload-cli` | `@v2` | look up |
+Process:
 
-Process: go to each action's GitHub releases page, copy the full commit SHA for the desired tag, use `uses: owner/action@<sha> # v4` format.
+1. Read each `uses:` reference in `.github/workflows/release.yml`.
+2. Find the corresponding release commit SHA in that action's upstream repository.
+3. Replace tag-based references with `uses: owner/action@<sha> # <tag>` format.
+4. Keep the trailing comment to preserve human-readable intent during reviews.
 
 **Rust — add `cargo audit` to CI:**
 

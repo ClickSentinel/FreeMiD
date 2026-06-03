@@ -1,4 +1,5 @@
 import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
+import { githubLatestDownloadUrl, githubRepoUrl } from '../constants/github';
 
 /**
  * FreeMiD — Popup
@@ -86,7 +87,8 @@ function startUptimeTick(): void {
 }
 
 function stopUptimeTick(): void {
-  if (uptimeInterval) { clearInterval(uptimeInterval); uptimeInterval = null; }
+  clearTimer(uptimeInterval, clearInterval);
+  uptimeInterval = null;
   connectedSinceMs = null;
 }
 
@@ -126,7 +128,8 @@ function startTimelineTick(): void {
 }
 
 function stopTimelineTick(): void {
-  if (timelineInterval) { clearInterval(timelineInterval); timelineInterval = null; }
+  clearTimer(timelineInterval, clearInterval);
+  timelineInterval = null;
   timelineStartSec = null;
   timelineEndSec = null;
   timelineKey = null;
@@ -142,9 +145,7 @@ reconnectBtn?.addEventListener('click', async () => {
   if (!reconnectBtn) return;
   reconnectBtn.classList.add('spinning');
   reconnectBtn.disabled = true;
-  dot.className = 'dot connecting';
-  label.textContent = 'Reconnecting…';
-  sub.textContent = '';
+  setStatus('connecting', 'Reconnecting…', '');
   await fetchStatus();
   reconnectBtn.classList.remove('spinning');
   reconnectBtn.disabled = false;
@@ -177,20 +178,20 @@ btnOpenDiscord?.addEventListener('click', () => {
 
 btnUpdate?.addEventListener('click', () => {
   const url = isWindowsPlatform
-    ? 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/freemid-setup.exe'
-    : 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.sh';
+    ? githubLatestDownloadUrl('freemid-setup.exe')
+    : githubLatestDownloadUrl('install.sh');
   void chrome.tabs.create({ url });
 });
 
 btnInstallHost?.addEventListener('click', () => {
-  const installUrl = 'https://github.com/ClickSentinel/FreeMiD#installation';
+  const installUrl = githubRepoUrl('installation');
   void chrome.tabs.create({ url: installUrl });
 });
 
 btnUninstall?.addEventListener('click', () => {
   const url = isWindowsPlatform
-    ? 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/freemid-setup.exe'
-    : 'https://github.com/ClickSentinel/FreeMiD/releases/latest/download/uninstall.sh';
+    ? githubLatestDownloadUrl('freemid-setup.exe')
+    : githubLatestDownloadUrl('uninstall.sh');
   void chrome.tabs.create({ url });
 });
 
@@ -224,6 +225,16 @@ function urlLike(value?: string): boolean {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
 }
 
+function clearTimer(timer: ReturnType<typeof setInterval> | null, clearFn: (handle: ReturnType<typeof setInterval>) => void): void {
+  if (timer) clearFn(timer);
+}
+
+function setStatus(kind: 'connecting' | 'warning' | 'error' | 'connected', title: string, message: string): void {
+  dot.className = `dot ${kind}`;
+  label.textContent = title;
+  sub.textContent = message;
+}
+
 function artistFromActivity(act: NonNullable<Status['lastActivity']>): string {
   const fromSub = act.sub?.replace(/^by\s+/i, '').trim();
   if (fromSub) return fromSub;
@@ -252,9 +263,7 @@ function render(status: Status | null): void {
   helpDiscord.classList.add('hidden');
 
   if (!status) {
-    dot.className = 'dot connecting';
-    label.textContent = 'Connecting…';
-    sub.textContent = 'Reaching native host';
+    setStatus('connecting', 'Connecting…', 'Reaching native host');
     if (hostVersionEl) hostVersionEl.textContent = '';
     if (updateBanner) updateBanner.classList.add('hidden');
     stopUptimeTick();
@@ -300,13 +309,9 @@ function render(status: Status | null): void {
     // If there is no explicit error yet, treat this as a transient connecting
     // state to avoid flashing between statuses while the host handshake settles.
     if (!status.error) {
-      dot.className = 'dot connecting';
-      label.textContent = 'Connecting…';
-      sub.textContent = 'Reaching native host';
+      setStatus('connecting', 'Connecting…', 'Reaching native host');
     } else {
-      dot.className = 'dot error';
-      label.textContent = 'Native host not running';
-      sub.textContent = status.error;
+      setStatus('error', 'Native host not running', status.error);
       helpHost.classList.remove('hidden');
     }
 
@@ -322,23 +327,17 @@ function render(status: Status | null): void {
     if (activityPanel) activityPanel.hidden = true;
     // Show "checking" for DISCORD_CHECK_DELAY_MS before revealing help panel
     if (!discordCheckShown) {
-      dot.className = 'dot connecting';
-      label.textContent = 'Checking for Discord…';
-      sub.textContent = 'Looking for the Discord desktop app';
+      setStatus('connecting', 'Checking for Discord…', 'Looking for the Discord desktop app');
       if (!discordCheckTimer) {
         discordCheckTimer = setTimeout(() => {
           discordCheckShown = true;
           discordCheckTimer = null;
-          dot.className = 'dot warning';
-          label.textContent = 'Waiting for Discord';
-          sub.textContent = status.error ?? 'Open the Discord desktop app';
+          setStatus('warning', 'Waiting for Discord', status.error ?? 'Open the Discord desktop app');
           helpDiscord.classList.remove('hidden');
         }, DISCORD_CHECK_DELAY_MS);
       }
     } else {
-      dot.className = 'dot warning';
-      label.textContent = 'Waiting for Discord';
-      sub.textContent = status.error ?? 'Open the Discord desktop app';
+      setStatus('warning', 'Waiting for Discord', status.error ?? 'Open the Discord desktop app');
       helpDiscord.classList.remove('hidden');
     }
     return;
@@ -349,9 +348,7 @@ function render(status: Status | null): void {
   discordCheckShown = false;
 
   if (paused) {
-    dot.className = 'dot warning';
-    label.textContent = 'Rich Presence paused';
-    sub.textContent = 'Toggle to resume sending to Discord';
+    setStatus('warning', 'Rich Presence paused', 'Toggle to resume sending to Discord');
     stopUptimeTick();
     stopTimelineTick();
     if (activityPanel) activityPanel.hidden = true;
@@ -419,8 +416,7 @@ function render(status: Status | null): void {
     stopTimelineTick();
   }
 
-  dot.className = 'dot connected';
-  label.textContent = 'Connected';
+  setStatus('connected', 'Connected', '');
   if (status.connectedSince != null) {
     connectedSinceMs = status.connectedSince;
     startUptimeTick();

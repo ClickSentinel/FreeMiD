@@ -1,5 +1,6 @@
 import { Presence } from '../../presence/Presence';
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
+import { parseClock } from '../../utils/parseClock';
 
 const presence = new Presence({ clientId: import.meta.env.VITE_DISCORD_CLIENT_ID });
 
@@ -7,14 +8,6 @@ let activeTrackId: string | undefined;
 let playbackAnchorStart: number | undefined;
 let pausedAtWallClock: number | undefined;
 let lastPausedState: boolean | undefined;
-
-function parseClock(text: string): number | undefined {
-  const parts = text.trim().split(':').map((p) => Number.parseInt(p, 10));
-  if (parts.some((n) => Number.isNaN(n))) return undefined;
-  if (parts.length === 2) return parts[0]! * 60 + parts[1]!;
-  if (parts.length === 3) return parts[0]! * 3600 + parts[1]! * 60 + parts[2]!;
-  return undefined;
-}
 
 function getPlayerBarTimes(): { current?: number; duration?: number } {
   // Try several selectors — YouTube Music has changed its DOM structure over time.
