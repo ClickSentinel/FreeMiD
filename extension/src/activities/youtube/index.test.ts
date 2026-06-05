@@ -46,26 +46,23 @@ describe('YouTube activity', () => {
     document.body.innerHTML = '';
     document.head.innerHTML = '';
     setLocation('/');
+    Object.defineProperty(navigator, 'mediaSession', {
+      configurable: true,
+      value: undefined,
+    });
   });
 
   afterEach(() => {
     document.body.innerHTML = '';
   });
 
-  it('reports browsing state outside watch pages', async () => {
+  it('clears presence outside video pages', async () => {
     await loadModule();
 
     capturedUpdateHandler?.();
 
-    expect(presenceInstance.setActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'YouTube',
-        type: 3,
-        details: 'Browsing YouTube',
-        largeImageKey: 'youtube-logo-1024',
-        largeImageText: 'YouTube',
-      }),
-    );
+    expect(presenceInstance.clearPresenceData).toHaveBeenCalled();
+    expect(presenceInstance.setActivity).not.toHaveBeenCalled();
   });
 
   it('prefers channel icon, preserves canonical video URL, and joins channel names', async () => {
@@ -94,6 +91,11 @@ describe('YouTube activity', () => {
     Object.defineProperty(video, 'duration', { configurable: true, get: () => 180 });
     Object.defineProperty(video, 'currentTime', { configurable: true, get: () => 45 });
 
+    Object.defineProperty(navigator, 'mediaSession', {
+      configurable: true,
+      value: { playbackState: 'playing' },
+    });
+
     await loadModule();
     capturedUpdateHandler?.();
 
@@ -112,7 +114,7 @@ describe('YouTube activity', () => {
     );
   });
 
-  it('falls back to og:image thumbnail when no channel icon is present', async () => {
+  it('clears presence when video is paused', async () => {
     setLocation('/watch?v=abcdefghijk');
     document.title = 'Fallback Title - YouTube';
     document.head.innerHTML = '<meta property="og:image" content="https://i.ytimg.com/vi/abcdefghijk/maxresdefault.jpg">';
@@ -130,12 +132,94 @@ describe('YouTube activity', () => {
     await loadModule();
     capturedUpdateHandler?.();
 
+    expect(presenceInstance.clearPresenceData).toHaveBeenCalled();
+    expect(presenceInstance.setActivity).not.toHaveBeenCalled();
+  });
+
+  it('treats shorts pages as video pages', async () => {
+    setLocation('/shorts/abcdefghijk');
+    document.title = 'Short Clip - YouTube';
+    document.body.innerHTML = `
+      <h1 class="style-scope ytd-video-primary-info-renderer">Short Clip</h1>
+      <div id="channel-name"><a>Creator One</a></div>
+      <video class="html5-main-video"></video>
+    `;
+
+    const video = document.querySelector('video') as HTMLVideoElement;
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
+    Object.defineProperty(video, 'duration', { configurable: true, get: () => 120 });
+    Object.defineProperty(video, 'currentTime', { configurable: true, get: () => 12 });
+
+    Object.defineProperty(navigator, 'mediaSession', {
+      configurable: true,
+      value: { playbackState: 'playing' },
+    });
+
+    await loadModule();
+    capturedUpdateHandler?.();
+
     expect(presenceInstance.setActivity).toHaveBeenCalledWith(
       expect.objectContaining({
-        largeImageKey: 'https://i.ytimg.com/vi/abcdefghijk/maxresdefault.jpg',
-        largeImageText: 'Solo Channel',
-        smallImageKey: 'youtube-logo-1024',
+        details: 'Short Clip',
+        state: 'By Creator One',
+        largeImageUrl: 'https://www.youtube.com/watch?v=abcdefghijk',
+        buttons: [{ label: 'Watch on YouTube', url: 'https://www.youtube.com/watch?v=abcdefghijk' }],
       }),
     );
+  });
+
+  it('clears presence when mediaSession says paused even if video element looks playing', async () => {
+    setLocation('/watch?v=abcdefghijk');
+    document.title = 'Session-Controlled Video - YouTube';
+    document.body.innerHTML = `
+      <h1 class="style-scope ytd-video-primary-info-renderer">Session-Controlled Video</h1>
+      <div id="channel-name"><a>Session Channel</a></div>
+      <video class="html5-main-video"></video>
+    `;
+
+    const video = document.querySelector('video') as HTMLVideoElement;
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
+    Object.defineProperty(video, 'ended', { configurable: true, get: () => false });
+    Object.defineProperty(video, 'readyState', { configurable: true, get: () => 4 });
+    Object.defineProperty(video, 'duration', { configurable: true, get: () => 120 });
+    Object.defineProperty(video, 'currentTime', { configurable: true, get: () => 12 });
+
+    Object.defineProperty(navigator, 'mediaSession', {
+      configurable: true,
+      value: { playbackState: 'paused' },
+    });
+
+    await loadModule();
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.clearPresenceData).toHaveBeenCalled();
+    expect(presenceInstance.setActivity).not.toHaveBeenCalled();
+  });
+
+  it('uses YouTube play button label fallback when mediaSession is unavailable', async () => {
+    setLocation('/watch?v=abcdefghijk');
+    document.title = 'Button-Controlled Video - YouTube';
+    document.body.innerHTML = `
+      <h1 class="style-scope ytd-video-primary-info-renderer">Button-Controlled Video</h1>
+      <div id="channel-name"><a>Button Channel</a></div>
+      <button class="ytp-play-button" aria-label="Play (k)"></button>
+      <video class="html5-main-video"></video>
+    `;
+
+    const video = document.querySelector('video') as HTMLVideoElement;
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
+    Object.defineProperty(video, 'ended', { configurable: true, get: () => false });
+    Object.defineProperty(video, 'readyState', { configurable: true, get: () => 0 });
+
+    Object.defineProperty(navigator, 'mediaSession', {
+      configurable: true,
+      value: undefined,
+    });
+
+    await loadModule();
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.clearPresenceData).toHaveBeenCalled();
+    expect(presenceInstance.setActivity).not.toHaveBeenCalled();
   });
 });
