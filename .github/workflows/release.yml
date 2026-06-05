@@ -85,7 +85,7 @@ jobs:
           - os: macos-latest
             artifact: freemid-macos-x86_64
             target: x86_64-apple-darwin
-          - os: windows-latest
+          - os: windows-2025
             artifact: freemid-windows-x86_64.exe
 
     runs-on: ${{ matrix.os }}
@@ -184,10 +184,13 @@ jobs:
             }
           done
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: |
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          files=(
             freemid-extension.zip
             freemid-linux-x86_64
             freemid-macos-arm64
@@ -199,6 +202,17 @@ jobs:
             install/install.ps1
             install/uninstall.sh
             install/uninstall.ps1
+          )
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            create_args=(--verify-tag --generate-notes)
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+              create_args+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" "${create_args[@]}"
+          fi
 
   # Optional publish job; runs only when CWS_PUBLISH=true.
   publish-cws:
