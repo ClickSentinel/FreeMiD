@@ -228,7 +228,11 @@ function urlMatchesPattern(url: string, pattern: string): boolean {
 /** Map of tabId → activityId for tabs that currently have a script injected. */
 const activeActivityTabs = new Map<number, string>();
 
-async function handleTabNavigation(tabId: number, url: string): Promise<void> {
+async function handleTabNavigation(
+  tabId: number,
+  url: string,
+  options?: { forceInject?: boolean },
+): Promise<void> {
   const meta = matchActivity(url);
 
   if (!meta) {
@@ -241,7 +245,8 @@ async function handleTabNavigation(tabId: number, url: string): Promise<void> {
     return;
   }
 
-  if (activeActivityTabs.get(tabId) === meta.id) return;
+  const forceInject = options?.forceInject === true;
+  if (!forceInject && activeActivityTabs.get(tabId) === meta.id) return;
 
   activeActivityTabs.set(tabId, meta.id);
 
@@ -261,7 +266,9 @@ async function handleTabNavigation(tabId: number, url: string): Promise<void> {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete' || !tab.url) return;
-  void handleTabNavigation(tabId, tab.url);
+  // A completed navigation replaces the page context, so always re-inject
+  // the activity script even if this tab is still on the same service.
+  void handleTabNavigation(tabId, tab.url, { forceInject: true });
 });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {

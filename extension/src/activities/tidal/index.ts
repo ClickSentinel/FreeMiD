@@ -7,7 +7,6 @@ const presence = new Presence({ clientId: import.meta.env.VITE_DISCORD_CLIENT_ID
 let activeTrackUrl: string | undefined;
 let playbackAnchorStart: number | undefined;
 let pausedAtWallClock: number | undefined;
-let lastPausedState: boolean | undefined;
 let pausedConfirmTicks = 0;
 
 function text(sel: string): string {
@@ -111,14 +110,11 @@ presence.on('UpdateData', () => {
   if (paused) {
     // Require two consecutive paused ticks before clearing. This avoids
     // transient DOM/control-state glitches dropping activity mid-song.
-    if (lastPausedState === false && pausedConfirmTicks >= 2) {
+    if (pausedConfirmTicks === 2) {
       presence.clearPresenceData();
     }
-    lastPausedState = true;
     return;
   }
-
-  lastPausedState = false;
 
   presence.setActivity({
     applicationId: import.meta.env.VITE_DISCORD_CLIENT_ID,

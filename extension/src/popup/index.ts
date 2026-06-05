@@ -250,9 +250,7 @@ function fallbackLogoUrl(act: NonNullable<Status['lastActivity']>): string | nul
   if (service.includes('youtube music') || service.includes('yt music')) {
     return chrome.runtime.getURL(PRESENCE_PREVIEW_ASSETS.ytmusicLogo);
   }
-  if (service.includes('youtube')) {
-    return chrome.runtime.getURL(PRESENCE_PREVIEW_ASSETS.youtubeLogo);
-  }
+  if (service.includes('youtube')) return 'https://www.youtube.com/s/desktop/6cfcd65f/img/logos/favicon_32x32.png';
   return null;
 }
 

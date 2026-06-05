@@ -6,7 +6,8 @@ import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
 const presence = new Presence({ clientId: import.meta.env.VITE_DISCORD_CLIENT_ID, updateInterval: 5 });
 
 function isWatchPage(): boolean {
-  return window.location.pathname === '/watch';
+  const path = window.location.pathname;
+  return path === '/watch' || path.startsWith('/shorts/') || path.startsWith('/live/');
 }
 
 function getTitle(): string {
@@ -46,9 +47,36 @@ function getVideoEl(): HTMLVideoElement | null {
   return document.querySelector<HTMLVideoElement>('video.html5-main-video, video');
 }
 
+function isVideoPlaying(video: HTMLVideoElement | null): boolean {
+  const playbackState = navigator.mediaSession?.playbackState;
+  if (playbackState === 'playing') return true;
+  if (playbackState === 'paused') return false;
+
+  if (video) {
+    if (!video.paused && !video.ended && video.readyState > 1) {
+      return true;
+    }
+    if (video.paused || video.ended) {
+      return false;
+    }
+  }
+
+  // On YouTube, the control text reflects the opposite action:
+  // "Pause" means the video is currently playing, "Play" means paused.
+  const playButton = document.querySelector<HTMLButtonElement>('.ytp-play-button');
+  const label = (playButton?.getAttribute('aria-label') || playButton?.getAttribute('title') || '').toLowerCase();
+  if (label.includes('pause')) return true;
+  if (label.includes('play')) return false;
+
+  return false;
+}
+
 function getVideoId(): string | null {
   const id = new URLSearchParams(window.location.search).get('v');
   if (id) return id;
+
+  const pathMatch = window.location.pathname.match(/^\/(?:shorts|live)\/([a-zA-Z0-9_-]{6,})/);
+  if (pathMatch?.[1]) return pathMatch[1];
 
   const match = window.location.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
   return match?.[1] ?? null;
@@ -138,20 +166,14 @@ function getVideoThumbnailUrl(): string | undefined {
 
 presence.on('UpdateData', () => {
   if (!isWatchPage()) {
-    presence.setActivity({
-      name: 'YouTube',
-      type: 3, // Watching
-      details: 'Browsing YouTube',
-      largeImageKey: PRESENCE_ASSET_KEYS.youtubeLogo,
-      largeImageText: 'YouTube',
-    });
+    presence.clearPresenceData();
     return;
   }
 
   const title   = getTitle();
   const channel = getChannel();
   const video   = getVideoEl();
-  const paused  = video?.paused ?? true;
+  const playing = isVideoPlaying(video);
   const duration = video?.duration ?? 0;
   const elapsed  = video?.currentTime ?? 0;
   const nowSec   = Math.floor(Date.now() / 1000);
@@ -160,7 +182,13 @@ presence.on('UpdateData', () => {
   const largeImage = channelIcon ?? videoThumbnail ?? PRESENCE_ASSET_KEYS.youtubeLogo;
   const videoUrl = getVideoUrl();
 
-  const hasProgress = !paused && duration > 0;
+  if (!title || !playing) {
+    // Match YT Music behavior: hide presence whenever playback is idle.
+    presence.clearPresenceData();
+    return;
+  }
+
+  const hasProgress = playing && duration > 0;
   const startTimestamp = hasProgress ? nowSec - Math.floor(elapsed) : undefined;
   const endTimestamp = hasProgress && startTimestamp != null
     ? startTimestamp + Math.floor(duration)
