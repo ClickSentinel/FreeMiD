@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FreeMiD",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "Free, open-source Discord Rich Presence for YouTube, YouTube Music, and TIDAL.",
 
   "permissions": [
