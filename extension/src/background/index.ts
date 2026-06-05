@@ -10,7 +10,7 @@
  *  4. Clear status instantly when the active tab leaves a known domain.
  */
 
-import { isUpdateAvailable, matchActivity } from './helpers';
+import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
 import { GITHUB_REPO } from '../constants/github';
 import { STORAGE_KEYS } from '../constants/storageKeys';
 
@@ -181,10 +181,58 @@ function notifyConnectionChange(connected: boolean): void {
 
 // ── Activity registry & content script injection ───────────────────────────────
 
+function matchActivity(url: string): ActivityMeta | null {
+  for (const meta of Object.values(ACTIVITY_REGISTRY)) {
+    if (meta.matches.some((pattern) => urlMatchesPattern(url, pattern))) {
+      return meta;
+    }
+  }
+  return null;
+}
+
+function urlMatchesPattern(url: string, pattern: string): boolean {
+  // Parse both URL and Chrome match pattern into components so we compare
+  // scheme/host/path independently. Prevents URL-string injection via query.
+  try {
+    const parsed = new URL(url);
+
+    const schemeEnd = pattern.indexOf('://');
+    if (schemeEnd === -1) return false;
+    const patternScheme = pattern.slice(0, schemeEnd);
+    const afterScheme = pattern.slice(schemeEnd + 3);
+    const slashIdx = afterScheme.indexOf('/');
+    const patternHost = slashIdx === -1 ? afterScheme : afterScheme.slice(0, slashIdx);
+    const patternPath = slashIdx === -1 ? '' : afterScheme.slice(slashIdx);
+
+    if (patternScheme !== '*' && patternScheme !== parsed.protocol.slice(0, -1)) {
+      return false;
+    }
+
+    const hostRe = new RegExp(
+      '^' + patternHost.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$',
+      'i',
+    );
+    if (!hostRe.test(parsed.hostname)) return false;
+
+    if (!patternPath || patternPath === '/*') return true;
+    const pathRe = new RegExp(
+      '^' + patternPath.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*'),
+      'i',
+    );
+    return pathRe.test(parsed.pathname + parsed.search);
+  } catch {
+    return false;
+  }
+}
+
 /** Map of tabId → activityId for tabs that currently have a script injected. */
 const activeActivityTabs = new Map<number, string>();
 
-async function handleTabNavigation(tabId: number, url: string): Promise<void> {
+async function handleTabNavigation(
+  tabId: number,
+  url: string,
+  options?: { forceInject?: boolean },
+): Promise<void> {
   const meta = matchActivity(url);
 
   if (!meta) {
@@ -197,7 +245,8 @@ async function handleTabNavigation(tabId: number, url: string): Promise<void> {
     return;
   }
 
-  if (activeActivityTabs.get(tabId) === meta.id) return;
+  const forceInject = options?.forceInject === true;
+  if (!forceInject && activeActivityTabs.get(tabId) === meta.id) return;
 
   activeActivityTabs.set(tabId, meta.id);
 
@@ -217,7 +266,9 @@ async function handleTabNavigation(tabId: number, url: string): Promise<void> {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete' || !tab.url) return;
-  void handleTabNavigation(tabId, tab.url);
+  // A completed navigation replaces the page context, so always re-inject
+  // the activity script even if this tab is still on the same service.
+  void handleTabNavigation(tabId, tab.url, { forceInject: true });
 });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
@@ -283,7 +334,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       enabledSites,
       hostVersion,
       latestVersion,
-      updateAvailable: hasUpdateAvailable(),
+      updateAvailable: isUpdateAvailable(),
     });
     return true;
   }
@@ -314,7 +365,7 @@ function broadcastStatus(): void {
       enabledSites,
       hostVersion,
       latestVersion,
-      updateAvailable: hasUpdateAvailable(),
+      updateAvailable: isUpdateAvailable(),
     })
     .catch(() => {
       // popup might not be open — ignore
@@ -329,8 +380,19 @@ function clearTabActivity(tabId: number): void {
 
 // ── Version & update check ────────────────────────────────────────────────────
 
-function hasUpdateAvailable(): boolean {
-  return isUpdateAvailable(hostVersion, latestVersion);
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function isUpdateAvailable(): boolean {
+  if (!hostVersion || !latestVersion) return false;
+  return compareVersions(latestVersion, hostVersion) > 0;
 }
 
 async function checkForUpdates(): Promise<void> {

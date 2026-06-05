@@ -1,5 +1,5 @@
+import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
 import { githubLatestDownloadUrl, githubRepoUrl } from '../constants/github';
-import { artistFromActivity, fallbackLogoPath, urlLike } from './helpers';
 
 /**
  * FreeMiD — Popup
@@ -221,6 +221,10 @@ type Status = {
   updateAvailable?: boolean;
 };
 
+function urlLike(value?: string): boolean {
+  return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
 function clearTimer(timer: ReturnType<typeof setInterval> | null, clearFn: (handle: ReturnType<typeof setInterval>) => void): void {
   if (timer) clearFn(timer);
 }
@@ -231,9 +235,23 @@ function setStatus(kind: 'connecting' | 'warning' | 'error' | 'connected', title
   sub.textContent = message;
 }
 
+function artistFromActivity(act: NonNullable<Status['lastActivity']>): string {
+  const fromSub = act.sub?.replace(/^by\s+/i, '').trim();
+  if (fromSub) return fromSub;
+  if (act.activityName) return act.activityName;
+  return '';
+}
+
 function fallbackLogoUrl(act: NonNullable<Status['lastActivity']>): string | null {
-  const path = fallbackLogoPath(act);
-  return path ? chrome.runtime.getURL(path) : null;
+  const service = `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();
+  if (service.includes('tidal')) {
+    return chrome.runtime.getURL(PRESENCE_PREVIEW_ASSETS.tidalLogo);
+  }
+  if (service.includes('youtube music') || service.includes('yt music')) {
+    return chrome.runtime.getURL(PRESENCE_PREVIEW_ASSETS.ytmusicLogo);
+  }
+  if (service.includes('youtube')) return 'https://www.youtube.com/s/desktop/6cfcd65f/img/logos/favicon_32x32.png';
+  return null;
 }
 
 function setToggle(btn: HTMLButtonElement | null, checked: boolean): void {
