@@ -17,6 +17,7 @@
 //!   host → ext  { "type": "STATUS", "connected": bool, "error"?: string }
 
 mod discord_ipc;
+mod update;
 
 use discord_ipc::{Activity, DiscordIpc, IpcError};
 use serde_json::{json, Value};
@@ -85,7 +86,7 @@ fn read_message() -> io::Result<Option<Value>> {
     Ok(Some(value))
 }
 
-fn write_message(value: &Value) {
+pub(crate) fn write_message(value: &Value) {
     let data = match serde_json::to_vec(value) {
         Ok(d) => d,
         Err(e) => {
@@ -185,6 +186,10 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
             }
             let connected = ipc.lock().unwrap().is_some();
             send_status(connected, None);
+            Ok(())
+        }
+        "UPDATE" => {
+            update::run_update(|v| write_message(&v));
             Ok(())
         }
         "SET_ACTIVITY" => {
