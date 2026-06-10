@@ -1,8 +1,8 @@
-# FreeMiD 4.0.0 Release Checklist
+# FreeMiD 0.4.0 Release Checklist
 
 ## Scope
 
-- Release version: `4.0.0`
+- Release version: `0.4.0`
 - Branch: `features/auto-update`
 
 ## Version Sync
@@ -29,7 +29,7 @@ npm run build
 
 Expected:
 
-- `Version consistency OK: 4.0.0`
+- `Version consistency OK: 0.4.0`
 - Rust checks pass for native host and installer.
 - Extension typecheck, tests, and build pass.
 
