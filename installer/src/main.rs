@@ -69,7 +69,15 @@ mod win {
             } else if arg.eq_ignore_ascii_case("--silent") {
                 options.silent = true;
             } else if arg.eq_ignore_ascii_case("--extension-id") {
-                options.extension_id = args.next();
+                match args.next() {
+                    Some(v) if !v.trim().is_empty() && !v.starts_with("--") => {
+                        options.extension_id = Some(v);
+                    }
+                    _ => {
+                        eprintln!("--extension-id requires a non-empty value");
+                        std::process::exit(2);
+                    }
+                }
             } else if let Some(value) = arg.strip_prefix("--extension-id=") {
                 options.extension_id = Some(value.to_string());
             }

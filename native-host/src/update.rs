@@ -127,8 +127,13 @@ fn do_update(
         .as_str()
         .ok_or_else(|| "GitHub API response missing tag_name".to_string())?;
 
-    // Strip leading 'v' for semver comparison.
+    // Strip leading 'v' and enforce strict MAJOR.MINOR.PATCH format.
     let latest_version = tag.trim_start_matches('v');
+    if !is_strict_semver(latest_version) {
+        return Err(format!(
+            "GitHub API tag_name is not strict semver (expected vMAJOR.MINOR.PATCH): {tag}"
+        ));
+    }
 
     if !is_newer(latest_version, env!("CARGO_PKG_VERSION")) {
         send(json!({ "type": "UPDATE_STATUS", "status": "up_to_date" }));
@@ -255,21 +260,41 @@ fn is_newer(latest: &str, current: &str) -> bool {
     parse(latest) > parse(current)
 }
 
+fn is_strict_semver(v: &str) -> bool {
+    let parts: Vec<&str> = v.split('.').collect();
+    parts.len() == 3 && parts.iter().all(|p| p.parse::<u64>().is_ok())
+}
+
 fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, String> {
+    const MAX_DOWNLOAD_BYTES: u64 = 100 * 1024 * 1024;
+
     let resp = ureq::get(url)
         .set("User-Agent", user_agent)
         .call()
         .map_err(|e| format!("Download failed ({url}): {e}"))?;
 
-    let content_length: usize = resp
+    if let Some(content_length) = resp
         .header("Content-Length")
-        .and_then(|h| h.parse().ok())
-        .unwrap_or(10 * 1024 * 1024); // default 10 MB
+        .and_then(|h| h.parse::<u64>().ok())
+    {
+        if content_length > MAX_DOWNLOAD_BYTES {
+            return Err(format!(
+                "Download too large ({content_length} bytes, max {MAX_DOWNLOAD_BYTES})"
+            ));
+        }
+    }
 
-    let mut buf = Vec::with_capacity(content_length);
+    let mut buf = Vec::new();
     resp.into_reader()
+        .take(MAX_DOWNLOAD_BYTES + 1)
         .read_to_end(&mut buf)
         .map_err(|e| format!("Failed to read download body: {e}"))?;
+
+    if buf.len() as u64 > MAX_DOWNLOAD_BYTES {
+        return Err(format!(
+            "Download exceeded max size of {MAX_DOWNLOAD_BYTES} bytes"
+        ));
+    }
 
     Ok(buf)
 }

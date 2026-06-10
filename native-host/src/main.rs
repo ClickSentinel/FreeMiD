@@ -158,7 +158,7 @@ fn try_acquire_single_instance_guard() -> Result<SingleInstanceGuard, String> {
 
 #[cfg(windows)]
 fn acquire_single_instance_guard_with_grace() -> Result<SingleInstanceGuard, String> {
-    for attempt in 0..=SINGLE_INSTANCE_RETRY_COUNT {
+    for attempt in 0..SINGLE_INSTANCE_RETRY_COUNT {
         match try_acquire_single_instance_guard() {
             Ok(guard) => {
                 if attempt > 0 {
@@ -167,7 +167,7 @@ fn acquire_single_instance_guard_with_grace() -> Result<SingleInstanceGuard, Str
                 return Ok(guard);
             }
             Err(e) if e.contains("already running") => {
-                if attempt == SINGLE_INSTANCE_RETRY_COUNT {
+                if attempt + 1 == SINGLE_INSTANCE_RETRY_COUNT {
                     return Err(e);
                 }
                 std::thread::sleep(Duration::from_millis(SINGLE_INSTANCE_RETRY_DELAY_MS));

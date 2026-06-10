@@ -115,20 +115,6 @@ status_server() {
   echo "Current test tag: ${release_tag}"
 }
 
-compare_versions() {
-  local a="$1" b="$2"
-  awk -v a="$a" -v b="$b" 'BEGIN {
-    split(a, A, "."); split(b, B, ".");
-    for (i = 1; i <= 3; i++) {
-      ai = (A[i] == "" ? 0 : A[i]) + 0;
-      bi = (B[i] == "" ? 0 : B[i]) + 0;
-      if (ai > bi) { print 1; exit }
-      if (ai < bi) { print -1; exit }
-    }
-    print 0
-  }'
-}
-
 prepare_feed() {
   local artifact candidate_bin tag_dir
   artifact="$(artifact_name)"

@@ -729,7 +729,16 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       ...(DEV_UPDATE_LATEST_URL ? { latestUrl: DEV_UPDATE_LATEST_URL } : {}),
       ...(DEV_UPDATE_RELEASES_BASE ? { releasesBaseUrl: DEV_UPDATE_RELEASES_BASE } : {}),
     });
-    sendResponse(ok ? { ok: true } : { ok: false, error: lastError ?? 'Failed to send update command' });
+
+    if (!ok) {
+      const error = lastError ?? 'Failed to send update command';
+      updateStatus = { status: 'failed', error };
+      broadcastStatus();
+      sendResponse({ ok: false, error });
+      return true;
+    }
+
+    sendResponse({ ok: true });
     return true;
   }
 
