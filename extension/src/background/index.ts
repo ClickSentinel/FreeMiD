@@ -175,9 +175,24 @@ function scheduleManualReconnectRetry(delayMs: number): void {
 
   manualReconnectRetryTimer = setTimeout(() => {
     manualReconnectRetryTimer = null;
-    if (!reconnectInProgress || suspendInProgress || nativePort) return;
+    if (!reconnectInProgress || suspendInProgress) return;
+
     manualReconnectAttemptsRemaining -= 1;
-    connectNativeHost();
+
+    // Keep probing until we actually receive STATUS, not just until a port exists.
+    if (nativePort && !hostConnected) {
+      const ok = sendToHost({ type: 'PING' });
+      if (!ok) {
+        // sendToHost already reset/disconnected broken ports.
+        connectNativeHost();
+      }
+    } else if (!nativePort) {
+      connectNativeHost();
+    }
+
+    if (reconnectInProgress && !hostConnected && manualReconnectAttemptsRemaining > 0) {
+      scheduleManualReconnectRetry(MANUAL_RECONNECT_RETRY_DELAY_MS);
+    }
   }, delayMs);
 }
 
@@ -209,6 +224,8 @@ function reconnectNativeHostNow(): void {
 }
 
 function requestReconnectNativeHost(): boolean {
+  suspendInProgress = false;
+
   if (reconnectInProgress) {
     reconnectQueued = true;
     return false;
@@ -228,6 +245,9 @@ function requestReconnectNativeHost(): boolean {
 }
 
 function connectNativeHost(): void {
+  // Any explicit connect path means the worker is active again.
+  suspendInProgress = false;
+
   if (nativePort) return;
   try {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
