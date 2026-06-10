@@ -76,11 +76,13 @@ let pendingManualReconnect = false;
 let manualReconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
+let reconnectCooldownUntilMs = 0;
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = 30000;
 const POST_UPDATE_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 150;
 const DISCONNECT_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 400;
+const RECONNECT_REQUEST_COOLDOWN_MS = IS_WINDOWS_PLATFORM ? 15000 : 8000;
 const RECONNECT_CONFIG = IS_WINDOWS_PLATFORM
   ? {
       settleTimeoutMs: 12000,
@@ -456,6 +458,10 @@ function reconnectNativeHost(): void {
   requestReconnectNativeHost();
 }
 
+function reconnectCooldownRemainingMs(): number {
+  return Math.max(0, reconnectCooldownUntilMs - Date.now());
+}
+
 // ── Activity helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -728,8 +734,15 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   }
 
   if (msg.type === 'RECONNECT_HOST') {
+    const remainingMs = reconnectCooldownRemainingMs();
+    if (remainingMs > 0) {
+      sendResponse({ ok: false, error: 'Reconnect cooling down', retryAfterMs: remainingMs });
+      return true;
+    }
+
+    reconnectCooldownUntilMs = Date.now() + RECONNECT_REQUEST_COOLDOWN_MS;
     requestReconnectNativeHost();
-    sendResponse({ ok: true });
+    sendResponse({ ok: true, retryAfterMs: RECONNECT_REQUEST_COOLDOWN_MS });
     return true;
   }
 });

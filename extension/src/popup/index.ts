@@ -186,19 +186,28 @@ reconnectBtn?.addEventListener('click', async () => {
   }
 
   const res = await chrome.runtime.sendMessage({ type: 'RECONNECT_HOST' }) as
-    | { ok: true }
-    | { ok: false; error?: string };
+    | { ok: true; retryAfterMs?: number }
+    | { ok: false; error?: string; retryAfterMs?: number };
+
+  if (typeof res?.retryAfterMs === 'number' && Number.isFinite(res.retryAfterMs) && res.retryAfterMs > 0) {
+    reconnectButtonUnlockAtMs = Math.max(reconnectButtonUnlockAtMs, Date.now() + res.retryAfterMs);
+  }
 
   if (!res || !res.ok) {
-    reconnectGraceUntilMs = null;
-    reconnectSawDisconnect = false;
-    if (reconnectPollTimer) {
-      clearInterval(reconnectPollTimer);
-      reconnectPollTimer = null;
+    // If reconnect was throttled by background cooldown, keep current UI state
+    // but honor the server-provided lockout so popup reopen cannot bypass it.
+    if (res?.error !== 'Reconnect cooling down') {
+      reconnectGraceUntilMs = null;
+      reconnectSawDisconnect = false;
+      if (reconnectPollTimer) {
+        clearInterval(reconnectPollTimer);
+        reconnectPollTimer = null;
+      }
+      setStatus('error', 'Reconnect failed', res?.error ?? 'Failed to reconnect native host');
     }
+
     reconnectBtn.classList.remove('spinning');
     reconnectBtn.disabled = Date.now() < reconnectButtonUnlockAtMs;
-    setStatus('error', 'Reconnect failed', res?.error ?? 'Failed to reconnect native host');
   }
 });
 
