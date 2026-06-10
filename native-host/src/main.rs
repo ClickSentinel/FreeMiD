@@ -117,6 +117,8 @@ fn send_status(connected: bool, error: Option<&str>) {
         "connected": connected,
         "version": env!("CARGO_PKG_VERSION"),
         "selfUpdateSupported": update::self_update_supported(),
+        "runtimeOs": std::env::consts::OS,
+        "runtimeArch": std::env::consts::ARCH,
     });
     if let Some(e) = error {
         payload["error"] = Value::String(e.to_string());

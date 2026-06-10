@@ -55,6 +55,8 @@ let discordConnectedSince: number | null = null;
 let enabledSites: Record<string, boolean> = { youtube: true, youtubemusic: true, tidal: true };
 let hostVersion: string | null = null;
 let hostSelfUpdateSupported: boolean | null = null;
+let hostRuntimeOs: string | null = null;
+let hostRuntimeArch: string | null = null;
 let latestVersion: string | null = null;
 let updateStatus: {
   status: 'requested' | 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
@@ -129,6 +131,8 @@ function resetHostConnection(error?: string): void {
   hostConnected = false;
   discordConnected = false;
   hostSelfUpdateSupported = null;
+  hostRuntimeOs = null;
+  hostRuntimeArch = null;
   lastError = error ?? null;
 }
 
@@ -152,6 +156,8 @@ function connectNativeHost(): void {
         error?: string;
         version?: string;
         selfUpdateSupported?: boolean;
+        runtimeOs?: string;
+        runtimeArch?: string;
         status?: 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
       };
       if (m.type === 'STATUS') {
@@ -170,6 +176,12 @@ function connectNativeHost(): void {
         }
         if (typeof m.selfUpdateSupported === 'boolean') {
           hostSelfUpdateSupported = m.selfUpdateSupported;
+        }
+        if (typeof m.runtimeOs === 'string') {
+          hostRuntimeOs = m.runtimeOs;
+        }
+        if (typeof m.runtimeArch === 'string') {
+          hostRuntimeArch = m.runtimeArch;
         }
         if (discordConnected && !wasConnected) {
           discordConnectedSince = Date.now();
@@ -479,6 +491,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       enabledSites,
       hostVersion,
       hostSelfUpdateSupported,
+      hostRuntimeOs,
+      hostRuntimeArch,
       latestVersion,
       updateAvailable: isUpdateAvailable(),
       updateStatus,
@@ -553,6 +567,8 @@ function broadcastStatus(): void {
       enabledSites,
       hostVersion,
       hostSelfUpdateSupported,
+      hostRuntimeOs,
+      hostRuntimeArch,
       latestVersion,
       updateAvailable: isUpdateAvailable(),
       updateStatus,
