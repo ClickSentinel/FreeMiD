@@ -52,9 +52,10 @@ describe('background helpers', () => {
   });
 
   it('gates self-update to hosts at or above minimum supported version', () => {
+    expect(isHostSelfUpdateSupported('0.3.13')).toBe(true);
     expect(isHostSelfUpdateSupported('0.3.14')).toBe(true);
     expect(isHostSelfUpdateSupported('0.3.15')).toBe(true);
-    expect(isHostSelfUpdateSupported('0.3.13')).toBe(false);
+    expect(isHostSelfUpdateSupported('0.3.12')).toBe(false);
     expect(isHostSelfUpdateSupported(null)).toBe(false);
   });
 });

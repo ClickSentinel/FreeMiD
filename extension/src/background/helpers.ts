@@ -1,6 +1,6 @@
 import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
 
-export const MIN_SELF_UPDATE_HOST_VERSION = '0.3.14';
+export const MIN_SELF_UPDATE_HOST_VERSION = '0.3.13';
 
 export function urlMatchesPattern(url: string, pattern: string): boolean {
   try {
