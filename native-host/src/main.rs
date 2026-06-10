@@ -116,6 +116,7 @@ fn send_status(connected: bool, error: Option<&str>) {
         "type": "STATUS",
         "connected": connected,
         "version": env!("CARGO_PKG_VERSION"),
+        "selfUpdateSupported": update::self_update_supported(),
     });
     if let Some(e) = error {
         payload["error"] = Value::String(e.to_string());

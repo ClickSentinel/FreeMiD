@@ -54,6 +54,10 @@ fn artifact_name() -> Option<&'static str> {
     None
 }
 
+pub fn self_update_supported() -> bool {
+    artifact_name().is_some()
+}
+
 /// Spawn a background thread that checks for and applies a new release.
 ///
 /// `send` is called from the background thread to push `UPDATE_STATUS`

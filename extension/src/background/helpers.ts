@@ -1,6 +1,7 @@
 import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
 
 export const MIN_SELF_UPDATE_HOST_VERSION = '0.3.13';
+export const MIN_WINDOWS_SELF_UPDATE_HOST_VERSION = '0.3.14';
 
 export function urlMatchesPattern(url: string, pattern: string): boolean {
   try {
@@ -79,7 +80,12 @@ export function isUpdateAvailableForHost(
 export function isHostSelfUpdateSupported(
   hostVersion: string | null,
   minVersion = MIN_SELF_UPDATE_HOST_VERSION,
+  platform: 'windows' | 'other' = 'other',
+  minWindowsVersion = MIN_WINDOWS_SELF_UPDATE_HOST_VERSION,
 ): boolean {
   if (!hostVersion) return false;
-  return compareVersions(hostVersion, minVersion) >= 0;
+  const effectiveMinVersion = platform === 'windows'
+    ? (compareVersions(minWindowsVersion, minVersion) > 0 ? minWindowsVersion : minVersion)
+    : minVersion;
+  return compareVersions(hostVersion, effectiveMinVersion) >= 0;
 }

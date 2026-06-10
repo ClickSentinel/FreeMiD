@@ -16,6 +16,7 @@ import { STORAGE_KEYS } from '../constants/storageKeys';
 import {
   compareVersions,
   MIN_SELF_UPDATE_HOST_VERSION,
+  MIN_WINDOWS_SELF_UPDATE_HOST_VERSION,
   isHostSelfUpdateSupported,
   isUpdateAvailableForHost,
   preferredUpdateVersion,
@@ -26,6 +27,9 @@ const DEV_UPDATE_LATEST_URL = import.meta.env.VITE_UPDATE_LATEST_URL?.trim() || 
 const DEV_UPDATE_RELEASES_BASE = import.meta.env.VITE_UPDATE_RELEASES_BASE?.trim() || '';
 const DEV_MIN_SELF_UPDATE_HOST_VERSION =
   import.meta.env.VITE_MIN_SELF_UPDATE_HOST_VERSION?.trim() || MIN_SELF_UPDATE_HOST_VERSION;
+const DEV_MIN_WINDOWS_SELF_UPDATE_HOST_VERSION =
+  import.meta.env.VITE_MIN_WINDOWS_SELF_UPDATE_HOST_VERSION?.trim() || MIN_WINDOWS_SELF_UPDATE_HOST_VERSION;
+const IS_WINDOWS_PLATFORM = /Windows/i.test(navigator.userAgent);
 
 // ── Native host port ──────────────────────────────────────────────────────────
 
@@ -50,6 +54,7 @@ let lastActivity: {
 let discordConnectedSince: number | null = null;
 let enabledSites: Record<string, boolean> = { youtube: true, youtubemusic: true, tidal: true };
 let hostVersion: string | null = null;
+let hostSelfUpdateSupported: boolean | null = null;
 let latestVersion: string | null = null;
 let updateStatus: {
   status: 'requested' | 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
@@ -123,6 +128,7 @@ function resetHostConnection(error?: string): void {
   nativePort = null;
   hostConnected = false;
   discordConnected = false;
+  hostSelfUpdateSupported = null;
   lastError = error ?? null;
 }
 
@@ -145,6 +151,7 @@ function connectNativeHost(): void {
         connected?: boolean;
         error?: string;
         version?: string;
+        selfUpdateSupported?: boolean;
         status?: 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
       };
       if (m.type === 'STATUS') {
@@ -160,6 +167,9 @@ function connectNativeHost(): void {
             applyVerifyTargetVersion = targetVersion;
             maybeFinalizeAppliedVersion();
           }
+        }
+        if (typeof m.selfUpdateSupported === 'boolean') {
+          hostSelfUpdateSupported = m.selfUpdateSupported;
         }
         if (discordConnected && !wasConnected) {
           discordConnectedSince = Date.now();
@@ -468,6 +478,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       connectedSince: discordConnectedSince,
       enabledSites,
       hostVersion,
+      hostSelfUpdateSupported,
       latestVersion,
       updateAvailable: isUpdateAvailable(),
       updateStatus,
@@ -482,7 +493,17 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       return true;
     }
 
-    if (!isHostSelfUpdateSupported(hostVersion, DEV_MIN_SELF_UPDATE_HOST_VERSION)) {
+    if (hostSelfUpdateSupported === false) {
+      sendResponse({ ok: false, manualInstall: true });
+      return true;
+    }
+
+    if (!isHostSelfUpdateSupported(
+      hostVersion,
+      DEV_MIN_SELF_UPDATE_HOST_VERSION,
+      IS_WINDOWS_PLATFORM ? 'windows' : 'other',
+      DEV_MIN_WINDOWS_SELF_UPDATE_HOST_VERSION,
+    )) {
       sendResponse({ ok: false, manualInstall: true });
       return true;
     }
@@ -531,6 +552,7 @@ function broadcastStatus(): void {
       connectedSince: discordConnectedSince,
       enabledSites,
       hostVersion,
+      hostSelfUpdateSupported,
       latestVersion,
       updateAvailable: isUpdateAvailable(),
       updateStatus,
