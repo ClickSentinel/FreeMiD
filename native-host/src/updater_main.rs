@@ -69,7 +69,7 @@ fn main() {
     {
         let args: Vec<String> = std::env::args().collect();
         if args.len() < 4 || args[1] != "--apply-update" {
-            eprintln!("Usage: freemid-updater --apply-update <staged-path> <target-path> [old-pid]");
+            eprintln!("Usage: freemid-apply --apply-update <staged-path> <target-path> [old-pid]");
             std::process::exit(2);
         }
 

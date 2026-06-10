@@ -37,7 +37,7 @@ if (-not $ExtensionId) {
 # ── Install destination ────────────────────────────────────────────────────────
 $InstallDir = Join-Path $env:LOCALAPPDATA "FreeMiD"
 $BinDst     = Join-Path $InstallDir "freemid.exe"
-$UpdaterDst = Join-Path $InstallDir "freemid-updater.exe"
+$UpdaterDst = Join-Path $InstallDir "freemid-apply.exe"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 # ── Resolve / download the binary ─────────────────────────────────────────────
@@ -50,7 +50,7 @@ if ($Binary) {
     Write-Host "-> Installed binary (local): $BinDst"
 
     $BinaryDir = Split-Path -Parent $Binary
-    $LocalUpdater = Join-Path $BinaryDir "freemid-updater.exe"
+    $LocalUpdater = Join-Path $BinaryDir "freemid-apply.exe"
     if (Test-Path $LocalUpdater) {
         Copy-Item -Force $LocalUpdater $UpdaterDst
         Write-Host "-> Installed updater (local): $UpdaterDst"
@@ -76,7 +76,7 @@ if ($Binary) {
     Write-Host "-> Installed binary: $BinDst ($sizeMb MB)"
 
     # Optional stable updater asset (scaffolded; legacy helper remains fallback).
-    $UpdaterArtifact = "freemid-updater-windows-x86_64.exe"
+    $UpdaterArtifact = "freemid-apply-windows-x86_64.exe"
     if ($Tag -eq "latest") {
         $UpdaterUrl = "https://github.com/$GithubRepo/releases/latest/download/$UpdaterArtifact"
     } else {

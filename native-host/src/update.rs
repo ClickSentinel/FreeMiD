@@ -341,7 +341,7 @@ fn apply_update(data: &[u8]) -> Result<(), String> {
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(windows)]
-const STABLE_UPDATER_EXE_NAME: &str = "freemid-updater.exe";
+const STABLE_UPDATER_EXE_NAME: &str = "freemid-apply.exe";
 
 #[cfg(windows)]
 fn append_windows_updater_log(line: &str) {
@@ -358,6 +358,20 @@ fn append_windows_updater_log(line: &str) {
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(f, "{}", line);
     }
+}
+
+#[cfg(windows)]
+fn windows_updater_log_path() -> PathBuf {
+    let mut path = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let mut p = PathBuf::from(local_app_data);
+        p.push("FreeMiD");
+        let _ = std::fs::create_dir_all(&p);
+        p
+    } else {
+        PathBuf::from(".")
+    };
+    path.push("updater.log");
+    path
 }
 
 #[cfg(windows)]
@@ -385,7 +399,7 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
             .and_then(|n| n.to_str())
             .unwrap_or("freemid.exe")
             .to_owned();
-        p.set_file_name(format!("{}.updater-helper-{}.exe", name, std::process::id()));
+        p.set_file_name(format!("{}.apply-helper-{}.exe", name, std::process::id()));
         p
     };
 
@@ -496,11 +510,13 @@ fn escape_cmd_set_value(path: &std::path::Path) -> String {
 fn spawn_cmd_apply_update(staged_path: &std::path::Path, target_path: &std::path::Path) -> Result<(), String> {
     let staged = escape_cmd_set_value(staged_path);
     let target = escape_cmd_set_value(target_path);
+    let log_path = escape_cmd_set_value(&windows_updater_log_path());
 
     let command = format!(
-        "set \"S={}\" && set \"T={}\" && for /L %i in (1,1,30) do (copy /Y \"%S%\" \"%T%\" >nul && del /F /Q \"%S%\" >nul && exit /B 0 || timeout /T 1 /NOBREAK >nul) && exit /B 1",
+        "set \"S={}\" && set \"T={}\" && set \"L={}\" && for /L %i in (1,1,120) do (copy /Y \"%S%\" \"%T%\" >nul && del /F /Q \"%S%\" >nul && (echo cmd_fallback: copy succeeded>>\"%L%\") && exit /B 0 || timeout /T 1 /NOBREAK >nul) && (echo cmd_fallback: timed out>>\"%L%\" & exit /B 1)",
         staged,
         target,
+        log_path,
     );
 
     append_windows_updater_log(&format!(

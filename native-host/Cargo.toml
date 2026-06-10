@@ -11,7 +11,7 @@ name = "freemid"
 path = "src/main.rs"
 
 [[bin]]
-name = "freemid-updater"
+name = "freemid-apply"
 path = "src/updater_main.rs"
 
 [dependencies]
