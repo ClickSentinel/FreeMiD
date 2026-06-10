@@ -202,8 +202,10 @@ function scheduleManualReconnectRetry(delayMs: number): void {
 
     manualReconnectAttemptsRemaining -= 1;
 
-    // Keep probing until we actually receive STATUS, not just until a port exists.
-    if (nativePort && !hostConnected) {
+    // Keep probing until we actually receive STATUS.
+    // Always ping when a port exists to verify it is truly live; stale/disconnected
+    // port objects can otherwise leave reconnect stuck in a false "connected" state.
+    if (nativePort) {
       const ok = sendToHost({ type: 'PING' });
       if (!ok) {
         // sendToHost already reset/disconnected broken ports.
@@ -219,6 +221,13 @@ function scheduleManualReconnectRetry(delayMs: number): void {
   }, delayMs);
 }
 
+function markReconnectingStatus(): void {
+  hostConnected = false;
+  discordConnected = false;
+  discordConnectedSince = null;
+  lastError = null;
+}
+
 function finalizeReconnectAttempt(): void {
   resetReconnectState();
 
@@ -231,8 +240,15 @@ function finalizeReconnectAttempt(): void {
 function reconnectNativeHostNow(): void {
   if (nativePort) {
     pendingManualReconnect = true;
+    // Set status immediately so popup does not briefly show stale connected state
+    // while we wait for port teardown/host relaunch.
+    markReconnectingStatus();
+    broadcastStatus();
+
     try {
       nativePort.disconnect();
+      // Fallback probe in case onDisconnect is delayed or skipped for a stale port.
+      scheduleManualReconnectRetry(RECONNECT_CONFIG.manualRetryDelayMs);
       return;
     } catch {
       // If disconnect throws, fall back to an immediate clean reconnect.
@@ -240,6 +256,8 @@ function reconnectNativeHostNow(): void {
     }
   }
   resetHostConnection();
+  markReconnectingStatus();
+  broadcastStatus();
   connectNativeHost();
 }
 
