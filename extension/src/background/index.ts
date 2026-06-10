@@ -65,6 +65,7 @@ let updateStatus: {
   error?: string;
 } | null = null;
 let autoReconnectScheduled = false;
+let disconnectReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let applyVerifyTimer: ReturnType<typeof setInterval> | null = null;
 let applyVerifyDeadlineMs: number | null = null;
 let applyVerifyTargetVersion: string | null = null;
@@ -72,8 +73,13 @@ let applyVerifyTargetVersion: string | null = null;
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = 30000;
 const POST_UPDATE_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 3000 : 150;
+const DISCONNECT_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 1500 : 400;
 
 function clearApplyVerification(): void {
+  if (disconnectReconnectTimer) {
+    clearTimeout(disconnectReconnectTimer);
+    disconnectReconnectTimer = null;
+  }
   if (applyVerifyTimer) {
     clearInterval(applyVerifyTimer);
     applyVerifyTimer = null;
@@ -231,7 +237,30 @@ function connectNativeHost(): void {
       if (nativePort !== port) return;
       const err = chrome.runtime.lastError?.message ?? 'disconnected';
       console.warn(`[FreeMiD] Native host disconnected: ${err}`);
+
+      const wasUpdateInFlight =
+        updateStatus?.status === 'requested'
+        || updateStatus?.status === 'checking'
+        || updateStatus?.status === 'downloading'
+        || updateStatus?.status === 'reconnecting';
+
       resetHostConnection(err);
+
+      if (wasUpdateInFlight) {
+        if (updateStatus?.status !== 'reconnecting') {
+          updateStatus = {
+            status: 'reconnecting',
+            version: updateStatus?.version,
+          };
+        }
+        if (!disconnectReconnectTimer) {
+          disconnectReconnectTimer = setTimeout(() => {
+            disconnectReconnectTimer = null;
+            connectNativeHost();
+          }, DISCONNECT_RECONNECT_DELAY_MS);
+        }
+      }
+
       broadcastStatus();
     });
 
@@ -558,6 +587,16 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     else sendToHost({ type: 'PING' });
   }
   if (alarm.name === 'freemid-update-check') { void checkForUpdates(); }
+});
+
+chrome.runtime.onSuspend.addListener(() => {
+  if (!nativePort) return;
+  try {
+    nativePort.disconnect();
+  } catch {
+    // Ignore teardown errors during worker suspend.
+  }
+  resetHostConnection('Service worker suspended');
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

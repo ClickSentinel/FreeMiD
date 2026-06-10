@@ -22,9 +22,21 @@ mod update;
 use discord_ipc::{Activity, DiscordIpc, IpcError};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_INBOUND_BYTES: u32 = 1024 * 1024;
+const HOST_IDLE_TIMEOUT_MS: u64 = 120_000;
+
+static LAST_MESSAGE_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -37,6 +49,19 @@ fn main() {
     }
 
     eprintln!("[FreeMiD] native host v{} starting", env!("CARGO_PKG_VERSION"));
+
+    LAST_MESSAGE_MS.store(now_unix_ms(), Ordering::Relaxed);
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(Duration::from_secs(10));
+            let last = LAST_MESSAGE_MS.load(Ordering::Relaxed);
+            let now = now_unix_ms();
+            if last > 0 && now.saturating_sub(last) > HOST_IDLE_TIMEOUT_MS {
+                eprintln!("[FreeMiD] idle timeout reached ({} ms); exiting", HOST_IDLE_TIMEOUT_MS);
+                std::process::exit(0);
+            }
+        }
+    });
 
     let ipc: Mutex<Option<DiscordIpc>> = Mutex::new(None);
 
@@ -57,6 +82,7 @@ fn main() {
                 return;
             }
             Ok(Some(msg)) => {
+                LAST_MESSAGE_MS.store(now_unix_ms(), Ordering::Relaxed);
                 if let Err(e) = handle_message(&msg, &ipc) {
                     eprintln!("[FreeMiD] error handling message: {}", e);
                 }
