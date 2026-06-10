@@ -73,13 +73,17 @@ let reconnectInProgress = false;
 let reconnectQueued = false;
 let reconnectSettleTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingManualReconnect = false;
+let manualReconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = 30000;
 const POST_UPDATE_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 150;
-const DISCONNECT_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 400 : 400;
-const RECONNECT_SETTLE_TIMEOUT_MS = 4000;
+const DISCONNECT_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 400;
+const RECONNECT_SETTLE_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 12000 : 4000;
+const MANUAL_RECONNECT_RETRY_DELAY_MS = IS_WINDOWS_PLATFORM ? 700 : 300;
+const MANUAL_RECONNECT_MAX_ATTEMPTS = IS_WINDOWS_PLATFORM ? 12 : 6;
 
 function clearApplyVerification(): void {
   if (disconnectReconnectTimer) {
@@ -158,8 +162,29 @@ function clearReconnectSettleTimer(): void {
   }
 }
 
+function clearManualReconnectRetryTimer(): void {
+  if (manualReconnectRetryTimer) {
+    clearTimeout(manualReconnectRetryTimer);
+    manualReconnectRetryTimer = null;
+  }
+}
+
+function scheduleManualReconnectRetry(delayMs: number): void {
+  if (manualReconnectAttemptsRemaining <= 0) return;
+  if (manualReconnectRetryTimer) return;
+
+  manualReconnectRetryTimer = setTimeout(() => {
+    manualReconnectRetryTimer = null;
+    if (!reconnectInProgress || suspendInProgress || nativePort) return;
+    manualReconnectAttemptsRemaining -= 1;
+    connectNativeHost();
+  }, delayMs);
+}
+
 function finalizeReconnectAttempt(): void {
   clearReconnectSettleTimer();
+  clearManualReconnectRetryTimer();
+  manualReconnectAttemptsRemaining = 0;
   reconnectInProgress = false;
 
   if (reconnectQueued) {
@@ -191,6 +216,7 @@ function requestReconnectNativeHost(): boolean {
 
   reconnectInProgress = true;
   reconnectQueued = false;
+  manualReconnectAttemptsRemaining = MANUAL_RECONNECT_MAX_ATTEMPTS;
   reconnectNativeHostNow();
 
   clearReconnectSettleTimer();
@@ -310,13 +336,18 @@ function connectNativeHost(): void {
         reconnectQueued = false;
         reconnectInProgress = false;
         clearReconnectSettleTimer();
+        clearManualReconnectRetryTimer();
+        manualReconnectAttemptsRemaining = 0;
         broadcastStatus();
         return;
       }
 
       if (pendingManualReconnect) {
         pendingManualReconnect = false;
-        connectNativeHost();
+        manualReconnectAttemptsRemaining = Math.max(1, manualReconnectAttemptsRemaining);
+        scheduleManualReconnectRetry(0);
+      } else if (reconnectInProgress && !wasUpdateInFlight) {
+        scheduleManualReconnectRetry(MANUAL_RECONNECT_RETRY_DELAY_MS);
       }
 
       if (wasUpdateInFlight) {
@@ -667,6 +698,8 @@ chrome.runtime.onSuspend.addListener(() => {
   reconnectQueued = false;
   reconnectInProgress = false;
   clearReconnectSettleTimer();
+  clearManualReconnectRetryTimer();
+  manualReconnectAttemptsRemaining = 0;
 
   if (!nativePort) return;
   try {
