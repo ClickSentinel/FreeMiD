@@ -71,9 +71,7 @@ let applyVerifyTargetVersion: string | null = null;
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = 30000;
-const APPLY_VERIFY_RECONNECT_INTERVAL_MS = 3000;
-
-let applyLastReconnectAttemptMs = 0;
+const POST_UPDATE_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 3000 : 150;
 
 function clearApplyVerification(): void {
   if (applyVerifyTimer) {
@@ -82,7 +80,6 @@ function clearApplyVerification(): void {
   }
   applyVerifyDeadlineMs = null;
   applyVerifyTargetVersion = null;
-  applyLastReconnectAttemptMs = 0;
 }
 
 function maybeFinalizeAppliedVersion(): boolean {
@@ -100,7 +97,6 @@ function startApplyVerification(targetVersion: string): void {
   clearApplyVerification();
   applyVerifyTargetVersion = targetVersion;
   applyVerifyDeadlineMs = Date.now() + APPLY_VERIFY_TIMEOUT_MS;
-  applyLastReconnectAttemptMs = 0;
 
   const tick = (): void => {
     if (updateStatus?.status !== 'reconnecting') {
@@ -118,19 +114,6 @@ function startApplyVerification(targetVersion: string): void {
       };
       clearApplyVerification();
       broadcastStatus();
-      return;
-    }
-
-    // Keep nudging Chrome to relaunch the native host while apply is pending.
-    // This gives the updater process repeated windows to replace the binary and
-    // avoids getting stuck on a single stale post-update relaunch.
-    if (
-      hostVersion
-      && compareVersions(hostVersion, targetVersion) < 0
-      && Date.now() - applyLastReconnectAttemptMs >= APPLY_VERIFY_RECONNECT_INTERVAL_MS
-    ) {
-      applyLastReconnectAttemptMs = Date.now();
-      reconnectNativeHost();
       return;
     }
 
@@ -238,7 +221,7 @@ function connectNativeHost(): void {
           setTimeout(() => {
             autoReconnectScheduled = false;
             reconnectNativeHost();
-          }, 150);
+          }, POST_UPDATE_RECONNECT_DELAY_MS);
         }
         broadcastStatus();
       }

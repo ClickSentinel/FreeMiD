@@ -340,6 +340,8 @@ fn apply_update(data: &[u8]) -> Result<(), String> {
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(windows)]
+const STABLE_UPDATER_EXE_NAME: &str = "freemid-updater.exe";
 
 #[cfg(windows)]
 fn append_windows_updater_log(line: &str) {
@@ -400,6 +402,52 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
         "apply_update_windows: staged file at {:?}, target {:?}",
         staged_path, current_exe
     ));
+
+    // Preferred path: launch a stable updater binary that is installed once.
+    let stable_updater_path = current_exe
+        .parent()
+        .map(|p| p.join(STABLE_UPDATER_EXE_NAME))
+        .unwrap_or_else(|| PathBuf::from(STABLE_UPDATER_EXE_NAME));
+
+    if stable_updater_path.exists() {
+        append_windows_updater_log(&format!(
+            "apply_update_windows: attempting stable updater {:?}",
+            stable_updater_path
+        ));
+        match std::process::Command::new(&stable_updater_path)
+            .arg("--apply-update")
+            .arg(&staged_path)
+            .arg(&current_exe)
+            .arg(std::process::id().to_string())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+        {
+            Ok(_) => {
+                append_windows_updater_log("apply_update_windows: stable updater launch succeeded");
+                return Ok(());
+            }
+            Err(e) => {
+                append_windows_updater_log(&format!(
+                    "apply_update_windows: stable updater launch failed: {} (raw_os_error={:?})",
+                    e,
+                    e.raw_os_error()
+                ));
+
+                if e.raw_os_error() == Some(740) {
+                    append_windows_updater_log("apply_update_windows: trying cmd fallback after stable updater failure");
+                    return spawn_cmd_apply_update(&staged_path, &current_exe)
+                        .map_err(|fallback_err| format!(
+                            "Failed to launch stable updater: {e}; cmd fallback failed: {fallback_err}"
+                        ));
+                }
+            }
+        }
+    } else {
+        append_windows_updater_log(&format!(
+            "apply_update_windows: stable updater missing at {:?}; falling back to legacy helper",
+            stable_updater_path
+        ));
+    }
 
     std::fs::copy(&current_exe, &helper_path)
         .map_err(|e| format!("Cannot create updater helper {:?}: {e}", helper_path))?;
