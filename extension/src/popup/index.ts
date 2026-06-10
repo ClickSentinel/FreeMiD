@@ -38,6 +38,10 @@ const timelineTotal   = document.getElementById('timeline-total')   as HTMLEleme
 const extensionVersion = chrome.runtime.getManifest().version;
 const DEV_WINDOWS_SETUP_URL = import.meta.env.VITE_WINDOWS_SETUP_URL?.trim() || '';
 let latestStatus: Status | null = null;
+let reconnectGraceUntilMs: number | null = null;
+let reconnectSawDisconnect = false;
+let reconnectPollTimer: ReturnType<typeof setInterval> | null = null;
+const RECONNECT_UI_GRACE_MS = 12_000;
 
 function isUnsupportedPlatformUpdateError(error?: string): boolean {
   return typeof error === 'string' && /automatic updates are not supported on this platform/i.test(error);
@@ -166,11 +170,31 @@ reconnectBtn?.addEventListener('click', async () => {
   if (!reconnectBtn) return;
   reconnectBtn.classList.add('spinning');
   reconnectBtn.disabled = true;
+  reconnectGraceUntilMs = Date.now() + RECONNECT_UI_GRACE_MS;
+  reconnectSawDisconnect = false;
   setStatus('connecting', 'Reconnecting…', '');
-  await chrome.runtime.sendMessage({ type: 'RECONNECT_HOST' });
-  await fetchStatus();
-  reconnectBtn.classList.remove('spinning');
-  reconnectBtn.disabled = false;
+
+  if (!reconnectPollTimer) {
+    reconnectPollTimer = setInterval(() => {
+      void fetchStatus(0);
+    }, 700);
+  }
+
+  const res = await chrome.runtime.sendMessage({ type: 'RECONNECT_HOST' }) as
+    | { ok: true; started?: boolean; queued?: boolean }
+    | { ok: false; error?: string };
+
+  if (!res || !res.ok) {
+    reconnectGraceUntilMs = null;
+    reconnectSawDisconnect = false;
+    if (reconnectPollTimer) {
+      clearInterval(reconnectPollTimer);
+      reconnectPollTimer = null;
+    }
+    reconnectBtn.classList.remove('spinning');
+    reconnectBtn.disabled = false;
+    setStatus('error', 'Reconnect failed', res?.error ?? 'Failed to reconnect native host');
+  }
 });
 
 // ── Pause toggle ──────────────────────────────────────────────────────────────
@@ -326,8 +350,14 @@ function render(status: Status | null): void {
   helpHost.classList.add('hidden');
   helpDiscord.classList.add('hidden');
 
+  const reconnectGraceActive = reconnectGraceUntilMs != null && Date.now() < reconnectGraceUntilMs;
+
   if (!status) {
-    setStatus('connecting', 'Connecting…', 'Reaching native host');
+    if (reconnectGraceActive) {
+      setStatus('connecting', 'Connecting…', 'Restarting native host');
+    } else {
+      setStatus('connecting', 'Connecting…', 'Reaching native host');
+    }
     if (hostVersionEl) hostVersionEl.textContent = '';
     if (btnUpdate) btnUpdate.classList.remove('visible', 'spinning');
     stopUptimeTick();
@@ -336,6 +366,34 @@ function render(status: Status | null): void {
   }
 
   const paused = status.paused ?? false;
+
+  if (reconnectGraceUntilMs != null && !status.hostConnected) {
+    reconnectSawDisconnect = true;
+  }
+
+  if (reconnectGraceUntilMs != null) {
+    const graceExpired = Date.now() >= reconnectGraceUntilMs;
+    const reconnectRecovered = reconnectSawDisconnect && status.hostConnected;
+
+    if (reconnectRecovered || graceExpired) {
+      reconnectGraceUntilMs = null;
+      reconnectSawDisconnect = false;
+      if (reconnectPollTimer) {
+        clearInterval(reconnectPollTimer);
+        reconnectPollTimer = null;
+      }
+      if (reconnectBtn) {
+        reconnectBtn.classList.remove('spinning');
+        reconnectBtn.disabled = false;
+      }
+    } else {
+      setStatus('connecting', 'Connecting…', 'Restarting native host');
+      stopUptimeTick();
+      stopTimelineTick();
+      if (activityPanel) activityPanel.hidden = true;
+      return;
+    }
+  }
 
   // Host version
   if (hostVersionEl) {
