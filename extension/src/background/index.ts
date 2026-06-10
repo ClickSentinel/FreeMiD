@@ -72,6 +72,7 @@ let applyVerifyTargetVersion: string | null = null;
 let reconnectInProgress = false;
 let reconnectQueued = false;
 let reconnectSettleTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingManualReconnect = false;
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = 30000;
@@ -168,10 +169,13 @@ function finalizeReconnectAttempt(): void {
 
 function reconnectNativeHostNow(): void {
   if (nativePort) {
+    pendingManualReconnect = true;
     try {
       nativePort.disconnect();
+      return;
     } catch {
-      // ignore disconnect errors and continue with a clean reconnect
+      // If disconnect throws, fall back to an immediate clean reconnect.
+      pendingManualReconnect = false;
     }
   }
   resetHostConnection();
@@ -300,6 +304,11 @@ function connectNativeHost(): void {
 
       resetHostConnection(err);
 
+      if (pendingManualReconnect) {
+        pendingManualReconnect = false;
+        connectNativeHost();
+      }
+
       if (wasUpdateInFlight) {
         if (updateStatus?.status !== 'reconnecting') {
           updateStatus = {
@@ -332,11 +341,17 @@ function sendToHost(payload: object): boolean {
     connectNativeHost();
     if (!nativePort) return false;
   }
+  const port = nativePort;
   try {
-    nativePort.postMessage(payload);
+    port.postMessage(payload);
     return true;
   } catch (e) {
     console.error('[FreeMiD] postMessage failed:', e);
+    try {
+      port.disconnect();
+    } catch {
+      // ignore disconnect errors for a broken port
+    }
     resetHostConnection(e instanceof Error ? e.message : String(e));
     broadcastStatus();
     return false;
