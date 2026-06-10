@@ -42,6 +42,8 @@ let reconnectGraceUntilMs: number | null = null;
 let reconnectSawDisconnect = false;
 let reconnectPollTimer: ReturnType<typeof setInterval> | null = null;
 const RECONNECT_UI_GRACE_MS = 12_000;
+const RECONNECT_BUTTON_COOLDOWN_MS = 15_000;
+let reconnectButtonUnlockAtMs = 0;
 
 function isUnsupportedPlatformUpdateError(error?: string): boolean {
   return typeof error === 'string' && /automatic updates are not supported on this platform/i.test(error);
@@ -168,6 +170,9 @@ function stopTimelineTick(): void {
 
 reconnectBtn?.addEventListener('click', async () => {
   if (!reconnectBtn) return;
+  if (Date.now() < reconnectButtonUnlockAtMs) return;
+
+  reconnectButtonUnlockAtMs = Date.now() + RECONNECT_BUTTON_COOLDOWN_MS;
   reconnectBtn.classList.add('spinning');
   reconnectBtn.disabled = true;
   reconnectGraceUntilMs = Date.now() + RECONNECT_UI_GRACE_MS;
@@ -192,7 +197,7 @@ reconnectBtn?.addEventListener('click', async () => {
       reconnectPollTimer = null;
     }
     reconnectBtn.classList.remove('spinning');
-    reconnectBtn.disabled = false;
+    reconnectBtn.disabled = Date.now() < reconnectButtonUnlockAtMs;
     setStatus('error', 'Reconnect failed', res?.error ?? 'Failed to reconnect native host');
   }
 });
@@ -350,6 +355,10 @@ function render(status: Status | null): void {
   helpHost.classList.add('hidden');
   helpDiscord.classList.add('hidden');
 
+  if (reconnectBtn && Date.now() < reconnectButtonUnlockAtMs) {
+    reconnectBtn.disabled = true;
+  }
+
   const reconnectGraceActive = reconnectGraceUntilMs != null && Date.now() < reconnectGraceUntilMs;
 
   if (!status) {
@@ -384,7 +393,7 @@ function render(status: Status | null): void {
       }
       if (reconnectBtn) {
         reconnectBtn.classList.remove('spinning');
-        reconnectBtn.disabled = false;
+        reconnectBtn.disabled = Date.now() < reconnectButtonUnlockAtMs;
       }
     } else {
       setStatus('connecting', 'Connecting…', 'Restarting native host');
