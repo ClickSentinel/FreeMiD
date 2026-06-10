@@ -186,7 +186,7 @@ reconnectBtn?.addEventListener('click', async () => {
   }
 
   const res = await chrome.runtime.sendMessage({ type: 'RECONNECT_HOST' }) as
-    | { ok: true; started?: boolean; queued?: boolean }
+    | { ok: true }
     | { ok: false; error?: string };
 
   if (!res || !res.ok) {

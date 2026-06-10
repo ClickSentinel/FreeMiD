@@ -81,9 +81,17 @@ const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = 30000;
 const POST_UPDATE_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 150;
 const DISCONNECT_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 400;
-const RECONNECT_SETTLE_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 12000 : 4000;
-const MANUAL_RECONNECT_RETRY_DELAY_MS = IS_WINDOWS_PLATFORM ? 700 : 300;
-const MANUAL_RECONNECT_MAX_ATTEMPTS = IS_WINDOWS_PLATFORM ? 12 : 6;
+const RECONNECT_CONFIG = IS_WINDOWS_PLATFORM
+  ? {
+      settleTimeoutMs: 12000,
+      manualRetryDelayMs: 700,
+      manualMaxAttempts: 12,
+    }
+  : {
+      settleTimeoutMs: 4000,
+      manualRetryDelayMs: 300,
+      manualMaxAttempts: 6,
+    };
 
 function clearApplyVerification(): void {
   if (disconnectReconnectTimer) {
@@ -169,6 +177,21 @@ function clearManualReconnectRetryTimer(): void {
   }
 }
 
+function markWorkerActive(): void {
+  suspendInProgress = false;
+}
+
+function resetReconnectState(options?: { clearQueued?: boolean }): void {
+  pendingManualReconnect = false;
+  reconnectInProgress = false;
+  clearReconnectSettleTimer();
+  clearManualReconnectRetryTimer();
+  manualReconnectAttemptsRemaining = 0;
+  if (options?.clearQueued) {
+    reconnectQueued = false;
+  }
+}
+
 function scheduleManualReconnectRetry(delayMs: number): void {
   if (manualReconnectAttemptsRemaining <= 0) return;
   if (manualReconnectRetryTimer) return;
@@ -191,16 +214,13 @@ function scheduleManualReconnectRetry(delayMs: number): void {
     }
 
     if (reconnectInProgress && !hostConnected && manualReconnectAttemptsRemaining > 0) {
-      scheduleManualReconnectRetry(MANUAL_RECONNECT_RETRY_DELAY_MS);
+      scheduleManualReconnectRetry(RECONNECT_CONFIG.manualRetryDelayMs);
     }
   }, delayMs);
 }
 
 function finalizeReconnectAttempt(): void {
-  clearReconnectSettleTimer();
-  clearManualReconnectRetryTimer();
-  manualReconnectAttemptsRemaining = 0;
-  reconnectInProgress = false;
+  resetReconnectState();
 
   if (reconnectQueued) {
     reconnectQueued = false;
@@ -224,7 +244,7 @@ function reconnectNativeHostNow(): void {
 }
 
 function requestReconnectNativeHost(): boolean {
-  suspendInProgress = false;
+  markWorkerActive();
 
   if (reconnectInProgress) {
     reconnectQueued = true;
@@ -233,20 +253,20 @@ function requestReconnectNativeHost(): boolean {
 
   reconnectInProgress = true;
   reconnectQueued = false;
-  manualReconnectAttemptsRemaining = MANUAL_RECONNECT_MAX_ATTEMPTS;
+  manualReconnectAttemptsRemaining = RECONNECT_CONFIG.manualMaxAttempts;
   reconnectNativeHostNow();
 
   clearReconnectSettleTimer();
   reconnectSettleTimer = setTimeout(() => {
     finalizeReconnectAttempt();
-  }, RECONNECT_SETTLE_TIMEOUT_MS);
+  }, RECONNECT_CONFIG.settleTimeoutMs);
 
   return true;
 }
 
 function connectNativeHost(): void {
   // Any explicit connect path means the worker is active again.
-  suspendInProgress = false;
+  markWorkerActive();
 
   if (nativePort) return;
   try {
@@ -352,12 +372,7 @@ function connectNativeHost(): void {
       resetHostConnection(err);
 
       if (suspendInProgress) {
-        pendingManualReconnect = false;
-        reconnectQueued = false;
-        reconnectInProgress = false;
-        clearReconnectSettleTimer();
-        clearManualReconnectRetryTimer();
-        manualReconnectAttemptsRemaining = 0;
+        resetReconnectState({ clearQueued: true });
         broadcastStatus();
         return;
       }
@@ -367,7 +382,7 @@ function connectNativeHost(): void {
         manualReconnectAttemptsRemaining = Math.max(1, manualReconnectAttemptsRemaining);
         scheduleManualReconnectRetry(0);
       } else if (reconnectInProgress && !wasUpdateInFlight) {
-        scheduleManualReconnectRetry(MANUAL_RECONNECT_RETRY_DELAY_MS);
+        scheduleManualReconnectRetry(RECONNECT_CONFIG.manualRetryDelayMs);
       }
 
       if (wasUpdateInFlight) {
@@ -695,8 +710,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   }
 
   if (msg.type === 'RECONNECT_HOST') {
-    const started = requestReconnectNativeHost();
-    sendResponse({ ok: true, started, queued: !started });
+    requestReconnectNativeHost();
+    sendResponse({ ok: true });
     return true;
   }
 });
@@ -714,12 +729,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onSuspend.addListener(() => {
   suspendInProgress = true;
-  pendingManualReconnect = false;
-  reconnectQueued = false;
-  reconnectInProgress = false;
-  clearReconnectSettleTimer();
-  clearManualReconnectRetryTimer();
-  manualReconnectAttemptsRemaining = 0;
+  resetReconnectState({ clearQueued: true });
 
   if (!nativePort) return;
   try {
