@@ -306,7 +306,7 @@ function render(status: Status | null): void {
   if (!status) {
     setStatus('connecting', 'Connecting…', 'Reaching native host');
     if (hostVersionEl) hostVersionEl.textContent = '';
-    if (btnUpdate && !isWindowsPlatform) btnUpdate.classList.remove('visible', 'spinning');
+    if (btnUpdate) btnUpdate.classList.remove('visible', 'spinning');
     stopUptimeTick();
     stopTimelineTick();
     return;

@@ -170,7 +170,11 @@ fn do_update(
         std::process::exit(0);
     }
 
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        Ok(())
+    }
+
 }
 
 fn resolve_update_sources(overrides: &UpdateSourceOverrides) -> (String, String) {
@@ -277,50 +281,53 @@ fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), Str
 fn apply_update(data: &[u8]) -> Result<(), String> {
     #[cfg(windows)]
     {
-        return apply_update_windows(data);
+        apply_update_windows(data)
     }
 
-    let current_exe = std::env::current_exe()
-        .map_err(|e| format!("Cannot determine current binary path: {e}"))?;
-
-    // Write to a sibling temp file on the same filesystem to allow atomic rename.
-    let tmp_path: PathBuf = {
-        let mut p = current_exe.clone();
-        let name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("freemid")
-            .to_owned();
-        p.set_file_name(format!("{}.update-{}", name, std::process::id()));
-        p
-    };
-
-    // Write binary data.
+    #[cfg(not(windows))]
     {
-        let mut f = std::fs::File::create(&tmp_path)
-            .map_err(|e| format!("Cannot create temp file {:?}: {e}", tmp_path))?;
-        f.write_all(data)
-            .map_err(|e| format!("Failed to write temp file: {e}"))?;
-        f.flush()
-            .map_err(|e| format!("Failed to flush temp file: {e}"))?;
+        let current_exe = std::env::current_exe()
+            .map_err(|e| format!("Cannot determine current binary path: {e}"))?;
+
+        // Write to a sibling temp file on the same filesystem to allow atomic rename.
+        let tmp_path: PathBuf = {
+            let mut p = current_exe.clone();
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("freemid")
+                .to_owned();
+            p.set_file_name(format!("{}.update-{}", name, std::process::id()));
+            p
+        };
+
+        // Write binary data.
+        {
+            let mut f = std::fs::File::create(&tmp_path)
+                .map_err(|e| format!("Cannot create temp file {:?}: {e}", tmp_path))?;
+            f.write_all(data)
+                .map_err(|e| format!("Failed to write temp file: {e}"))?;
+            f.flush()
+                .map_err(|e| format!("Failed to flush temp file: {e}"))?;
+        }
+
+        // Set executable bit on Unix.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| format!("Failed to chmod temp file: {e}"))?;
+        }
+
+        // Atomic rename — on Linux/macOS this is safe even while the old binary
+        // is mapped into memory; the running process keeps the old inode.
+        std::fs::rename(&tmp_path, &current_exe).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
+            format!("Failed to replace binary {:?}: {e}", current_exe)
+        })?;
+
+        Ok(())
     }
-
-    // Set executable bit on Unix.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("Failed to chmod temp file: {e}"))?;
-    }
-
-    // Atomic rename — on Linux/macOS this is safe even while the old binary
-    // is mapped into memory; the running process keeps the old inode.
-    std::fs::rename(&tmp_path, &current_exe).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp_path);
-        format!("Failed to replace binary {:?}: {e}", current_exe)
-    })?;
-
-    Ok(())
 }
 
 #[cfg(windows)]
