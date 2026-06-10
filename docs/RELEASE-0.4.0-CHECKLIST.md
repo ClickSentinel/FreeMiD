@@ -7,7 +7,7 @@
 
 ## Version Sync
 
-- Workspace version in `Cargo.toml` set to `4.0.0`.
+- Workspace version in `Cargo.toml` set to `0.4.0`.
 - Synced files via `scripts/sync-version.sh`:
   - `extension/package.json`
   - `extension/public/manifest.json`
@@ -58,4 +58,4 @@ Confirm these artifacts are produced by CI for the release tag:
 
 - `git status --short` only contains intended release changes.
 - Release notes call out reconnect/update hardening and Windows apply helper behavior.
-- Tag to publish: `v4.0.0`.
+- Tag to publish: `v0.4.0`.

@@ -17,6 +17,8 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(windows)]
+use std::path::Path;
+#[cfg(windows)]
 use std::time::Duration;
 
 #[cfg(windows)]
@@ -560,6 +562,41 @@ fn spawn_cmd_apply_update(staged_path: &std::path::Path, target_path: &std::path
         .map_err(|e| format!("Failed to launch cmd apply fallback: {e}"))
 }
 
+#[cfg(windows)]
+fn validate_apply_paths(staged: &Path, target: &Path) -> Result<(), String> {
+    let target_name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if target_name != "freemid.exe" {
+        return Err(format!(
+            "Unexpected target binary name: {:?}",
+            target.file_name().unwrap_or_default()
+        ));
+    }
+
+    let staged_name = staged
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !staged_name.starts_with("freemid.exe.staged-") || !staged_name.ends_with(".exe") {
+        return Err(format!(
+            "Unexpected staged file name: {:?}",
+            staged.file_name().unwrap_or_default()
+        ));
+    }
+
+    if staged.parent() != target.parent() {
+        return Err(format!(
+            "Staged and target directories must match"
+        ));
+    }
+
+    Ok(())
+}
+
 pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> {
     #[cfg(not(windows))]
     {
@@ -571,6 +608,8 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Stri
     {
         let staged = PathBuf::from(staged_path);
         let target = PathBuf::from(target_path);
+
+        validate_apply_paths(&staged, &target)?;
 
         append_windows_updater_log(&format!(
             "run_apply_update: started with staged={:?} target={:?}",
