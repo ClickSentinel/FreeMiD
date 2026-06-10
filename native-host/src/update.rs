@@ -94,7 +94,11 @@ fn do_update(
     send: &impl Fn(Value),
 ) -> Result<(), String> {
     let artifact = artifact_name().ok_or_else(|| {
-        "Automatic updates are not supported on this platform".to_string()
+        format!(
+            "Automatic updates are not supported on this platform (os={}, arch={}). Supported: linux/x86_64, macos/aarch64, macos/x86_64, windows/x86_64",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+        )
     })?;
 
     let (latest_api_url, releases_base_url) = resolve_update_sources(overrides);

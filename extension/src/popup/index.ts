@@ -37,6 +37,11 @@ const timelineElapsed = document.getElementById('timeline-elapsed') as HTMLEleme
 const timelineTotal   = document.getElementById('timeline-total')   as HTMLElement | null;
 const extensionVersion = chrome.runtime.getManifest().version;
 const DEV_WINDOWS_SETUP_URL = import.meta.env.VITE_WINDOWS_SETUP_URL?.trim() || '';
+let latestStatus: Status | null = null;
+
+function isUnsupportedPlatformUpdateError(error?: string): boolean {
+  return typeof error === 'string' && /automatic updates are not supported on this platform/i.test(error);
+}
 
 function windowsSetupUrl(): string {
   return urlLike(DEV_WINDOWS_SETUP_URL)
@@ -197,6 +202,15 @@ btnUpdate?.addEventListener('click', () => {
   if (btnUpdate?.disabled) return;
 
   void (async () => {
+    const unsupportedPlatformUpdate =
+      isWindowsPlatform && isUnsupportedPlatformUpdateError(latestStatus?.updateStatus?.error);
+
+    if (unsupportedPlatformUpdate) {
+      setStatus('warning', 'Windows setup required', 'Opening setup to complete host update');
+      void chrome.tabs.create({ url: windowsSetupUrl() });
+      return;
+    }
+
     const res = await chrome.runtime.sendMessage({ type: 'RUN_HOST_UPDATE' }) as
       | { ok: true }
       | { ok: false; manualInstall?: boolean; error?: string };
@@ -300,6 +314,7 @@ function setToggle(btn: HTMLButtonElement | null, checked: boolean): void {
 }
 
 function render(status: Status | null): void {
+  latestStatus = status;
   helpHost.classList.add('hidden');
   helpDiscord.classList.add('hidden');
 
@@ -339,8 +354,13 @@ function render(status: Status | null): void {
       } else if (s === 'failed') {
         btnUpdate.classList.add('visible');
         btnUpdate.disabled = false;
-        btnUpdate.textContent = 'Retry';
-        btnUpdate.title = status.updateStatus.error ? `Update failed: ${status.updateStatus.error}` : 'Update failed. Try again.';
+        if (isWindowsPlatform && isUnsupportedPlatformUpdateError(status.updateStatus.error)) {
+          btnUpdate.textContent = 'Open Setup';
+          btnUpdate.title = 'Open setup to complete host update';
+        } else {
+          btnUpdate.textContent = 'Retry';
+          btnUpdate.title = status.updateStatus.error ? `Update failed: ${status.updateStatus.error}` : 'Update failed. Try again.';
+        }
       } else {
         // up_to_date / success: hide the control until a new update is available.
         btnUpdate.classList.remove('visible');
