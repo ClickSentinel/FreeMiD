@@ -13,8 +13,19 @@
 import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
 import { GITHUB_REPO } from '../constants/github';
 import { STORAGE_KEYS } from '../constants/storageKeys';
+import {
+  compareVersions,
+  MIN_SELF_UPDATE_HOST_VERSION,
+  isHostSelfUpdateSupported,
+  isUpdateAvailableForHost,
+  preferredUpdateVersion,
+} from './helpers';
 
 const NATIVE_HOST_NAME = 'com.clicksentinel.freemid';
+const DEV_UPDATE_LATEST_URL = import.meta.env.VITE_UPDATE_LATEST_URL?.trim() || '';
+const DEV_UPDATE_RELEASES_BASE = import.meta.env.VITE_UPDATE_RELEASES_BASE?.trim() || '';
+const DEV_MIN_SELF_UPDATE_HOST_VERSION =
+  import.meta.env.VITE_MIN_SELF_UPDATE_HOST_VERSION?.trim() || MIN_SELF_UPDATE_HOST_VERSION;
 
 // ── Native host port ──────────────────────────────────────────────────────────
 
@@ -40,6 +51,73 @@ let discordConnectedSince: number | null = null;
 let enabledSites: Record<string, boolean> = { youtube: true, youtubemusic: true, tidal: true };
 let hostVersion: string | null = null;
 let latestVersion: string | null = null;
+let updateStatus: {
+  status: 'requested' | 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
+  version?: string;
+  error?: string;
+} | null = null;
+let autoReconnectScheduled = false;
+let applyVerifyTimer: ReturnType<typeof setInterval> | null = null;
+let applyVerifyDeadlineMs: number | null = null;
+let applyVerifyTargetVersion: string | null = null;
+
+const APPLY_VERIFY_INTERVAL_MS = 1000;
+const APPLY_VERIFY_TIMEOUT_MS = 30000;
+
+function clearApplyVerification(): void {
+  if (applyVerifyTimer) {
+    clearInterval(applyVerifyTimer);
+    applyVerifyTimer = null;
+  }
+  applyVerifyDeadlineMs = null;
+  applyVerifyTargetVersion = null;
+}
+
+function maybeFinalizeAppliedVersion(): boolean {
+  if (!applyVerifyTargetVersion || !hostVersion) return false;
+  if (compareVersions(hostVersion, applyVerifyTargetVersion) >= 0) {
+    clearApplyVerification();
+    updateStatus = null;
+    broadcastStatus();
+    return true;
+  }
+  return false;
+}
+
+function startApplyVerification(targetVersion: string): void {
+  clearApplyVerification();
+  applyVerifyTargetVersion = targetVersion;
+  applyVerifyDeadlineMs = Date.now() + APPLY_VERIFY_TIMEOUT_MS;
+
+  const tick = (): void => {
+    if (updateStatus?.status !== 'reconnecting') {
+      clearApplyVerification();
+      return;
+    }
+
+    if (maybeFinalizeAppliedVersion()) return;
+
+    if (applyVerifyDeadlineMs && Date.now() >= applyVerifyDeadlineMs) {
+      const current = hostVersion ?? 'unknown';
+      updateStatus = {
+        status: 'failed',
+        error: `Host version is still ${current} after update`,
+      };
+      clearApplyVerification();
+      broadcastStatus();
+      return;
+    }
+
+    if (!nativePort) {
+      connectNativeHost();
+      return;
+    }
+    sendToHost({ type: 'PING' });
+  };
+
+  tick();
+  applyVerifyTimer = setInterval(tick, APPLY_VERIFY_INTERVAL_MS);
+}
 
 function resetHostConnection(error?: string): void {
   nativePort = null;
@@ -52,6 +130,7 @@ function connectNativeHost(): void {
   if (nativePort) return;
   try {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
+    const port = nativePort;
     // Do not mark connected until we receive a STATUS from the host.
     // This avoids transient "connected -> disconnected" flicker when the
     // host executable is missing and Chrome disconnects immediately.
@@ -59,13 +138,29 @@ function connectNativeHost(): void {
     lastError = null;
     console.log('[FreeMiD] Native host port opened');
 
-    nativePort.onMessage.addListener((msg: unknown) => {
-      const m = msg as { type?: string; connected?: boolean; error?: string; version?: string };
+    port.onMessage.addListener((msg: unknown) => {
+      if (nativePort !== port) return;
+      const m = msg as {
+        type?: string;
+        connected?: boolean;
+        error?: string;
+        version?: string;
+        status?: 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
+      };
       if (m.type === 'STATUS') {
         hostConnected = true;
         const wasConnected = discordConnected;
         discordConnected = m.connected === true;
-        if (m.version) hostVersion = m.version;
+        if (m.version) {
+          hostVersion = m.version;
+          if (updateStatus?.status === 'reconnecting' || updateStatus?.status === 'success') {
+            const targetVersion = applyVerifyTargetVersion
+              ?? updateStatus.version
+              ?? chrome.runtime.getManifest().version;
+            applyVerifyTargetVersion = targetVersion;
+            maybeFinalizeAppliedVersion();
+          }
+        }
         if (discordConnected && !wasConnected) {
           discordConnectedSince = Date.now();
           notifyConnectionChange(true);
@@ -76,10 +171,35 @@ function connectNativeHost(): void {
         lastError = m.error ?? null;
         if (m.error) console.warn('[FreeMiD] host reported error:', m.error);
         broadcastStatus();
+      } else if (m.type === 'UPDATE_STATUS' && m.status) {
+        updateStatus = {
+          status: m.status,
+          version: typeof m.version === 'string' ? m.version : undefined,
+          error: typeof m.error === 'string' ? m.error : undefined,
+        };
+        if (m.status === 'success' && !autoReconnectScheduled) {
+          const targetVersion = typeof m.version === 'string'
+            ? m.version
+            : preferredUpdateVersion(latestVersion, chrome.runtime.getManifest().version);
+          updateStatus = {
+            status: 'reconnecting',
+            version: targetVersion,
+          };
+          startApplyVerification(targetVersion);
+          autoReconnectScheduled = true;
+          // Reconnect shortly after success so Chrome relaunches the host and
+          // picks up the newly replaced binary on disk.
+          setTimeout(() => {
+            autoReconnectScheduled = false;
+            reconnectNativeHost();
+          }, 150);
+        }
+        broadcastStatus();
       }
     });
 
-    nativePort.onDisconnect.addListener(() => {
+    port.onDisconnect.addListener(() => {
+      if (nativePort !== port) return;
       const err = chrome.runtime.lastError?.message ?? 'disconnected';
       console.warn(`[FreeMiD] Native host disconnected: ${err}`);
       resetHostConnection(err);
@@ -109,6 +229,18 @@ function sendToHost(payload: object): boolean {
     broadcastStatus();
     return false;
   }
+}
+
+function reconnectNativeHost(): void {
+  if (nativePort) {
+    try {
+      nativePort.disconnect();
+    } catch {
+      // ignore disconnect errors and continue with a clean reconnect
+    }
+  }
+  resetHostConnection();
+  connectNativeHost();
 }
 
 // ── Activity helpers ──────────────────────────────────────────────────────────
@@ -324,6 +456,9 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     // If the port isn't open yet, try to connect — the onMessage STATUS
     // response will broadcast the real state to the popup shortly after.
     if (!nativePort) connectNativeHost();
+    if (!latestVersion) {
+      void checkForUpdates();
+    }
     sendResponse({
       hostConnected,
       discordConnected,
@@ -335,7 +470,39 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       hostVersion,
       latestVersion,
       updateAvailable: isUpdateAvailable(),
+      updateStatus,
     });
+    return true;
+  }
+
+  if (msg.type === 'RUN_HOST_UPDATE') {
+    if (!nativePort) connectNativeHost();
+    if (!nativePort) {
+      sendResponse({ ok: false, error: 'Native host not connected' });
+      return true;
+    }
+
+    if (!isHostSelfUpdateSupported(hostVersion, DEV_MIN_SELF_UPDATE_HOST_VERSION)) {
+      sendResponse({ ok: false, manualInstall: true });
+      return true;
+    }
+
+    clearApplyVerification();
+    updateStatus = { status: 'requested' };
+    broadcastStatus();
+
+    const ok = sendToHost({
+      type: 'UPDATE',
+      ...(DEV_UPDATE_LATEST_URL ? { latestUrl: DEV_UPDATE_LATEST_URL } : {}),
+      ...(DEV_UPDATE_RELEASES_BASE ? { releasesBaseUrl: DEV_UPDATE_RELEASES_BASE } : {}),
+    });
+    sendResponse(ok ? { ok: true } : { ok: false, error: lastError ?? 'Failed to send update command' });
+    return true;
+  }
+
+  if (msg.type === 'RECONNECT_HOST') {
+    reconnectNativeHost();
+    sendResponse({ ok: true });
     return true;
   }
 });
@@ -366,6 +533,7 @@ function broadcastStatus(): void {
       hostVersion,
       latestVersion,
       updateAvailable: isUpdateAvailable(),
+      updateStatus,
     })
     .catch(() => {
       // popup might not be open — ignore
@@ -380,19 +548,8 @@ function clearTabActivity(tabId: number): void {
 
 // ── Version & update check ────────────────────────────────────────────────────
 
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
 function isUpdateAvailable(): boolean {
-  if (!hostVersion || !latestVersion) return false;
-  return compareVersions(latestVersion, hostVersion) > 0;
+  return isUpdateAvailableForHost(hostVersion, latestVersion, chrome.runtime.getManifest().version);
 }
 
 async function checkForUpdates(): Promise<void> {
@@ -424,6 +581,9 @@ void chrome.storage.local.get([STORAGE_KEYS.paused, STORAGE_KEYS.enabledSites, S
   }
   if (typeof stored[STORAGE_KEYS.latestVersion] === 'string') latestVersion = stored[STORAGE_KEYS.latestVersion] as string;
   connectNativeHost();
+  if (!latestVersion) {
+    void checkForUpdates();
+  }
   // Schedule daily update check — only create if not already scheduled so a
   // service-worker restart doesn't reset the 24 h timer.
   chrome.alarms.get('freemid-update-check', (existing) => {

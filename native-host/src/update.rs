@@ -24,6 +24,12 @@ const GITHUB_API_LATEST: &str =
 const GITHUB_RELEASES_BASE: &str =
     "https://github.com/ClickSentinel/FreeMiD/releases/download";
 
+#[derive(Clone, Debug, Default)]
+pub struct UpdateSourceOverrides {
+    pub latest_url: Option<String>,
+    pub releases_base_url: Option<String>,
+}
+
 /// Platform-specific artifact filename, or `None` if self-update is unsupported.
 fn artifact_name() -> Option<&'static str> {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -45,7 +51,10 @@ fn artifact_name() -> Option<&'static str> {
 /// `send` is called from the background thread to push `UPDATE_STATUS`
 /// messages back to the extension. `write_message` in `main.rs` is
 /// thread-safe (Rust's `io::stdout().lock()` is a process-wide mutex).
-pub fn run_update(send: impl Fn(Value) + Send + 'static) {
+pub fn run_update(
+    overrides: UpdateSourceOverrides,
+    send: impl Fn(Value) + Send + 'static,
+) {
     if UPDATE_IN_PROGRESS.swap(true, Ordering::SeqCst) {
         send(json!({
             "type": "UPDATE_STATUS",
@@ -56,7 +65,7 @@ pub fn run_update(send: impl Fn(Value) + Send + 'static) {
     }
 
     std::thread::spawn(move || {
-        let result = do_update(&send);
+        let result = do_update(&overrides, &send);
         UPDATE_IN_PROGRESS.store(false, Ordering::SeqCst);
         if let Err(e) = result {
             send(json!({
@@ -68,24 +77,32 @@ pub fn run_update(send: impl Fn(Value) + Send + 'static) {
     });
 }
 
-fn do_update(send: &impl Fn(Value)) -> Result<(), String> {
+fn do_update(
+    overrides: &UpdateSourceOverrides,
+    send: &impl Fn(Value),
+) -> Result<(), String> {
     let artifact = artifact_name().ok_or_else(|| {
         "Automatic updates are not supported on this platform".to_string()
     })?;
+
+    let (latest_api_url, releases_base_url) = resolve_update_sources(overrides);
 
     send(json!({ "type": "UPDATE_STATUS", "status": "checking" }));
 
     // ── Fetch latest release metadata ────────────────────────────────────────
     let user_agent = format!("FreeMiD/{}", env!("CARGO_PKG_VERSION"));
-    let response = ureq::get(GITHUB_API_LATEST)
+    let response = ureq::get(&latest_api_url)
         .set("User-Agent", &user_agent)
         .set("Accept", "application/vnd.github+json")
         .set("X-GitHub-Api-Version", "2022-11-28")
         .call()
         .map_err(|e| format!("GitHub API request failed: {e}"))?;
 
-    let data: Value = response
-        .into_json::<Value>()
+    let body = response
+        .into_string()
+        .map_err(|e| format!("Failed to read GitHub API response: {e}"))?;
+
+    let data: Value = serde_json::from_str(&body)
         .map_err(|e| format!("Failed to parse GitHub API response: {e}"))?;
 
     let tag = data["tag_name"]
@@ -112,7 +129,7 @@ fn do_update(send: &impl Fn(Value)) -> Result<(), String> {
         "version": latest_version
     }));
 
-    let base_url = format!("{}/{}", GITHUB_RELEASES_BASE, tag);
+    let base_url = format!("{}/{}", releases_base_url, tag);
 
     // ── Download and verify the binary ──────────────────────────────────────
     let binary_bytes = download_bytes(&format!("{}/{}", base_url, artifact), &user_agent)?;
@@ -138,6 +155,35 @@ fn do_update(send: &impl Fn(Value)) -> Result<(), String> {
     }));
 
     Ok(())
+}
+
+fn resolve_update_sources(overrides: &UpdateSourceOverrides) -> (String, String) {
+    let env_latest_url = std::env::var("FREEMID_UPDATE_LATEST_URL").ok();
+    let env_releases_base = std::env::var("FREEMID_UPDATE_RELEASES_BASE").ok();
+
+    let latest_url = overrides
+        .latest_url
+        .as_deref()
+        .or(env_latest_url.as_deref())
+        .unwrap_or(GITHUB_API_LATEST)
+        .to_string();
+
+    let releases_base = overrides
+        .releases_base_url
+        .as_deref()
+        .or(env_releases_base.as_deref())
+        .unwrap_or(GITHUB_RELEASES_BASE)
+        .trim_end_matches('/')
+        .to_string();
+
+    if latest_url != GITHUB_API_LATEST || releases_base != GITHUB_RELEASES_BASE {
+        eprintln!(
+            "[FreeMiD] Using updater source override\n  latest: {}\n  releases: {}",
+            latest_url, releases_base
+        );
+    }
+
+    (latest_url, releases_base)
 }
 
 fn is_newer(latest: &str, current: &str) -> bool {

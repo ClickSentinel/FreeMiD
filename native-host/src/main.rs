@@ -189,7 +189,17 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
             Ok(())
         }
         "UPDATE" => {
-            update::run_update(|v| write_message(&v));
+            let overrides = update::UpdateSourceOverrides {
+                latest_url: msg
+                    .get("latestUrl")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                releases_base_url: msg
+                    .get("releasesBaseUrl")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+            };
+            update::run_update(overrides, |v| write_message(&v));
             Ok(())
         }
         "SET_ACTIVITY" => {

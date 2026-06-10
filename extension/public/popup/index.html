@@ -129,7 +129,6 @@
       .control-row,
       .help,
       .now-playing,
-      .update-banner,
       footer {
         padding: 12px 18px;
         border-bottom: 1px solid var(--border);
@@ -182,9 +181,36 @@
       footer a:hover { color: var(--accent); }
 
       .version-group { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+      .version-host-row { display: flex; align-items: center; gap: 6px; }
       .version-ext { color: var(--text-1); font-weight: 500; font-variant-numeric: tabular-nums; }
       .version-host { color: var(--text-2); font-size: 10px; font-variant-numeric: tabular-nums; }
       .version-host:empty { display: none; }
+      .btn-host-update {
+        display: none;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 7px;
+        border: 1px solid rgba(240, 178, 50, 0.45);
+        background: rgba(240, 178, 50, 0.2);
+        border-radius: 999px;
+        color: var(--warning);
+        font-size: 10px;
+        font-weight: 700;
+        cursor: pointer;
+        line-height: 1.4;
+      }
+      .btn-host-update:hover { opacity: 0.86; }
+      .btn-host-update:disabled { opacity: 0.7; cursor: not-allowed; }
+      .btn-host-update.visible { display: inline-flex; }
+      .btn-host-update.spinning::before {
+        content: '';
+        width: 8px;
+        height: 8px;
+        border: 1.5px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+      }
 
       .btn-reconnect {
         display: flex;
@@ -281,30 +307,6 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
-
-      .update-banner {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: rgba(240, 178, 50, 0.1);
-        font-size: 12px;
-        color: var(--warning);
-        gap: 8px;
-      }
-      .update-banner.hidden { display: none; }
-      .btn-update {
-        flex-shrink: 0;
-        padding: 3px 10px;
-        background: var(--warning);
-        border: none;
-        border-radius: 5px;
-        color: #000;
-        font-size: 11px;
-        font-weight: 700;
-        cursor: pointer;
-        transition: opacity 0.15s;
-      }
-      .btn-update:hover { opacity: 0.82; }
 
       .now-playing {
         background: var(--bg-0);
@@ -520,11 +522,6 @@
       <div class="panel-value" id="page-info">—</div>
     </div>
 
-    <div class="update-banner hidden" id="update-banner">
-      <span id="update-text">Host update available</span>
-      <button class="btn-update" id="btn-update">Open Setup ↗</button>
-    </div>
-
     <footer>
       <div class="footer-left">
         <a class="gh-link" href="https://github.com/ClickSentinel/freemid" target="_blank" rel="noopener noreferrer" title="GitHub">
@@ -536,7 +533,10 @@
       </div>
       <div class="version-group">
         <span class="version-ext" id="version"></span>
-        <span class="version-host" id="host-version"></span>
+        <div class="version-host-row">
+          <button class="btn-host-update" id="btn-update" title="Update host">Update</button>
+          <span class="version-host" id="host-version"></span>
+        </div>
       </div>
     </footer>
 

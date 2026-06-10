@@ -1,5 +1,7 @@
 import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
 
+export const MIN_SELF_UPDATE_HOST_VERSION = '0.3.14';
+
 export function urlMatchesPattern(url: string, pattern: string): boolean {
   try {
     const parsed = new URL(url);
@@ -55,4 +57,29 @@ export function compareVersions(a: string, b: string): number {
 export function isUpdateAvailable(hostVersion: string | null, latestVersion: string | null): boolean {
   if (!hostVersion || !latestVersion) return false;
   return compareVersions(latestVersion, hostVersion) > 0;
+}
+
+export function preferredUpdateVersion(latestVersion: string | null, extensionVersion: string): string {
+  if (latestVersion && compareVersions(latestVersion, extensionVersion) > 0) {
+    return latestVersion;
+  }
+  return extensionVersion;
+}
+
+export function isUpdateAvailableForHost(
+  hostVersion: string | null,
+  latestVersion: string | null,
+  extensionVersion: string,
+): boolean {
+  if (!hostVersion) return false;
+  const baselineVersion = preferredUpdateVersion(latestVersion, extensionVersion);
+  return compareVersions(baselineVersion, hostVersion) > 0;
+}
+
+export function isHostSelfUpdateSupported(
+  hostVersion: string | null,
+  minVersion = MIN_SELF_UPDATE_HOST_VERSION,
+): boolean {
+  if (!hostVersion) return false;
+  return compareVersions(hostVersion, minVersion) >= 0;
 }

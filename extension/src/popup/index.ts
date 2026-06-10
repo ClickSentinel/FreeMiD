@@ -29,23 +29,30 @@ const btnOpenDiscord = document.getElementById('btn-open-discord') as HTMLButton
 const reconnectBtn   = document.getElementById('btn-reconnect')    as HTMLButtonElement | null;
 const versionEl = document.getElementById('version');
 const hostVersionEl = document.getElementById('host-version') as HTMLElement | null;
-const updateBanner  = document.getElementById('update-banner') as HTMLElement | null;
-const updateText    = document.getElementById('update-text')   as HTMLElement | null;
 const btnUpdate     = document.getElementById('btn-update')    as HTMLButtonElement | null;
 const btnUninstall  = document.getElementById('btn-uninstall') as HTMLButtonElement | null;
 const elapsedBar    = document.getElementById('elapsed-bar')   as HTMLElement | null;
 const timelineFill    = document.getElementById('timeline-fill')    as HTMLElement | null;
 const timelineElapsed = document.getElementById('timeline-elapsed') as HTMLElement | null;
 const timelineTotal   = document.getElementById('timeline-total')   as HTMLElement | null;
+const extensionVersion = chrome.runtime.getManifest().version;
+const DEV_WINDOWS_SETUP_URL = import.meta.env.VITE_WINDOWS_SETUP_URL?.trim() || '';
 
-if (versionEl) versionEl.textContent = `v${chrome.runtime.getManifest().version}`;
+function windowsSetupUrl(): string {
+  return urlLike(DEV_WINDOWS_SETUP_URL)
+    ? DEV_WINDOWS_SETUP_URL
+    : githubLatestDownloadUrl('freemid-setup.exe');
+}
+
+if (versionEl) versionEl.textContent = `v${extensionVersion}`;
 
 // Clarify button behavior by platform so Windows users know these actions open Setup.
 const isWindowsPlatform = /Win/i.test(navigator.platform);
 if (isWindowsPlatform) {
   if (btnUpdate) {
-    btnUpdate.textContent = 'Open Setup ↗';
-    btnUpdate.title = 'Open the latest FreeMiD setup executable';
+    btnUpdate.textContent = 'Setup';
+    btnUpdate.title = 'Open the FreeMiD setup executable';
+    btnUpdate.classList.add('visible');
   }
   if (btnUninstall) {
     btnUninstall.textContent = 'Open Setup';
@@ -62,8 +69,12 @@ let timelineStartSec: number | null = null;
 let timelineEndSec: number | null = null;
 let timelineKey: string | null = null;
 
-// How long to show "Checking for Discord..." before revealing help panel
-const DISCORD_CHECK_DELAY_MS = 3000;
+// How long to show "Checking for Discord..." before revealing help panel.
+// Override for local tuning with VITE_DISCORD_CHECK_DELAY_MS.
+const parsedDiscordCheckDelay = Number.parseInt(import.meta.env.VITE_DISCORD_CHECK_DELAY_MS ?? '', 10);
+const DISCORD_CHECK_DELAY_MS = Number.isFinite(parsedDiscordCheckDelay) && parsedDiscordCheckDelay > 0
+  ? parsedDiscordCheckDelay
+  : 10000;
 let discordCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let discordCheckShown = false;
 
@@ -100,6 +111,16 @@ function formatTimestamp(seconds: number): string {
   const h = Math.floor(m / 60);
   if (h > 0) return `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
 }
 
 function updateTimelineDisplay(): void {
@@ -146,6 +167,7 @@ reconnectBtn?.addEventListener('click', async () => {
   reconnectBtn.classList.add('spinning');
   reconnectBtn.disabled = true;
   setStatus('connecting', 'Reconnecting…', '');
+  await chrome.runtime.sendMessage({ type: 'RECONNECT_HOST' });
   await fetchStatus();
   reconnectBtn.classList.remove('spinning');
   reconnectBtn.disabled = false;
@@ -177,10 +199,25 @@ btnOpenDiscord?.addEventListener('click', () => {
 });
 
 btnUpdate?.addEventListener('click', () => {
-  const url = isWindowsPlatform
-    ? githubLatestDownloadUrl('freemid-setup.exe')
-    : githubLatestDownloadUrl('install.sh');
-  void chrome.tabs.create({ url });
+  if (isWindowsPlatform) {
+    const url = windowsSetupUrl();
+    void chrome.tabs.create({ url });
+    return;
+  }
+
+  if (btnUpdate?.disabled) return;
+
+  void (async () => {
+    const res = await chrome.runtime.sendMessage({ type: 'RUN_HOST_UPDATE' }) as
+      | { ok: true }
+      | { ok: false; manualInstall?: boolean };
+
+    if (res && !res.ok && res.manualInstall) {
+      setStatus('warning', 'Manual host update required', 'Open install guide to run one-time bootstrap');
+      const installGuideUrl = githubRepoUrl('installation');
+      void chrome.tabs.create({ url: installGuideUrl });
+    }
+  })();
 });
 
 btnInstallHost?.addEventListener('click', () => {
@@ -190,7 +227,7 @@ btnInstallHost?.addEventListener('click', () => {
 
 btnUninstall?.addEventListener('click', () => {
   const url = isWindowsPlatform
-    ? githubLatestDownloadUrl('freemid-setup.exe')
+    ? windowsSetupUrl()
     : githubLatestDownloadUrl('uninstall.sh');
   void chrome.tabs.create({ url });
 });
@@ -219,6 +256,11 @@ type Status = {
   hostVersion?: string | null;
   latestVersion?: string | null;
   updateAvailable?: boolean;
+  updateStatus?: {
+    status: 'requested' | 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
+    version?: string;
+    error?: string;
+  } | null;
 };
 
 function urlLike(value?: string): boolean {
@@ -265,7 +307,7 @@ function render(status: Status | null): void {
   if (!status) {
     setStatus('connecting', 'Connecting…', 'Reaching native host');
     if (hostVersionEl) hostVersionEl.textContent = '';
-    if (updateBanner) updateBanner.classList.add('hidden');
+    if (btnUpdate && !isWindowsPlatform) btnUpdate.classList.remove('visible', 'spinning');
     stopUptimeTick();
     stopTimelineTick();
     return;
@@ -278,17 +320,47 @@ function render(status: Status | null): void {
     hostVersionEl.textContent = status.hostVersion ? `host v${status.hostVersion}` : '';
   }
 
-  // Update banner
-  if (updateBanner) {
-    if (status.updateAvailable && status.latestVersion) {
-      updateBanner.classList.remove('hidden');
-      if (updateText) {
-        updateText.textContent = isWindowsPlatform
-          ? `Host update available: v${status.latestVersion} (opens Setup)`
-          : `Host update available: v${status.latestVersion}`;
+  // Inline host update control
+  if (btnUpdate) {
+    btnUpdate.classList.remove('spinning');
+
+    if (isWindowsPlatform) {
+      btnUpdate.disabled = false;
+      btnUpdate.textContent = 'Setup';
+      btnUpdate.title = 'Open the FreeMiD setup executable';
+      btnUpdate.classList.add('visible');
+    } else if (status.updateStatus) {
+      const s = status.updateStatus.status;
+      const inProgress = s === 'requested' || s === 'checking' || s === 'downloading' || s === 'reconnecting';
+
+      if (inProgress) {
+        btnUpdate.classList.add('visible', 'spinning');
+        btnUpdate.disabled = true;
+        btnUpdate.textContent = s === 'reconnecting' ? 'Applying' : 'Updating';
+        btnUpdate.title = s === 'downloading'
+          ? 'Downloading host update...'
+          : s === 'reconnecting'
+            ? 'Restarting host with updated binary...'
+            : 'Checking for updates...';
+      } else if (s === 'failed') {
+        btnUpdate.classList.add('visible');
+        btnUpdate.disabled = false;
+        btnUpdate.textContent = 'Retry';
+        btnUpdate.title = status.updateStatus.error ? `Update failed: ${status.updateStatus.error}` : 'Update failed. Try again.';
+      } else {
+        // up_to_date / success: hide the control until a new update is available.
+        btnUpdate.classList.remove('visible');
       }
+    } else if (status.updateAvailable) {
+      const availableVersion = status.latestVersion && compareVersions(status.latestVersion, extensionVersion) > 0
+        ? status.latestVersion
+        : extensionVersion;
+      btnUpdate.classList.add('visible');
+      btnUpdate.disabled = false;
+      btnUpdate.textContent = 'Update';
+      btnUpdate.title = `Update host to v${availableVersion}`;
     } else {
-      updateBanner.classList.add('hidden');
+      btnUpdate.classList.remove('visible');
     }
   }
 
