@@ -280,6 +280,14 @@ function urlLike(value?: string): boolean {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
 }
 
+function isUpdateInProgress(updateStatus?: Status['updateStatus']): boolean {
+  if (!updateStatus) return false;
+  return updateStatus.status === 'requested'
+    || updateStatus.status === 'checking'
+    || updateStatus.status === 'downloading'
+    || updateStatus.status === 'reconnecting';
+}
+
 function clearTimer(timer: ReturnType<typeof setInterval> | null, clearFn: (handle: ReturnType<typeof setInterval>) => void): void {
   if (timer) clearFn(timer);
 }
@@ -391,6 +399,21 @@ function render(status: Status | null): void {
   if (!status.hostConnected) {
     if (discordCheckTimer) { clearTimeout(discordCheckTimer); discordCheckTimer = null; }
     discordCheckShown = false;
+
+    const updateInProgress = isUpdateInProgress(status.updateStatus);
+
+    if (updateInProgress) {
+      const isReconnecting = status.updateStatus?.status === 'reconnecting';
+      setStatus(
+        'connecting',
+        isReconnecting ? 'Applying update…' : 'Updating host…',
+        isReconnecting ? 'Restarting native host with updated binary' : 'Waiting for native host update process'
+      );
+      stopUptimeTick();
+      stopTimelineTick();
+      if (activityPanel) activityPanel.hidden = true;
+      return;
+    }
 
     // If there is no explicit error yet, treat this as a transient connecting
     // state to avoid flashing between statuses while the host handshake settles.
