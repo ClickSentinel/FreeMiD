@@ -2,9 +2,7 @@
 
 ## Purpose
 
-This document defines the end-to-end (E2E) update test process for FreeMiD during development, without requiring a public release for Linux/macOS host self-update validation.
-
-It also defines the current Windows test strategy based on the setup-first architecture.
+This document defines the end-to-end (E2E) update test process for FreeMiD during development, including Windows in-app native-host apply via the stable `freemid-apply.exe` helper.
 
 ## Current Update Architecture
 
@@ -16,9 +14,10 @@ It also defines the current Windows test strategy based on the setup-first archi
 
 1. Windows update path:
 
-- Popup does not run in-process host self-update.
-- Popup `Setup` opens the setup executable URL.
-- Setup performs install/update and host registration.
+- Popup `Update` triggers native host `UPDATE`.
+- Host stages updated `freemid.exe` and launches `%LOCALAPPDATA%\\FreeMiD\\freemid-apply.exe`.
+- Apply helper swaps staged binary into place, then extension reconnects and verifies host version.
+- Setup remains fallback for unsupported/legacy host states.
 
 ## Test Goals
 
@@ -26,7 +25,7 @@ It also defines the current Windows test strategy based on the setup-first archi
 2. Confirm status transitions are correct (`checking -> downloading -> reconnecting -> done`).
 3. Confirm host version refreshes dynamically after apply (without extension reload).
 4. Confirm failure paths produce actionable UI states.
-5. Confirm Windows setup flow remains reliable and extension reconnects to updated host.
+5. Confirm Windows in-app apply flow remains reliable and extension reconnects to updated host.
 
 ## Version Rules (Critical)
 
@@ -112,19 +111,19 @@ This does all of the following:
 
 ## Windows E2E Strategy (Current)
 
-Windows is setup-first, not in-process host self-update.
+Windows supports in-app host self-update with a stable apply helper.
 
 ### What to validate on Windows now
 
 1. Popup update button behavior:
 
-- Shows `Setup`.
-- Opens setup download URL.
+- `Update` enters `checking -> downloading -> reconnecting` states.
 
-1. Setup install/update correctness:
+1. Apply helper correctness:
 
-- Updates `%LOCALAPPDATA%\FreeMiD\freemid.exe`.
-- Preserves/uses correct extension ID registration.
+- `%LOCALAPPDATA%\FreeMiD\freemid-apply.exe` is present.
+- `%LOCALAPPDATA%\FreeMiD\updater.log` records apply attempt and success/failure outcome.
+- `%LOCALAPPDATA%\FreeMiD\freemid.exe` advances to candidate version after update.
 - Extension reconnects and reports updated host version.
 
 1. Uninstall correctness:
@@ -134,10 +133,10 @@ Windows is setup-first, not in-process host self-update.
 
 ### Windows local/dev test flow (without publishing a new release)
 
-1. Build local host candidate and local setup.
+1. Build local host candidate and apply helper.
 2. Install baseline host locally (older updater-capable build) with your extension ID.
-3. Run local setup manually (not from popup) to perform update/install validation.
-4. Reload extension and verify host version/status in popup.
+3. Trigger update from popup and validate reconnect to updated host.
+4. Use setup fallback path only for unsupported/legacy hosts.
 
 ### Windows local build install commands (native host)
 
@@ -146,7 +145,7 @@ Use these commands on Windows to install the native host from your local build o
 1. Build local native host from repo root:
 
 ```powershell
-cargo build --release -p freemid
+cargo build --release -p freemid --bins
 ```
 
 1. Install local binary and register native host for your unpacked extension ID:
@@ -161,13 +160,14 @@ cd install
 ```powershell
 Get-ItemProperty "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.clicksentinel.freemid"
 Get-Item "$env:LOCALAPPDATA\FreeMiD\freemid.exe"
+Get-Item "$env:LOCALAPPDATA\FreeMiD\freemid-apply.exe"
 ```
 
 1. Reload extension in `chrome://extensions` and confirm popup shows expected host version.
 
-### Windows setup-button E2E using dev override
+### Windows setup-button fallback E2E using dev override
 
-Use a dev setup URL override so popup `Setup` opens your test artifact URL instead of GitHub latest.
+Use a dev setup URL override to validate fallback path behavior for manual install guidance.
 
 1. Host a test setup executable URL reachable by your Windows machine, for example:
 
@@ -208,6 +208,15 @@ Notes:
 - If `VITE_WINDOWS_SETUP_URL` is unset or invalid, popup falls back to GitHub latest setup URL.
 - For Linux/macOS dev builds, `scripts/local-update-e2e.sh` can pass through `FREEMID_WINDOWS_SETUP_URL` to embed the same override in the built extension.
 
+### Windows diagnostics commands
+
+Use these during failure analysis:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\FreeMiD\updater.log" -Tail 100
+Get-FileHash "$env:LOCALAPPDATA\FreeMiD\freemid.exe" -Algorithm SHA256
+```
+
 ## CI and Regression Gate
 
 Before merge, run:
@@ -223,4 +232,4 @@ cd .. && cargo check -p freemid && cargo check -p freemid-installer
 2. Both builds contain updater code.
 3. Extension reloaded after dev build changes.
 4. Local feed running for Linux/macOS path.
-5. Windows validated via setup-first flow.
+5. Windows validated via in-app apply flow (and setup fallback).

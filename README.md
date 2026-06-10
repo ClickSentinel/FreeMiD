@@ -68,6 +68,7 @@ irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps
 ### End-to-end updater testing without a public release
 
 Detailed dev guide: `docs/E2E-UPDATER-TESTING.md`
+Architecture details: `docs/NATIVE-HOST-UPDATER-ARCHITECTURE.md`
 
 Best/easiest path: run a local update feed and point only your local extension build at it.
 
@@ -183,7 +184,20 @@ YouTube / YouTube Music / TIDAL tab
 | Linux (x86_64) | `freemid-linux-x86_64` | ✅ Supported |
 | macOS (Apple Silicon) | `freemid-macos-arm64` | ✅ Supported |
 | macOS (Intel) | `freemid-macos-x86_64` | ✅ Supported |
-| Windows | `freemid-setup.exe` / `freemid-windows-x86_64.exe` | ✅ Supported |
+| Windows | `freemid-setup.exe` / `freemid-windows-x86_64.exe` / `freemid-apply-windows-x86_64.exe` | ✅ Supported |
+
+### Native host updater notes
+
+Linux/macOS apply updates in-place after checksum verification.
+
+Windows uses a two-process apply model:
+
+1. `freemid.exe` downloads and stages the new host binary.
+2. `freemid.exe` launches stable helper `freemid-apply.exe`.
+3. Helper replaces installed `%LOCALAPPDATA%\FreeMiD\freemid.exe` and removes staged file.
+4. Extension reconnects and verifies host version advancement.
+
+This keeps updates in user context and avoids in-process file lock races.
 
 ---
 

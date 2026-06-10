@@ -101,7 +101,7 @@ fn do_update(
         )
     })?;
 
-    let (latest_api_url, releases_base_url) = resolve_update_sources(overrides);
+    let (latest_api_url, releases_base_url) = resolve_update_sources(overrides)?;
 
     send(json!({ "type": "UPDATE_STATUS", "status": "checking" }));
 
@@ -185,7 +185,7 @@ fn do_update(
 
 }
 
-fn resolve_update_sources(overrides: &UpdateSourceOverrides) -> (String, String) {
+fn resolve_update_sources(overrides: &UpdateSourceOverrides) -> Result<(String, String), String> {
     let env_latest_url = std::env::var("FREEMID_UPDATE_LATEST_URL").ok();
     let env_releases_base = std::env::var("FREEMID_UPDATE_RELEASES_BASE").ok();
 
@@ -204,14 +204,41 @@ fn resolve_update_sources(overrides: &UpdateSourceOverrides) -> (String, String)
         .trim_end_matches('/')
         .to_string();
 
+    validate_update_source_url(&latest_url, "latest API")?;
+    validate_update_source_url(&releases_base, "releases base")?;
+
     if latest_url != GITHUB_API_LATEST || releases_base != GITHUB_RELEASES_BASE {
         eprintln!(
             "[FreeMiD] Using updater source override\n  latest: {}\n  releases: {}",
             latest_url, releases_base
         );
+    } else {
+        eprintln!(
+            "[FreeMiD] Using updater source defaults\n  latest: {}\n  releases: {}",
+            latest_url, releases_base
+        );
     }
 
-    (latest_url, releases_base)
+    Ok((latest_url, releases_base))
+}
+
+fn validate_update_source_url(url: &str, label: &str) -> Result<(), String> {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return Err(format!(
+            "{label} must use http:// or https://, got '{url}'"
+        ));
+    }
+    if lower.starts_with("http://") {
+        // Allow plaintext HTTP only for local/dev feeds.
+        let local_hosts = ["http://127.0.0.1", "http://localhost", "http://0.0.0.0"];
+        if !local_hosts.iter().any(|h| lower.starts_with(h)) {
+            return Err(format!(
+                "{label} must use HTTPS for non-local hosts, got '{url}'"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn is_newer(latest: &str, current: &str) -> bool {

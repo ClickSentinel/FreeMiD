@@ -27,8 +27,10 @@ fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> 
     let staged = PathBuf::from(staged_path);
     let target = PathBuf::from(target_path);
 
+    validate_apply_paths(&staged, &target)?;
+
     append_windows_updater_log(&format!(
-        "freemid-updater: started staged={:?} target={:?}",
+        "freemid-apply: started staged={:?} target={:?}",
         staged, target
     ));
 
@@ -41,7 +43,7 @@ fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> 
         match std::fs::copy(&staged, &target) {
             Ok(_) => {
                 let _ = std::fs::remove_file(&staged);
-                append_windows_updater_log("freemid-updater: copy succeeded and staged removed");
+                append_windows_updater_log("freemid-apply: copy succeeded and staged removed");
                 return Ok(());
             }
             Err(e) => {
@@ -56,6 +58,43 @@ fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> 
         target,
         last_err.unwrap_or_else(|| "unknown error".to_string())
     ))
+}
+
+#[cfg(windows)]
+fn validate_apply_paths(staged: &PathBuf, target: &PathBuf) -> Result<(), String> {
+    let target_name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if target_name != "freemid.exe" {
+        return Err(format!(
+            "Unexpected target binary name: {:?}",
+            target.file_name().unwrap_or_default()
+        ));
+    }
+
+    let staged_name = staged
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !staged_name.starts_with("freemid.exe.staged-") || !staged_name.ends_with(".exe") {
+        return Err(format!(
+            "Unexpected staged file name: {:?}",
+            staged.file_name().unwrap_or_default()
+        ));
+    }
+
+    if staged.parent() != target.parent() {
+        return Err(format!(
+            "Staged and target directories must match (staged={:?}, target={:?})",
+            staged.parent(),
+            target.parent()
+        ));
+    }
+
+    Ok(())
 }
 
 fn main() {
@@ -74,7 +113,7 @@ fn main() {
         }
 
         if let Err(e) = run_apply_update(&args[2], &args[3]) {
-            append_windows_updater_log(&format!("freemid-updater: failed: {}", e));
+            append_windows_updater_log(&format!("freemid-apply: failed: {}", e));
             eprintln!("[FreeMiD Updater] {}", e);
             std::process::exit(1);
         }

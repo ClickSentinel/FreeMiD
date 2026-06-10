@@ -12,8 +12,8 @@ This is the canonical Windows installer planning and release-readiness doc. It s
 
 ## Current Gaps
 
-1. `freemid-setup.exe` is documented but not published by the release workflow.
-2. Windows install can fail if `checksums.sha256` does not contain the expected Windows artifact line.
+1. Release assets must include both host and apply helper binaries for deterministic in-app update behavior.
+2. Windows install can fail if `checksums.sha256` does not contain all required Windows artifact lines.
 3. Uninstall is script-only (`uninstall.ps1`) and not exposed as a GUI workflow.
 4. Extension ID consistency must be validated across all installer entrypoints on every release.
 
@@ -23,6 +23,7 @@ This is the canonical Windows installer planning and release-readiness doc. It s
 2. Include `freemid-setup.exe` in release assets uploaded by `softprops/action-gh-release`.
 3. Generate `checksums.sha256` from the final release file set and include all expected artifacts:
    - `freemid-windows-x86_64.exe`
+   - `freemid-apply-windows-x86_64.exe`
    - `freemid-setup.exe`
    - existing Linux/macOS binaries
    - `freemid-extension.zip`
@@ -129,6 +130,7 @@ Status in this branch:
 3. Apps and Features uninstall is local and deterministic via `freemid-setup.exe --uninstall --silent`.
 4. Setup downloads host artifacts from GitHub Releases at install time and requires network reachability.
 5. Unsigned EXE trust prompts are expected until code signing is introduced.
+6. In-app host updates on Windows depend on local `freemid-apply.exe` being installed alongside `freemid.exe`.
 
 ## Pre-Tag Checklist (Windows)
 

@@ -6,7 +6,7 @@ Ship a low-friction native-host update experience with clear fallback behavior f
 
 ## Scope (0.4.0)
 
-1. In-app host update UX for supported hosts (Linux/macOS self-update-capable host versions).
+1. In-app host update UX for supported hosts (Linux/macOS/Windows self-update-capable host versions).
 2. Automatic host reconnect/apply after successful download.
 3. Inline update control near host version (no large banner-first UX).
 4. Legacy-host fallback path that avoids raw script downloads and routes users to install guidance.
@@ -29,8 +29,8 @@ Ship a low-friction native-host update experience with clear fallback behavior f
 
 1. Windows:
 
-- Setup-first update path remains authoritative.
-- Popup opens setup/update guidance path (no in-process self-update).
+- In-app update path uses stable helper (`freemid-apply.exe`) to apply staged host binary.
+- Setup fallback remains available for unsupported/legacy host states.
 
 1. Unpacked/dev extension IDs:
 
@@ -95,10 +95,15 @@ Ship a low-friction native-host update experience with clear fallback behavior f
 - Trigger update from popup.
 - Verify bootstrap fallback guidance opens and messaging is clear.
 
-1. Windows setup path:
+1. Windows in-app apply path:
 
 - Trigger update path from popup.
-- Verify setup flow and post-install host connection.
+- Verify helper launch, reconnect behavior, and host version advancement.
+
+1. Windows setup fallback path:
+
+- Trigger fallback flow from popup when manual install is required.
+- Verify setup path still works and preserves extension ID registration.
 
 1. Unpacked extension ID:
 
@@ -120,7 +125,7 @@ Ship a low-friction native-host update experience with clear fallback behavior f
 2. Release notes must include:
 
 - one-time bootstrap expectation for legacy hosts
-- supported auto-update paths by platform
+- supported auto-update paths by platform (including Windows helper apply path)
 - custom extension ID setup notes for dev/unpacked installs
 - extension package update limits (store-controlled rollout; unpacked manual reload)
 
@@ -131,6 +136,7 @@ Ship a low-friction native-host update experience with clear fallback behavior f
 3. Legacy fallback no longer opens raw `install.sh` download.
 4. Background version/update policy helper coverage expanded.
 5. Windows installer custom extension ID support added via `--extension-id` and `FREEMID_EXTENSION_ID`.
+6. Windows in-app updater scaffolded with stable helper binary `freemid-apply.exe`.
 
 ## Extension Update Track (New)
 
