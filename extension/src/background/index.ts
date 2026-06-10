@@ -73,6 +73,7 @@ let reconnectInProgress = false;
 let reconnectQueued = false;
 let reconnectSettleTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingManualReconnect = false;
+let suspendInProgress = false;
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = 30000;
@@ -303,6 +304,15 @@ function connectNativeHost(): void {
         || updateStatus?.status === 'reconnecting';
 
       resetHostConnection(err);
+
+      if (suspendInProgress) {
+        pendingManualReconnect = false;
+        reconnectQueued = false;
+        reconnectInProgress = false;
+        clearReconnectSettleTimer();
+        broadcastStatus();
+        return;
+      }
 
       if (pendingManualReconnect) {
         pendingManualReconnect = false;
@@ -644,13 +654,20 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 chrome.alarms.create('freemid-keepalive', { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'freemid-keepalive') {
-    if (!nativePort) connectNativeHost();
-    else sendToHost({ type: 'PING' });
+    // Keep an existing host port healthy, but do not auto-spawn a new host.
+    // Reconnect should happen on explicit demand (popup/status/activity/update).
+    if (nativePort) sendToHost({ type: 'PING' });
   }
   if (alarm.name === 'freemid-update-check') { void checkForUpdates(); }
 });
 
 chrome.runtime.onSuspend.addListener(() => {
+  suspendInProgress = true;
+  pendingManualReconnect = false;
+  reconnectQueued = false;
+  reconnectInProgress = false;
+  clearReconnectSettleTimer();
+
   if (!nativePort) return;
   try {
     nativePort.disconnect();
