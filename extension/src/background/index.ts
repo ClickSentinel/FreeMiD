@@ -69,11 +69,15 @@ let disconnectReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let applyVerifyTimer: ReturnType<typeof setInterval> | null = null;
 let applyVerifyDeadlineMs: number | null = null;
 let applyVerifyTargetVersion: string | null = null;
+let reconnectInProgress = false;
+let reconnectQueued = false;
+let reconnectSettleTimer: ReturnType<typeof setTimeout> | null = null;
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = 30000;
 const POST_UPDATE_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 150;
 const DISCONNECT_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 400;
+const RECONNECT_SETTLE_TIMEOUT_MS = 4000;
 
 function clearApplyVerification(): void {
   if (disconnectReconnectTimer) {
@@ -145,6 +149,53 @@ function resetHostConnection(error?: string): void {
   lastError = error ?? null;
 }
 
+function clearReconnectSettleTimer(): void {
+  if (reconnectSettleTimer) {
+    clearTimeout(reconnectSettleTimer);
+    reconnectSettleTimer = null;
+  }
+}
+
+function finalizeReconnectAttempt(): void {
+  clearReconnectSettleTimer();
+  reconnectInProgress = false;
+
+  if (reconnectQueued) {
+    reconnectQueued = false;
+    void requestReconnectNativeHost();
+  }
+}
+
+function reconnectNativeHostNow(): void {
+  if (nativePort) {
+    try {
+      nativePort.disconnect();
+    } catch {
+      // ignore disconnect errors and continue with a clean reconnect
+    }
+  }
+  resetHostConnection();
+  connectNativeHost();
+}
+
+function requestReconnectNativeHost(): boolean {
+  if (reconnectInProgress) {
+    reconnectQueued = true;
+    return false;
+  }
+
+  reconnectInProgress = true;
+  reconnectQueued = false;
+  reconnectNativeHostNow();
+
+  clearReconnectSettleTimer();
+  reconnectSettleTimer = setTimeout(() => {
+    finalizeReconnectAttempt();
+  }, RECONNECT_SETTLE_TIMEOUT_MS);
+
+  return true;
+}
+
 function connectNativeHost(): void {
   if (nativePort) return;
   try {
@@ -171,6 +222,9 @@ function connectNativeHost(): void {
         status?: 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
       };
       if (m.type === 'STATUS') {
+        if (reconnectInProgress) {
+          finalizeReconnectAttempt();
+        }
         hostConnected = true;
         const wasConnected = discordConnected;
         discordConnected = m.connected === true;
@@ -290,15 +344,7 @@ function sendToHost(payload: object): boolean {
 }
 
 function reconnectNativeHost(): void {
-  if (nativePort) {
-    try {
-      nativePort.disconnect();
-    } catch {
-      // ignore disconnect errors and continue with a clean reconnect
-    }
-  }
-  resetHostConnection();
-  connectNativeHost();
+  requestReconnectNativeHost();
 }
 
 // ── Activity helpers ──────────────────────────────────────────────────────────
@@ -573,8 +619,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   }
 
   if (msg.type === 'RECONNECT_HOST') {
-    reconnectNativeHost();
-    sendResponse({ ok: true });
+    const started = requestReconnectNativeHost();
+    sendResponse({ ok: true, started, queued: !started });
     return true;
   }
 });

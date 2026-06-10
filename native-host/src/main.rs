@@ -26,8 +26,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::ffi::CString;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::CreateMutexA;
+
 const MAX_INBOUND_BYTES: u32 = 1024 * 1024;
-const HOST_IDLE_TIMEOUT_MS: u64 = 120_000;
+// Keep above extension keepalive cadence (~24s) while reclaiming stale hosts quickly.
+const HOST_IDLE_TIMEOUT_MS: u64 = 45_000;
+#[cfg(windows)]
+const SINGLE_INSTANCE_MUTEX_NAME: &str = "Local\\FreeMiD.NativeHost";
+#[cfg(windows)]
+const SINGLE_INSTANCE_RETRY_COUNT: u32 = 3;
+#[cfg(windows)]
+const SINGLE_INSTANCE_RETRY_DELAY_MS: u64 = 750;
 
 static LAST_MESSAGE_MS: AtomicU64 = AtomicU64::new(0);
 
@@ -49,6 +63,15 @@ fn main() {
     }
 
     eprintln!("[FreeMiD] native host v{} starting", env!("CARGO_PKG_VERSION"));
+
+    #[cfg(windows)]
+    let _single_instance_guard = match acquire_single_instance_guard_with_grace() {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("[FreeMiD] single-instance guard failed: {}", e);
+            std::process::exit(0);
+        }
+    };
 
     LAST_MESSAGE_MS.store(now_unix_ms(), Ordering::Relaxed);
     std::thread::spawn(|| {
@@ -93,6 +116,69 @@ fn main() {
             }
         }
     }
+}
+
+#[cfg(windows)]
+struct SingleInstanceGuard {
+    handle: HANDLE,
+}
+
+#[cfg(windows)]
+impl Drop for SingleInstanceGuard {
+    fn drop(&mut self) {
+        if self.handle != 0 {
+            unsafe {
+                let _ = CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn try_acquire_single_instance_guard() -> Result<SingleInstanceGuard, String> {
+    let name = CString::new(SINGLE_INSTANCE_MUTEX_NAME)
+        .map_err(|_| "mutex name contains interior NUL byte".to_string())?;
+
+    let handle = unsafe {
+        CreateMutexA(std::ptr::null_mut(), 0, name.as_ptr() as *const u8)
+    };
+
+    if handle == 0 {
+        return Err(format!("CreateMutexA failed with error {}", unsafe { GetLastError() }));
+    }
+
+    let err = unsafe { GetLastError() };
+    if err == ERROR_ALREADY_EXISTS {
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        return Err("another host instance is already running".to_string());
+    }
+
+    Ok(SingleInstanceGuard { handle })
+}
+
+#[cfg(windows)]
+fn acquire_single_instance_guard_with_grace() -> Result<SingleInstanceGuard, String> {
+    for attempt in 0..=SINGLE_INSTANCE_RETRY_COUNT {
+        match try_acquire_single_instance_guard() {
+            Ok(guard) => {
+                if attempt > 0 {
+                    eprintln!("[FreeMiD] single-instance mutex acquired after {} retries", attempt);
+                }
+                return Ok(guard);
+            }
+            Err(e) if e.contains("already running") => {
+                if attempt == SINGLE_INSTANCE_RETRY_COUNT {
+                    return Err(e);
+                }
+                std::thread::sleep(Duration::from_millis(SINGLE_INSTANCE_RETRY_DELAY_MS));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    Err("failed to acquire single-instance mutex".to_string())
 }
 
 // ── Native-messaging framing ───────────────────────────────────────────────────
