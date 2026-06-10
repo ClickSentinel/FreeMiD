@@ -49,11 +49,6 @@ if (versionEl) versionEl.textContent = `v${extensionVersion}`;
 // Clarify button behavior by platform so Windows users know these actions open Setup.
 const isWindowsPlatform = /Win/i.test(navigator.platform);
 if (isWindowsPlatform) {
-  if (btnUpdate) {
-    btnUpdate.textContent = 'Setup';
-    btnUpdate.title = 'Open the FreeMiD setup executable';
-    btnUpdate.classList.add('visible');
-  }
   if (btnUninstall) {
     btnUninstall.textContent = 'Open Setup';
     btnUninstall.title = 'Open setup and choose Uninstall';
@@ -199,23 +194,27 @@ btnOpenDiscord?.addEventListener('click', () => {
 });
 
 btnUpdate?.addEventListener('click', () => {
-  if (isWindowsPlatform) {
-    const url = windowsSetupUrl();
-    void chrome.tabs.create({ url });
-    return;
-  }
-
   if (btnUpdate?.disabled) return;
 
   void (async () => {
     const res = await chrome.runtime.sendMessage({ type: 'RUN_HOST_UPDATE' }) as
       | { ok: true }
-      | { ok: false; manualInstall?: boolean };
+      | { ok: false; manualInstall?: boolean; error?: string };
 
     if (res && !res.ok && res.manualInstall) {
-      setStatus('warning', 'Manual host update required', 'Open install guide to run one-time bootstrap');
-      const installGuideUrl = githubRepoUrl('installation');
-      void chrome.tabs.create({ url: installGuideUrl });
+      if (isWindowsPlatform) {
+        setStatus('warning', 'Windows setup required', 'Opening setup to complete host update');
+        void chrome.tabs.create({ url: windowsSetupUrl() });
+      } else {
+        setStatus('warning', 'Manual host update required', 'Open install guide to run one-time bootstrap');
+        const installGuideUrl = githubRepoUrl('installation');
+        void chrome.tabs.create({ url: installGuideUrl });
+      }
+      return;
+    }
+
+    if (res && !res.ok) {
+      setStatus('error', 'Host update failed to start', res.error ?? 'Failed to send update command');
     }
   })();
 });
@@ -324,12 +323,7 @@ function render(status: Status | null): void {
   if (btnUpdate) {
     btnUpdate.classList.remove('spinning');
 
-    if (isWindowsPlatform) {
-      btnUpdate.disabled = false;
-      btnUpdate.textContent = 'Setup';
-      btnUpdate.title = 'Open the FreeMiD setup executable';
-      btnUpdate.classList.add('visible');
-    } else if (status.updateStatus) {
+    if (status.updateStatus) {
       const s = status.updateStatus.status;
       const inProgress = s === 'requested' || s === 'checking' || s === 'downloading' || s === 'reconnecting';
 
