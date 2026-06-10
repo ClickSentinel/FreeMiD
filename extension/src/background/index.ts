@@ -57,6 +57,7 @@ let hostVersion: string | null = null;
 let hostSelfUpdateSupported: boolean | null = null;
 let hostRuntimeOs: string | null = null;
 let hostRuntimeArch: string | null = null;
+let hostBinaryPath: string | null = null;
 let latestVersion: string | null = null;
 let updateStatus: {
   status: 'requested' | 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
@@ -70,6 +71,9 @@ let applyVerifyTargetVersion: string | null = null;
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = 30000;
+const APPLY_VERIFY_RECONNECT_INTERVAL_MS = 3000;
+
+let applyLastReconnectAttemptMs = 0;
 
 function clearApplyVerification(): void {
   if (applyVerifyTimer) {
@@ -78,6 +82,7 @@ function clearApplyVerification(): void {
   }
   applyVerifyDeadlineMs = null;
   applyVerifyTargetVersion = null;
+  applyLastReconnectAttemptMs = 0;
 }
 
 function maybeFinalizeAppliedVersion(): boolean {
@@ -95,6 +100,7 @@ function startApplyVerification(targetVersion: string): void {
   clearApplyVerification();
   applyVerifyTargetVersion = targetVersion;
   applyVerifyDeadlineMs = Date.now() + APPLY_VERIFY_TIMEOUT_MS;
+  applyLastReconnectAttemptMs = 0;
 
   const tick = (): void => {
     if (updateStatus?.status !== 'reconnecting') {
@@ -112,6 +118,19 @@ function startApplyVerification(targetVersion: string): void {
       };
       clearApplyVerification();
       broadcastStatus();
+      return;
+    }
+
+    // Keep nudging Chrome to relaunch the native host while apply is pending.
+    // This gives the updater process repeated windows to replace the binary and
+    // avoids getting stuck on a single stale post-update relaunch.
+    if (
+      hostVersion
+      && compareVersions(hostVersion, targetVersion) < 0
+      && Date.now() - applyLastReconnectAttemptMs >= APPLY_VERIFY_RECONNECT_INTERVAL_MS
+    ) {
+      applyLastReconnectAttemptMs = Date.now();
+      reconnectNativeHost();
       return;
     }
 
@@ -133,6 +152,7 @@ function resetHostConnection(error?: string): void {
   hostSelfUpdateSupported = null;
   hostRuntimeOs = null;
   hostRuntimeArch = null;
+  hostBinaryPath = null;
   lastError = error ?? null;
 }
 
@@ -158,6 +178,7 @@ function connectNativeHost(): void {
         selfUpdateSupported?: boolean;
         runtimeOs?: string;
         runtimeArch?: string;
+        binaryPath?: string;
         status?: 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
       };
       if (m.type === 'STATUS') {
@@ -182,6 +203,9 @@ function connectNativeHost(): void {
         }
         if (typeof m.runtimeArch === 'string') {
           hostRuntimeArch = m.runtimeArch;
+        }
+        if (typeof m.binaryPath === 'string') {
+          hostBinaryPath = m.binaryPath;
         }
         if (discordConnected && !wasConnected) {
           discordConnectedSince = Date.now();
@@ -493,6 +517,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       hostSelfUpdateSupported,
       hostRuntimeOs,
       hostRuntimeArch,
+      hostBinaryPath,
       latestVersion,
       updateAvailable: isUpdateAvailable(),
       updateStatus,
@@ -569,6 +594,7 @@ function broadcastStatus(): void {
       hostSelfUpdateSupported,
       hostRuntimeOs,
       hostRuntimeArch,
+      hostBinaryPath,
       latestVersion,
       updateAvailable: isUpdateAvailable(),
       updateStatus,

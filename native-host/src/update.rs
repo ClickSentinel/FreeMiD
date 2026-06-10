@@ -342,7 +342,26 @@ fn apply_update(data: &[u8]) -> Result<(), String> {
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[cfg(windows)]
+fn append_windows_updater_log(line: &str) {
+    let mut path = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let mut p = PathBuf::from(local_app_data);
+        p.push("FreeMiD");
+        let _ = std::fs::create_dir_all(&p);
+        p
+    } else {
+        PathBuf::from(".")
+    };
+    path.push("updater.log");
+
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{}", line);
+    }
+}
+
+#[cfg(windows)]
 fn apply_update_windows(data: &[u8]) -> Result<(), String> {
+    append_windows_updater_log("apply_update_windows: begin");
+
     let current_exe = std::env::current_exe()
         .map_err(|e| format!("Cannot determine current binary path: {e}"))?;
 
@@ -377,6 +396,11 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
             .map_err(|e| format!("Failed to flush staged file: {e}"))?;
     }
 
+    append_windows_updater_log(&format!(
+        "apply_update_windows: staged file at {:?}, target {:?}",
+        staged_path, current_exe
+    ));
+
     std::fs::copy(&current_exe, &helper_path)
         .map_err(|e| format!("Cannot create updater helper {:?}: {e}", helper_path))?;
 
@@ -388,10 +412,17 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
         .spawn();
 
     if let Err(e) = spawn_result {
+        append_windows_updater_log(&format!(
+            "apply_update_windows: helper launch failed: {} (raw_os_error={:?})",
+            e,
+            e.raw_os_error()
+        ));
+
         // Some Windows environments can reject launching a copied executable
         // with ERROR_ELEVATION_REQUIRED (740). Fallback to cmd-based apply.
         if e.raw_os_error() == Some(740) {
             let _ = std::fs::remove_file(&helper_path);
+            append_windows_updater_log("apply_update_windows: trying cmd fallback");
             return spawn_cmd_apply_update(&staged_path, &current_exe)
                 .map_err(|fallback_err| format!(
                     "Failed to launch updater helper: {e}; cmd fallback failed: {fallback_err}"
@@ -402,6 +433,8 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
         let _ = std::fs::remove_file(&helper_path);
         return Err(format!("Failed to launch updater helper: {e}"));
     }
+
+    append_windows_updater_log("apply_update_windows: helper launch succeeded");
 
     Ok(())
 }
@@ -417,10 +450,15 @@ fn spawn_cmd_apply_update(staged_path: &std::path::Path, target_path: &std::path
     let target = escape_cmd_set_value(target_path);
 
     let command = format!(
-        "set \"S={}\" && set \"T={}\" && for /L %i in (1,1,300) do (copy /Y \"%S%\" \"%T%\" >nul && del /F /Q \"%S%\" >nul && exit /B 0) & timeout /T 1 /NOBREAK >nul & exit /B 1",
+        "set \"S={}\" && set \"T={}\" && for /L %i in (1,1,30) do (copy /Y \"%S%\" \"%T%\" >nul && del /F /Q \"%S%\" >nul && exit /B 0 || timeout /T 1 /NOBREAK >nul) && exit /B 1",
         staged,
         target,
     );
+
+    append_windows_updater_log(&format!(
+        "spawn_cmd_apply_update: launching cmd fallback for staged={:?} target={:?}",
+        staged_path, target_path
+    ));
 
     std::process::Command::new("cmd.exe")
         .arg("/C")
@@ -443,7 +481,13 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Stri
         let staged = PathBuf::from(staged_path);
         let target = PathBuf::from(target_path);
 
+        append_windows_updater_log(&format!(
+            "run_apply_update: started with staged={:?} target={:?}",
+            staged, target
+        ));
+
         if !staged.exists() {
+            append_windows_updater_log("run_apply_update: staged file missing");
             return Err(format!("Staged update file does not exist: {:?}", staged));
         }
 
@@ -452,6 +496,7 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Stri
             match std::fs::copy(&staged, &target) {
                 Ok(_) => {
                     let _ = std::fs::remove_file(&staged);
+                    append_windows_updater_log("run_apply_update: copy succeeded and staged removed");
                     return Ok(());
                 }
                 Err(e) => {
@@ -460,6 +505,11 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Stri
                 }
             }
         }
+
+        append_windows_updater_log(&format!(
+            "run_apply_update: timed out, last_err={}",
+            last_err.clone().unwrap_or_else(|| "unknown error".to_string())
+        ));
 
         Err(format!(
             "Timed out applying update to {:?}: {}",

@@ -120,6 +120,9 @@ fn send_status(connected: bool, error: Option<&str>) {
         "runtimeOs": std::env::consts::OS,
         "runtimeArch": std::env::consts::ARCH,
     });
+    if let Ok(path) = std::env::current_exe() {
+        payload["binaryPath"] = Value::String(path.display().to_string());
+    }
     if let Some(e) = error {
         payload["error"] = Value::String(e.to_string());
     }
