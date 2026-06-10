@@ -27,11 +27,11 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
-use std::ffi::CString;
+use std::ffi::c_void;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
 #[cfg(windows)]
-use windows_sys::Win32::System::Threading::CreateMutexA;
+use windows_sys::Win32::System::Threading::CreateMutexW;
 
 const MAX_INBOUND_BYTES: u32 = 1024 * 1024;
 // Keep above extension keepalive cadence (~24s) while reclaiming stale hosts quickly.
@@ -126,7 +126,7 @@ struct SingleInstanceGuard {
 #[cfg(windows)]
 impl Drop for SingleInstanceGuard {
     fn drop(&mut self) {
-        if self.handle != 0 {
+        if !self.handle.is_null() {
             unsafe {
                 let _ = CloseHandle(self.handle);
             }
@@ -136,15 +136,15 @@ impl Drop for SingleInstanceGuard {
 
 #[cfg(windows)]
 fn try_acquire_single_instance_guard() -> Result<SingleInstanceGuard, String> {
-    let name = CString::new(SINGLE_INSTANCE_MUTEX_NAME)
-        .map_err(|_| "mutex name contains interior NUL byte".to_string())?;
+    let mut name_w: Vec<u16> = SINGLE_INSTANCE_MUTEX_NAME.encode_utf16().collect();
+    name_w.push(0);
 
     let handle = unsafe {
-        CreateMutexA(std::ptr::null_mut(), 0, name.as_ptr() as *const u8)
+        CreateMutexW(std::ptr::null_mut::<c_void>(), 0, name_w.as_ptr())
     };
 
-    if handle == 0 {
-        return Err(format!("CreateMutexA failed with error {}", unsafe { GetLastError() }));
+    if handle.is_null() {
+        return Err(format!("CreateMutexW failed with error {}", unsafe { GetLastError() }));
     }
 
     let err = unsafe { GetLastError() };
