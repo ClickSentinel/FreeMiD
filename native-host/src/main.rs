@@ -27,8 +27,6 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
-use std::ffi::c_void;
-#[cfg(windows)]
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::CreateMutexW;
@@ -140,7 +138,7 @@ fn try_acquire_single_instance_guard() -> Result<SingleInstanceGuard, String> {
     name_w.push(0);
 
     let handle = unsafe {
-        CreateMutexW(std::ptr::null_mut::<c_void>(), 0, name_w.as_ptr())
+        CreateMutexW(std::ptr::null(), 0, name_w.as_ptr())
     };
 
     if handle.is_null() {
