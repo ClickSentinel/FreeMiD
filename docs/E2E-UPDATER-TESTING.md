@@ -139,6 +139,32 @@ Windows is setup-first, not in-process host self-update.
 3. Run local setup manually (not from popup) to perform update/install validation.
 4. Reload extension and verify host version/status in popup.
 
+### Windows local build install commands (native host)
+
+Use these commands on Windows to install the native host from your local build output.
+
+1. Build local native host from repo root:
+
+```powershell
+cargo build --release -p freemid
+```
+
+1. Install local binary and register native host for your unpacked extension ID:
+
+```powershell
+cd install
+.\install.ps1 -Binary ..\target\release\freemid.exe -ExtensionId <your-extension-id>
+```
+
+1. Optional verification (registry + binary):
+
+```powershell
+Get-ItemProperty "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.clicksentinel.freemid"
+Get-Item "$env:LOCALAPPDATA\FreeMiD\freemid.exe"
+```
+
+1. Reload extension in `chrome://extensions` and confirm popup shows expected host version.
+
 ### Windows setup-button E2E using dev override
 
 Use a dev setup URL override so popup `Setup` opens your test artifact URL instead of GitHub latest.

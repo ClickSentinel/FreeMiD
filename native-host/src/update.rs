@@ -16,6 +16,11 @@ use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
+use std::time::Duration;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 static UPDATE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
@@ -41,7 +46,10 @@ fn artifact_name() -> Option<&'static str> {
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     return Some("freemid-macos-x86_64");
 
-    // Windows and other architectures: not supported via in-process self-update.
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    return Some("freemid-windows-x86_64.exe");
+
+    // Other architectures: not supported via in-process self-update.
     #[allow(unreachable_code)]
     None
 }
@@ -154,6 +162,14 @@ fn do_update(
         "version": latest_version
     }));
 
+    #[cfg(windows)]
+    {
+        // The helper now owns replacing the host binary on disk.
+        // Exit so Chrome can reconnect and launch the updated executable.
+        std::thread::sleep(Duration::from_millis(120));
+        std::process::exit(0);
+    }
+
     Ok(())
 }
 
@@ -259,6 +275,11 @@ fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), Str
 }
 
 fn apply_update(data: &[u8]) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        return apply_update_windows(data);
+    }
+
     let current_exe = std::env::current_exe()
         .map_err(|e| format!("Cannot determine current binary path: {e}"))?;
 
@@ -300,4 +321,100 @@ fn apply_update(data: &[u8]) -> Result<(), String> {
     })?;
 
     Ok(())
+}
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(windows)]
+fn apply_update_windows(data: &[u8]) -> Result<(), String> {
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Cannot determine current binary path: {e}"))?;
+
+    let staged_path: PathBuf = {
+        let mut p = current_exe.clone();
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("freemid.exe")
+            .to_owned();
+        p.set_file_name(format!("{}.staged-{}.exe", name, std::process::id()));
+        p
+    };
+
+    let helper_path: PathBuf = {
+        let mut p = current_exe.clone();
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("freemid.exe")
+            .to_owned();
+        p.set_file_name(format!("{}.updater-helper-{}.exe", name, std::process::id()));
+        p
+    };
+
+    {
+        let mut f = std::fs::File::create(&staged_path)
+            .map_err(|e| format!("Cannot create staged file {:?}: {e}", staged_path))?;
+        f.write_all(data)
+            .map_err(|e| format!("Failed to write staged file: {e}"))?;
+        f.flush()
+            .map_err(|e| format!("Failed to flush staged file: {e}"))?;
+    }
+
+    std::fs::copy(&current_exe, &helper_path)
+        .map_err(|e| format!("Cannot create updater helper {:?}: {e}", helper_path))?;
+
+    let spawn_result = std::process::Command::new(&helper_path)
+        .arg("--apply-update")
+        .arg(&staged_path)
+        .arg(&current_exe)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
+
+    if let Err(e) = spawn_result {
+        let _ = std::fs::remove_file(&staged_path);
+        let _ = std::fs::remove_file(&helper_path);
+        return Err(format!("Failed to launch updater helper: {e}"));
+    }
+
+    Ok(())
+}
+
+pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        let _ = (staged_path, target_path);
+        return Err("--apply-update is only supported on Windows".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        let staged = PathBuf::from(staged_path);
+        let target = PathBuf::from(target_path);
+
+        if !staged.exists() {
+            return Err(format!("Staged update file does not exist: {:?}", staged));
+        }
+
+        let mut last_err: Option<String> = None;
+        for _ in 0..300 {
+            match std::fs::copy(&staged, &target) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&staged);
+                    return Ok(());
+                }
+                Err(e) => {
+                    last_err = Some(e.to_string());
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+
+        Err(format!(
+            "Timed out applying update to {:?}: {}",
+            target,
+            last_err.unwrap_or_else(|| "unknown error".to_string())
+        ))
+    }
 }

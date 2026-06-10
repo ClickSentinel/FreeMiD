@@ -27,6 +27,15 @@ use std::sync::Mutex;
 const MAX_INBOUND_BYTES: u32 = 1024 * 1024;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 4 && args[1] == "--apply-update" {
+        if let Err(e) = update::run_apply_update(&args[2], &args[3]) {
+            eprintln!("[FreeMiD] update helper failed: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     eprintln!("[FreeMiD] native host v{} starting", env!("CARGO_PKG_VERSION"));
 
     let ipc: Mutex<Option<DiscordIpc>> = Mutex::new(None);
