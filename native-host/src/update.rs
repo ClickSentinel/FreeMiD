@@ -388,12 +388,47 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
         .spawn();
 
     if let Err(e) = spawn_result {
+        // Some Windows environments can reject launching a copied executable
+        // with ERROR_ELEVATION_REQUIRED (740). Fallback to cmd-based apply.
+        if e.raw_os_error() == Some(740) {
+            let _ = std::fs::remove_file(&helper_path);
+            return spawn_cmd_apply_update(&staged_path, &current_exe)
+                .map_err(|fallback_err| format!(
+                    "Failed to launch updater helper: {e}; cmd fallback failed: {fallback_err}"
+                ));
+        }
+
         let _ = std::fs::remove_file(&staged_path);
         let _ = std::fs::remove_file(&helper_path);
         return Err(format!("Failed to launch updater helper: {e}"));
     }
 
     Ok(())
+}
+
+#[cfg(windows)]
+fn escape_cmd_set_value(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('"', "\"\"")
+}
+
+#[cfg(windows)]
+fn spawn_cmd_apply_update(staged_path: &std::path::Path, target_path: &std::path::Path) -> Result<(), String> {
+    let staged = escape_cmd_set_value(staged_path);
+    let target = escape_cmd_set_value(target_path);
+
+    let command = format!(
+        "set \"S={}\" && set \"T={}\" && for /L %i in (1,1,300) do (copy /Y \"%S%\" \"%T%\" >nul && del /F /Q \"%S%\" >nul && exit /B 0) & timeout /T 1 /NOBREAK >nul & exit /B 1",
+        staged,
+        target,
+    );
+
+    std::process::Command::new("cmd.exe")
+        .arg("/C")
+        .arg(command)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to launch cmd apply fallback: {e}"))
 }
 
 pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> {
