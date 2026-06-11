@@ -65,6 +65,76 @@ irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps
 
 1. Reload extension and verify presence updates.
 
+### End-to-end updater testing without a public release
+
+Detailed dev guide: `docs/E2E-UPDATER-TESTING.md`
+Architecture details: `docs/NATIVE-HOST-UPDATER-ARCHITECTURE.md`
+
+Best/easiest path: run a local update feed and point only your local extension build at it.
+
+Quick start (single command):
+
+bash ./scripts/local-update-e2e.sh start
+
+This command builds the candidate native host, prepares a local release feed, starts a local HTTP server, and rebuilds the extension with updater override URLs.
+
+Useful companion commands:
+
+- bash ./scripts/local-update-e2e.sh status
+- bash ./scripts/local-update-e2e.sh stop
+
+1. Build two host binaries.
+
+- baseline (installed): current version (e.g. `0.3.x`)
+- candidate (update): newer version (e.g. `0.4.0`)
+
+1. Prepare local feed files.
+
+```bash
+mkdir -p /tmp/freemid-feed/v0.4.0
+cp target/release/freemid /tmp/freemid-feed/v0.4.0/freemid-linux-x86_64
+(cd /tmp/freemid-feed/v0.4.0 && sha256sum freemid-linux-x86_64 > checksums.sha256)
+cat > /tmp/freemid-feed/latest.json <<'JSON'
+{ "tag_name": "v0.4.0" }
+JSON
+python3 -m http.server 8787 --directory /tmp/freemid-feed
+```
+
+1. Configure extension dev build to use local feed in `extension/.env`.
+
+```bash
+VITE_DISCORD_CLIENT_ID=your_app_id_here
+VITE_UPDATE_LATEST_URL=http://127.0.0.1:8787/latest.json
+VITE_UPDATE_RELEASES_BASE=http://127.0.0.1:8787
+VITE_DISCORD_CHECK_DELAY_MS=10000
+VITE_WINDOWS_SETUP_URL=http://127.0.0.1:8787/freemid-setup.exe
+```
+
+Windows VM quick host option:
+
+```powershell
+mkdir C:\freemid-feed -Force
+copy .\freemid-setup.exe C:\freemid-feed\freemid-setup.exe
+cd C:\freemid-feed
+py -m http.server 8787
+```
+
+1. Build and load unpacked extension.
+
+```bash
+cd extension
+npm run build
+```
+
+1. Install baseline native host and trigger update from popup.
+
+Notes:
+
+- Production defaults are unchanged; overrides are only used when provided.
+- Native host also supports runtime env overrides: `FREEMID_UPDATE_LATEST_URL` and `FREEMID_UPDATE_RELEASES_BASE`.
+- Verify full flow: checking -> downloading -> success -> reconnect/apply.
+- Failure tests are easy: corrupt `checksums.sha256`, remove artifact file, or stop local server.
+
 ---
 
 ## Features
@@ -114,7 +184,20 @@ YouTube / YouTube Music / TIDAL tab
 | Linux (x86_64) | `freemid-linux-x86_64` | ✅ Supported |
 | macOS (Apple Silicon) | `freemid-macos-arm64` | ✅ Supported |
 | macOS (Intel) | `freemid-macos-x86_64` | ✅ Supported |
-| Windows | `freemid-setup.exe` / `freemid-windows-x86_64.exe` | ✅ Supported |
+| Windows | `freemid-setup.exe` / `freemid-windows-x86_64.exe` / `freemid-apply-windows-x86_64.exe` | ✅ Supported |
+
+### Native host updater notes
+
+Linux/macOS apply updates in-place after checksum verification.
+
+Windows uses a two-process apply model:
+
+1. `freemid.exe` downloads and stages the new host binary.
+2. `freemid.exe` launches stable helper `freemid-apply.exe`.
+3. Helper replaces installed `%LOCALAPPDATA%\FreeMiD\freemid.exe` and removes staged file.
+4. Extension reconnects and verifies host version advancement.
+
+This keeps updates in user context and avoids in-process file lock races.
 
 ---
 

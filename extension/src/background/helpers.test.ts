@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { compareVersions, isUpdateAvailable, matchActivity, urlMatchesPattern } from './helpers';
+import {
+  compareVersions,
+  isHostSelfUpdateSupported,
+  isUpdateAvailable,
+  isUpdateAvailableForHost,
+  matchActivity,
+  preferredUpdateVersion,
+  urlMatchesPattern,
+} from './helpers';
 
 describe('background helpers', () => {
   it('matches Chrome-style host patterns against URLs', () => {
@@ -28,5 +36,32 @@ describe('background helpers', () => {
     expect(isUpdateAvailable('0.3.13', '0.3.13')).toBe(false);
     expect(isUpdateAvailable(null, '0.3.13')).toBe(false);
     expect(isUpdateAvailable('0.3.12', null)).toBe(false);
+  });
+
+  it('chooses newer of extension and cached latest for display/decision baseline', () => {
+    expect(preferredUpdateVersion('0.3.11', '0.3.14')).toBe('0.3.14');
+    expect(preferredUpdateVersion('0.3.15', '0.3.14')).toBe('0.3.15');
+    expect(preferredUpdateVersion(null, '0.3.14')).toBe('0.3.14');
+  });
+
+  it('detects update availability against host using computed baseline', () => {
+    expect(isUpdateAvailableForHost('0.3.13', '0.3.11', '0.3.14')).toBe(true);
+    expect(isUpdateAvailableForHost('0.3.14', '0.3.11', '0.3.14')).toBe(false);
+    expect(isUpdateAvailableForHost('0.3.14', '0.3.15', '0.3.14')).toBe(true);
+    expect(isUpdateAvailableForHost(null, '0.3.15', '0.3.14')).toBe(false);
+  });
+
+  it('gates self-update to hosts at or above minimum supported version', () => {
+    expect(isHostSelfUpdateSupported('0.3.13')).toBe(true);
+    expect(isHostSelfUpdateSupported('0.3.14')).toBe(true);
+    expect(isHostSelfUpdateSupported('0.3.15')).toBe(true);
+    expect(isHostSelfUpdateSupported('0.3.12')).toBe(false);
+    expect(isHostSelfUpdateSupported(null)).toBe(false);
+  });
+
+  it('enforces stricter minimum on Windows hosts', () => {
+    expect(isHostSelfUpdateSupported('0.3.13', '0.3.13', 'windows')).toBe(false);
+    expect(isHostSelfUpdateSupported('0.3.14', '0.3.13', 'windows')).toBe(true);
+    expect(isHostSelfUpdateSupported('0.3.15', '0.3.13', 'windows')).toBe(true);
   });
 });

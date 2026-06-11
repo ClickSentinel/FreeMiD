@@ -32,6 +32,7 @@ mod win {
     const ARTIFACT: &str = "freemid-windows-x86_64.exe";
     const HOST_NAME: &str = "com.clicksentinel.freemid";
     const DEFAULT_EXTENSION_ID: &str = "gaonohfjfpdlfapccfaanenfcojfknli";
+    const EXTENSION_ID_ENV: &str = "FREEMID_EXTENSION_ID";
     const VERSION: &str = env!("CARGO_PKG_VERSION");
     const LOCAL_BINARY_ENV: &str = "FREEMID_BINARY";
     const SETUP_EXE_NAME: &str = "freemid-setup.exe";
@@ -47,23 +48,38 @@ mod win {
         ("Vivaldi", r"HKCU\Software\Vivaldi\NativeMessagingHosts"),
     ];
 
-    #[derive(Copy, Clone)]
+    #[derive(Clone)]
     struct CliOptions {
         uninstall: bool,
         silent: bool,
+        extension_id: Option<String>,
     }
 
     fn parse_cli_options() -> CliOptions {
         let mut options = CliOptions {
             uninstall: false,
             silent: false,
+            extension_id: None,
         };
 
-        for arg in std::env::args().skip(1) {
+        let mut args = std::env::args().skip(1);
+        while let Some(arg) = args.next() {
             if arg.eq_ignore_ascii_case("--uninstall") {
                 options.uninstall = true;
             } else if arg.eq_ignore_ascii_case("--silent") {
                 options.silent = true;
+            } else if arg.eq_ignore_ascii_case("--extension-id") {
+                match args.next() {
+                    Some(v) if !v.trim().is_empty() && !v.starts_with("--") => {
+                        options.extension_id = Some(v);
+                    }
+                    _ => {
+                        eprintln!("--extension-id requires a non-empty value");
+                        std::process::exit(2);
+                    }
+                }
+            } else if let Some(value) = arg.strip_prefix("--extension-id=") {
+                options.extension_id = Some(value.to_string());
             }
         }
 
@@ -77,9 +93,23 @@ mod win {
             return;
         }
 
-        if let Err(e) = run_gui() {
+        let selected_extension_id = resolve_extension_id(cli.extension_id.as_deref());
+
+        if let Err(e) = run_gui(selected_extension_id) {
             eprintln!("ERROR: {}", e);
         }
+    }
+
+    fn resolve_extension_id(cli_override: Option<&str>) -> String {
+        if let Some(id) = cli_override.filter(|s| !s.trim().is_empty()) {
+            return id.trim().to_string();
+        }
+        if let Ok(id) = std::env::var(EXTENSION_ID_ENV) {
+            if !id.trim().is_empty() {
+                return id.trim().to_string();
+            }
+        }
+        DEFAULT_EXTENSION_ID.to_string()
     }
 
     fn run_cli_uninstall(silent: bool) {
@@ -112,11 +142,11 @@ mod win {
         }
     }
 
-    fn run_gui() -> Result<(), String> {
+    fn run_gui(extension_id: String) -> Result<(), String> {
         nwg::init().map_err(|e| format!("Failed to initialize GUI: {}", e))?;
         nwg::Font::set_global_family("Segoe UI").map_err(|e| format!("Failed to set UI font: {}", e))?;
 
-        let ui = Ui::build().map_err(|e| format!("Failed to build UI: {}", e))?;
+        let ui = Ui::build(&extension_id).map_err(|e| format!("Failed to build UI: {}", e))?;
         let install_handle = ui.install_button.handle.clone();
         let uninstall_handle = ui.uninstall_button.handle.clone();
         let docs_handle = ui.docs_button.handle.clone();
@@ -124,6 +154,7 @@ mod win {
 
         let ui = std::rc::Rc::new(std::cell::RefCell::new(ui));
         let ui_events = std::rc::Rc::clone(&ui);
+        let extension_id_for_install = extension_id.clone();
 
         let evt_handler = nwg::full_bind_event_handler(&window_handle, move |evt, _evt_data, handle| {
             use nwg::Event as E;
@@ -133,7 +164,7 @@ mod win {
                     nwg::stop_thread_dispatch();
                 }
                 E::OnButtonClick if handle == install_handle => {
-                    let result = run_install(DEFAULT_EXTENSION_ID, |msg| {
+                    let result = run_install(&extension_id_for_install, |msg| {
                         let ui = ui_events.borrow_mut();
                         ui.status.set_text(msg);
                     });
@@ -210,7 +241,7 @@ mod win {
     }
 
     impl Ui {
-        fn build() -> Result<Self, nwg::NwgError> {
+        fn build(extension_id: &str) -> Result<Self, nwg::NwgError> {
             let mut window = nwg::Window::default();
             let mut title = nwg::Label::default();
             let mut status = nwg::Label::default();
@@ -234,7 +265,7 @@ mod win {
                 .build(&mut title)?;
 
             nwg::Label::builder()
-                .text("Setup installs the approved Chrome Web Store extension host configuration.")
+                .text(&format!("Setup configures native host access for extension ID: {}", extension_id))
                 .parent(&window)
                 .position((16, 42))
                 .size((388, 24))

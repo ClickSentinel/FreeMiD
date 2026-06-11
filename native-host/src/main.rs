@@ -17,16 +17,72 @@
 //!   host → ext  { "type": "STATUS", "connected": bool, "error"?: string }
 
 mod discord_ipc;
+mod update;
 
 use discord_ipc::{Activity, DiscordIpc, IpcError};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::CreateMutexW;
 
 const MAX_INBOUND_BYTES: u32 = 1024 * 1024;
+// Keep above extension keepalive cadence (~24s) while reclaiming stale hosts quickly.
+const HOST_IDLE_TIMEOUT_MS: u64 = 45_000;
+#[cfg(windows)]
+const SINGLE_INSTANCE_MUTEX_NAME: &str = "Local\\FreeMiD.NativeHost";
+#[cfg(windows)]
+const SINGLE_INSTANCE_RETRY_COUNT: u32 = 3;
+#[cfg(windows)]
+const SINGLE_INSTANCE_RETRY_DELAY_MS: u64 = 750;
+
+static LAST_MESSAGE_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 4 && args[1] == "--apply-update" {
+        if let Err(e) = update::run_apply_update(&args[2], &args[3]) {
+            eprintln!("[FreeMiD] update helper failed: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     eprintln!("[FreeMiD] native host v{} starting", env!("CARGO_PKG_VERSION"));
+
+    #[cfg(windows)]
+    let _single_instance_guard = match acquire_single_instance_guard_with_grace() {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("[FreeMiD] single-instance guard failed: {}", e);
+            std::process::exit(0);
+        }
+    };
+
+    LAST_MESSAGE_MS.store(now_unix_ms(), Ordering::Relaxed);
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(Duration::from_secs(10));
+            let last = LAST_MESSAGE_MS.load(Ordering::Relaxed);
+            let now = now_unix_ms();
+            if last > 0 && now.saturating_sub(last) > HOST_IDLE_TIMEOUT_MS {
+                eprintln!("[FreeMiD] idle timeout reached ({} ms); exiting", HOST_IDLE_TIMEOUT_MS);
+                std::process::exit(0);
+            }
+        }
+    });
 
     let ipc: Mutex<Option<DiscordIpc>> = Mutex::new(None);
 
@@ -47,6 +103,7 @@ fn main() {
                 return;
             }
             Ok(Some(msg)) => {
+                LAST_MESSAGE_MS.store(now_unix_ms(), Ordering::Relaxed);
                 if let Err(e) = handle_message(&msg, &ipc) {
                     eprintln!("[FreeMiD] error handling message: {}", e);
                 }
@@ -57,6 +114,69 @@ fn main() {
             }
         }
     }
+}
+
+#[cfg(windows)]
+struct SingleInstanceGuard {
+    handle: HANDLE,
+}
+
+#[cfg(windows)]
+impl Drop for SingleInstanceGuard {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe {
+                let _ = CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn try_acquire_single_instance_guard() -> Result<SingleInstanceGuard, String> {
+    let mut name_w: Vec<u16> = SINGLE_INSTANCE_MUTEX_NAME.encode_utf16().collect();
+    name_w.push(0);
+
+    let handle = unsafe {
+        CreateMutexW(std::ptr::null(), 0, name_w.as_ptr())
+    };
+
+    if handle.is_null() {
+        return Err(format!("CreateMutexW failed with error {}", unsafe { GetLastError() }));
+    }
+
+    let err = unsafe { GetLastError() };
+    if err == ERROR_ALREADY_EXISTS {
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        return Err("another host instance is already running".to_string());
+    }
+
+    Ok(SingleInstanceGuard { handle })
+}
+
+#[cfg(windows)]
+fn acquire_single_instance_guard_with_grace() -> Result<SingleInstanceGuard, String> {
+    for attempt in 0..SINGLE_INSTANCE_RETRY_COUNT {
+        match try_acquire_single_instance_guard() {
+            Ok(guard) => {
+                if attempt > 0 {
+                    eprintln!("[FreeMiD] single-instance mutex acquired after {} retries", attempt);
+                }
+                return Ok(guard);
+            }
+            Err(e) if e.contains("already running") => {
+                if attempt + 1 == SINGLE_INSTANCE_RETRY_COUNT {
+                    return Err(e);
+                }
+                std::thread::sleep(Duration::from_millis(SINGLE_INSTANCE_RETRY_DELAY_MS));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    Err("failed to acquire single-instance mutex".to_string())
 }
 
 // ── Native-messaging framing ───────────────────────────────────────────────────
@@ -85,7 +205,7 @@ fn read_message() -> io::Result<Option<Value>> {
     Ok(Some(value))
 }
 
-fn write_message(value: &Value) {
+pub(crate) fn write_message(value: &Value) {
     let data = match serde_json::to_vec(value) {
         Ok(d) => d,
         Err(e) => {
@@ -106,7 +226,13 @@ fn send_status(connected: bool, error: Option<&str>) {
         "type": "STATUS",
         "connected": connected,
         "version": env!("CARGO_PKG_VERSION"),
+        "selfUpdateSupported": update::self_update_supported(),
+        "runtimeOs": std::env::consts::OS,
+        "runtimeArch": std::env::consts::ARCH,
     });
+    if let Ok(path) = std::env::current_exe() {
+        payload["binaryPath"] = Value::String(path.display().to_string());
+    }
     if let Some(e) = error {
         payload["error"] = Value::String(e.to_string());
     }
@@ -185,6 +311,20 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
             }
             let connected = ipc.lock().unwrap().is_some();
             send_status(connected, None);
+            Ok(())
+        }
+        "UPDATE" => {
+            let overrides = update::UpdateSourceOverrides {
+                latest_url: msg
+                    .get("latestUrl")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                releases_base_url: msg
+                    .get("releasesBaseUrl")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+            };
+            update::run_update(overrides, |v| write_message(&v));
             Ok(())
         }
         "SET_ACTIVITY" => {

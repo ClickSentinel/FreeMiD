@@ -108,7 +108,7 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target || 'native' }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build
-        run: cargo build --release ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+        run: cargo build --release ${{ matrix.target && format('--target {0}', matrix.target) || '' }} ${{ runner.os == 'Windows' && '--bins' || '' }}
         env:
           DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
 
@@ -124,6 +124,10 @@ jobs:
         run: copy target\release\freemid-setup.exe freemid-setup.exe
         if: runner.os == 'Windows'
 
+      - name: Collect apply binary (Windows)
+        run: copy target\release\freemid-apply.exe freemid-apply-windows-x86_64.exe
+        if: runner.os == 'Windows'
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
@@ -134,6 +138,12 @@ jobs:
         with:
           name: freemid-setup.exe
           path: freemid-setup.exe
+
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'Windows'
+        with:
+          name: freemid-apply-windows-x86_64.exe
+          path: freemid-apply-windows-x86_64.exe
 
   # Create the GitHub release with all artifacts
   release:
@@ -154,6 +164,7 @@ jobs:
           cp artifacts/freemid-macos-x86_64/freemid-macos-x86_64 .
           cp artifacts/freemid-windows-x86_64.exe/freemid-windows-x86_64.exe .
           cp artifacts/freemid-setup.exe/freemid-setup.exe .
+          cp artifacts/freemid-apply-windows-x86_64.exe/freemid-apply-windows-x86_64.exe .
           chmod +x freemid-linux-x86_64 freemid-macos-arm64 freemid-macos-x86_64
 
       - name: Generate checksums
@@ -164,6 +175,7 @@ jobs:
             freemid-macos-x86_64 \
             freemid-windows-x86_64.exe \
             freemid-setup.exe \
+            freemid-apply-windows-x86_64.exe \
             freemid-extension.zip \
             > checksums.sha256
 
@@ -175,6 +187,7 @@ jobs:
             freemid-macos-x86_64
             freemid-windows-x86_64.exe
             freemid-setup.exe
+            freemid-apply-windows-x86_64.exe
             freemid-extension.zip
           )
           for f in "${required[@]}"; do
@@ -197,6 +210,7 @@ jobs:
             freemid-macos-x86_64
             freemid-windows-x86_64.exe
             freemid-setup.exe
+            freemid-apply-windows-x86_64.exe
             checksums.sha256
             install/install.sh
             install/install.ps1

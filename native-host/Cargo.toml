@@ -10,6 +10,16 @@ description = "Free, open-source Discord Rich Presence — Chrome native messagi
 name = "freemid"
 path = "src/main.rs"
 
+[[bin]]
+name = "freemid-apply"
+path = "src/updater_main.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ureq = { version = "2", features = ["tls"] }
+sha2 = "0.10"
+hex = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Security"] }

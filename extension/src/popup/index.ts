@@ -29,24 +29,37 @@ const btnOpenDiscord = document.getElementById('btn-open-discord') as HTMLButton
 const reconnectBtn   = document.getElementById('btn-reconnect')    as HTMLButtonElement | null;
 const versionEl = document.getElementById('version');
 const hostVersionEl = document.getElementById('host-version') as HTMLElement | null;
-const updateBanner  = document.getElementById('update-banner') as HTMLElement | null;
-const updateText    = document.getElementById('update-text')   as HTMLElement | null;
 const btnUpdate     = document.getElementById('btn-update')    as HTMLButtonElement | null;
 const btnUninstall  = document.getElementById('btn-uninstall') as HTMLButtonElement | null;
 const elapsedBar    = document.getElementById('elapsed-bar')   as HTMLElement | null;
 const timelineFill    = document.getElementById('timeline-fill')    as HTMLElement | null;
 const timelineElapsed = document.getElementById('timeline-elapsed') as HTMLElement | null;
 const timelineTotal   = document.getElementById('timeline-total')   as HTMLElement | null;
+const extensionVersion = chrome.runtime.getManifest().version;
+const DEV_WINDOWS_SETUP_URL = import.meta.env.VITE_WINDOWS_SETUP_URL?.trim() || '';
+let latestStatus: Status | null = null;
+let reconnectGraceUntilMs: number | null = null;
+let reconnectSawDisconnect = false;
+let reconnectPollTimer: ReturnType<typeof setInterval> | null = null;
+const RECONNECT_UI_GRACE_MS = 12_000;
+const RECONNECT_BUTTON_COOLDOWN_MS = 15_000;
+let reconnectButtonUnlockAtMs = 0;
 
-if (versionEl) versionEl.textContent = `v${chrome.runtime.getManifest().version}`;
+function isUnsupportedPlatformUpdateError(error?: string): boolean {
+  return typeof error === 'string' && /automatic updates are not supported on this platform/i.test(error);
+}
+
+function windowsSetupUrl(): string {
+  return urlLike(DEV_WINDOWS_SETUP_URL)
+    ? DEV_WINDOWS_SETUP_URL
+    : githubLatestDownloadUrl('freemid-setup.exe');
+}
+
+if (versionEl) versionEl.textContent = `v${extensionVersion}`;
 
 // Clarify button behavior by platform so Windows users know these actions open Setup.
 const isWindowsPlatform = /Win/i.test(navigator.platform);
 if (isWindowsPlatform) {
-  if (btnUpdate) {
-    btnUpdate.textContent = 'Open Setup ↗';
-    btnUpdate.title = 'Open the latest FreeMiD setup executable';
-  }
   if (btnUninstall) {
     btnUninstall.textContent = 'Open Setup';
     btnUninstall.title = 'Open setup and choose Uninstall';
@@ -62,8 +75,12 @@ let timelineStartSec: number | null = null;
 let timelineEndSec: number | null = null;
 let timelineKey: string | null = null;
 
-// How long to show "Checking for Discord..." before revealing help panel
-const DISCORD_CHECK_DELAY_MS = 3000;
+// How long to show "Checking for Discord..." before revealing help panel.
+// Override for local tuning with VITE_DISCORD_CHECK_DELAY_MS.
+const parsedDiscordCheckDelay = Number.parseInt(import.meta.env.VITE_DISCORD_CHECK_DELAY_MS ?? '', 10);
+const DISCORD_CHECK_DELAY_MS = Number.isFinite(parsedDiscordCheckDelay) && parsedDiscordCheckDelay > 0
+  ? parsedDiscordCheckDelay
+  : 10000;
 let discordCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let discordCheckShown = false;
 
@@ -100,6 +117,16 @@ function formatTimestamp(seconds: number): string {
   const h = Math.floor(m / 60);
   if (h > 0) return `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
 }
 
 function updateTimelineDisplay(): void {
@@ -143,12 +170,45 @@ function stopTimelineTick(): void {
 
 reconnectBtn?.addEventListener('click', async () => {
   if (!reconnectBtn) return;
+  if (Date.now() < reconnectButtonUnlockAtMs) return;
+
+  reconnectButtonUnlockAtMs = Date.now() + RECONNECT_BUTTON_COOLDOWN_MS;
   reconnectBtn.classList.add('spinning');
   reconnectBtn.disabled = true;
+  reconnectGraceUntilMs = Date.now() + RECONNECT_UI_GRACE_MS;
+  reconnectSawDisconnect = false;
   setStatus('connecting', 'Reconnecting…', '');
-  await fetchStatus();
-  reconnectBtn.classList.remove('spinning');
-  reconnectBtn.disabled = false;
+
+  if (!reconnectPollTimer) {
+    reconnectPollTimer = setInterval(() => {
+      void fetchStatus(0);
+    }, 700);
+  }
+
+  const res = await chrome.runtime.sendMessage({ type: 'RECONNECT_HOST' }) as
+    | { ok: true; retryAfterMs?: number }
+    | { ok: false; error?: string; retryAfterMs?: number };
+
+  if (typeof res?.retryAfterMs === 'number' && Number.isFinite(res.retryAfterMs) && res.retryAfterMs > 0) {
+    reconnectButtonUnlockAtMs = Math.max(reconnectButtonUnlockAtMs, Date.now() + res.retryAfterMs);
+  }
+
+  if (!res || !res.ok) {
+    // If reconnect was throttled by background cooldown, keep current UI state
+    // but honor the server-provided lockout so popup reopen cannot bypass it.
+    if (res?.error !== 'Reconnect cooling down') {
+      reconnectGraceUntilMs = null;
+      reconnectSawDisconnect = false;
+      if (reconnectPollTimer) {
+        clearInterval(reconnectPollTimer);
+        reconnectPollTimer = null;
+      }
+      setStatus('error', 'Reconnect failed', res?.error ?? 'Failed to reconnect native host');
+    }
+
+    reconnectBtn.classList.remove('spinning');
+    reconnectBtn.disabled = Date.now() < reconnectButtonUnlockAtMs;
+  }
 });
 
 // ── Pause toggle ──────────────────────────────────────────────────────────────
@@ -177,10 +237,38 @@ btnOpenDiscord?.addEventListener('click', () => {
 });
 
 btnUpdate?.addEventListener('click', () => {
-  const url = isWindowsPlatform
-    ? githubLatestDownloadUrl('freemid-setup.exe')
-    : githubLatestDownloadUrl('install.sh');
-  void chrome.tabs.create({ url });
+  if (btnUpdate?.disabled) return;
+
+  void (async () => {
+    const unsupportedPlatformUpdate =
+      isWindowsPlatform && isUnsupportedPlatformUpdateError(latestStatus?.updateStatus?.error);
+
+    if (unsupportedPlatformUpdate) {
+      setStatus('warning', 'Windows setup required', 'Opening setup to complete host update');
+      void chrome.tabs.create({ url: windowsSetupUrl() });
+      return;
+    }
+
+    const res = await chrome.runtime.sendMessage({ type: 'RUN_HOST_UPDATE' }) as
+      | { ok: true }
+      | { ok: false; manualInstall?: boolean; error?: string };
+
+    if (res && !res.ok && res.manualInstall) {
+      if (isWindowsPlatform) {
+        setStatus('warning', 'Windows setup required', 'Opening setup to complete host update');
+        void chrome.tabs.create({ url: windowsSetupUrl() });
+      } else {
+        setStatus('warning', 'Manual host update required', 'Open install guide to run one-time bootstrap');
+        const installGuideUrl = githubRepoUrl('installation');
+        void chrome.tabs.create({ url: installGuideUrl });
+      }
+      return;
+    }
+
+    if (res && !res.ok) {
+      setStatus('error', 'Host update failed to start', res.error ?? 'Failed to send update command');
+    }
+  })();
 });
 
 btnInstallHost?.addEventListener('click', () => {
@@ -190,7 +278,7 @@ btnInstallHost?.addEventListener('click', () => {
 
 btnUninstall?.addEventListener('click', () => {
   const url = isWindowsPlatform
-    ? githubLatestDownloadUrl('freemid-setup.exe')
+    ? windowsSetupUrl()
     : githubLatestDownloadUrl('uninstall.sh');
   void chrome.tabs.create({ url });
 });
@@ -219,10 +307,23 @@ type Status = {
   hostVersion?: string | null;
   latestVersion?: string | null;
   updateAvailable?: boolean;
+  updateStatus?: {
+    status: 'requested' | 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
+    version?: string;
+    error?: string;
+  } | null;
 };
 
 function urlLike(value?: string): boolean {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+function isUpdateInProgress(updateStatus?: Status['updateStatus']): boolean {
+  if (!updateStatus) return false;
+  return updateStatus.status === 'requested'
+    || updateStatus.status === 'checking'
+    || updateStatus.status === 'downloading'
+    || updateStatus.status === 'reconnecting';
 }
 
 function clearTimer(timer: ReturnType<typeof setInterval> | null, clearFn: (handle: ReturnType<typeof setInterval>) => void): void {
@@ -259,13 +360,24 @@ function setToggle(btn: HTMLButtonElement | null, checked: boolean): void {
 }
 
 function render(status: Status | null): void {
+  latestStatus = status;
   helpHost.classList.add('hidden');
   helpDiscord.classList.add('hidden');
 
+  if (reconnectBtn && Date.now() < reconnectButtonUnlockAtMs) {
+    reconnectBtn.disabled = true;
+  }
+
+  const reconnectGraceActive = reconnectGraceUntilMs != null && Date.now() < reconnectGraceUntilMs;
+
   if (!status) {
-    setStatus('connecting', 'Connecting…', 'Reaching native host');
+    if (reconnectGraceActive) {
+      setStatus('connecting', 'Connecting…', 'Restarting native host');
+    } else {
+      setStatus('connecting', 'Connecting…', 'Reaching native host');
+    }
     if (hostVersionEl) hostVersionEl.textContent = '';
-    if (updateBanner) updateBanner.classList.add('hidden');
+    if (btnUpdate) btnUpdate.classList.remove('visible', 'spinning');
     stopUptimeTick();
     stopTimelineTick();
     return;
@@ -273,22 +385,80 @@ function render(status: Status | null): void {
 
   const paused = status.paused ?? false;
 
+  if (reconnectGraceUntilMs != null && !status.hostConnected) {
+    reconnectSawDisconnect = true;
+  }
+
+  if (reconnectGraceUntilMs != null) {
+    const graceExpired = Date.now() >= reconnectGraceUntilMs;
+    const reconnectRecovered = reconnectSawDisconnect && status.hostConnected;
+
+    if (reconnectRecovered || graceExpired) {
+      reconnectGraceUntilMs = null;
+      reconnectSawDisconnect = false;
+      if (reconnectPollTimer) {
+        clearInterval(reconnectPollTimer);
+        reconnectPollTimer = null;
+      }
+      if (reconnectBtn) {
+        reconnectBtn.classList.remove('spinning');
+        reconnectBtn.disabled = Date.now() < reconnectButtonUnlockAtMs;
+      }
+    } else {
+      setStatus('connecting', 'Connecting…', 'Restarting native host');
+      stopUptimeTick();
+      stopTimelineTick();
+      if (activityPanel) activityPanel.hidden = true;
+      return;
+    }
+  }
+
   // Host version
   if (hostVersionEl) {
     hostVersionEl.textContent = status.hostVersion ? `host v${status.hostVersion}` : '';
   }
 
-  // Update banner
-  if (updateBanner) {
-    if (status.updateAvailable && status.latestVersion) {
-      updateBanner.classList.remove('hidden');
-      if (updateText) {
-        updateText.textContent = isWindowsPlatform
-          ? `Host update available: v${status.latestVersion} (opens Setup)`
-          : `Host update available: v${status.latestVersion}`;
+  // Inline host update control
+  if (btnUpdate) {
+    btnUpdate.classList.remove('spinning');
+
+    if (status.updateStatus) {
+      const s = status.updateStatus.status;
+      const inProgress = s === 'requested' || s === 'checking' || s === 'downloading' || s === 'reconnecting';
+
+      if (inProgress) {
+        btnUpdate.classList.add('visible', 'spinning');
+        btnUpdate.disabled = true;
+        btnUpdate.textContent = s === 'reconnecting' ? 'Applying' : 'Updating';
+        btnUpdate.title = s === 'downloading'
+          ? 'Downloading host update...'
+          : s === 'reconnecting'
+            ? 'Restarting host with updated binary...'
+            : 'Checking for updates...';
+      } else if (s === 'failed') {
+        btnUpdate.classList.add('visible');
+        btnUpdate.disabled = false;
+        if (isWindowsPlatform && isUnsupportedPlatformUpdateError(status.updateStatus.error)) {
+          btnUpdate.textContent = 'Open Setup';
+          btnUpdate.title = 'Open setup to complete host update';
+        } else {
+          btnUpdate.textContent = 'Retry';
+          btnUpdate.title = status.updateStatus.error ? `Update failed: ${status.updateStatus.error}` : 'Update failed. Try again.';
+        }
+      } else {
+        // up_to_date / success: hide the control until a new update is available.
+        btnUpdate.classList.remove('visible');
       }
+    } else if (status.updateAvailable) {
+      const availableVersion = status.latestVersion && compareVersions(status.latestVersion, extensionVersion) > 0
+        ? status.latestVersion
+        : extensionVersion;
+      btnUpdate.classList.add('visible');
+      btnUpdate.disabled = false;
+      btnUpdate.textContent = 'Update';
+      btnUpdate.title = `Update host to v${availableVersion}`;
     } else {
-      updateBanner.classList.add('hidden');
+      btnUpdate.classList.remove('visible');
     }
   }
 
@@ -305,6 +475,21 @@ function render(status: Status | null): void {
   if (!status.hostConnected) {
     if (discordCheckTimer) { clearTimeout(discordCheckTimer); discordCheckTimer = null; }
     discordCheckShown = false;
+
+    const updateInProgress = isUpdateInProgress(status.updateStatus);
+
+    if (updateInProgress) {
+      const isReconnecting = status.updateStatus?.status === 'reconnecting';
+      setStatus(
+        'connecting',
+        isReconnecting ? 'Applying update…' : 'Updating host…',
+        isReconnecting ? 'Restarting native host with updated binary' : 'Waiting for native host update process'
+      );
+      stopUptimeTick();
+      stopTimelineTick();
+      if (activityPanel) activityPanel.hidden = true;
+      return;
+    }
 
     // If there is no explicit error yet, treat this as a transient connecting
     // state to avoid flashing between statuses while the host handshake settles.

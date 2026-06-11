@@ -43,13 +43,14 @@ jobs:
           }
 
       - name: Build Windows binaries
-        run: cargo build --release -p freemid -p freemid-installer
+        run: cargo build --release -p freemid -p freemid-installer --bins
 
       - name: Collect artifacts
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path artifacts -Force | Out-Null
           Copy-Item target/release/freemid.exe artifacts/freemid-windows-x86_64.exe
+          Copy-Item target/release/freemid-apply.exe artifacts/freemid-apply-windows-x86_64.exe
           Copy-Item target/release/freemid-setup.exe artifacts/freemid-setup.exe
           Copy-Item install/install.ps1 artifacts/install.ps1
           Copy-Item install/uninstall.ps1 artifacts/uninstall.ps1

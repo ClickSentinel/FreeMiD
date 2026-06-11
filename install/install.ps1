@@ -37,6 +37,7 @@ if (-not $ExtensionId) {
 # ── Install destination ────────────────────────────────────────────────────────
 $InstallDir = Join-Path $env:LOCALAPPDATA "FreeMiD"
 $BinDst     = Join-Path $InstallDir "freemid.exe"
+$UpdaterDst = Join-Path $InstallDir "freemid-apply.exe"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 # ── Resolve / download the binary ─────────────────────────────────────────────
@@ -47,6 +48,15 @@ if ($Binary) {
     }
     Copy-Item -Force $Binary $BinDst
     Write-Host "-> Installed binary (local): $BinDst"
+
+    $BinaryDir = Split-Path -Parent $Binary
+    $LocalUpdater = Join-Path $BinaryDir "freemid-apply.exe"
+    if (Test-Path $LocalUpdater) {
+        Copy-Item -Force $LocalUpdater $UpdaterDst
+        Write-Host "-> Installed updater (local): $UpdaterDst"
+    } else {
+        Write-Warning "Local updater not found at $LocalUpdater (continuing with legacy helper fallback)."
+    }
 } else {
     if ($Tag -eq "latest") {
         $DownloadUrl = "https://github.com/$GithubRepo/releases/latest/download/$Artifact"
@@ -64,6 +74,20 @@ if ($Binary) {
 
     $sizeMb = [math]::Round((Get-Item $BinDst).Length / 1MB, 2)
     Write-Host "-> Installed binary: $BinDst ($sizeMb MB)"
+
+    # Optional stable updater asset (scaffolded; legacy helper remains fallback).
+    $UpdaterArtifact = "freemid-apply-windows-x86_64.exe"
+    if ($Tag -eq "latest") {
+        $UpdaterUrl = "https://github.com/$GithubRepo/releases/latest/download/$UpdaterArtifact"
+    } else {
+        $UpdaterUrl = "https://github.com/$GithubRepo/releases/download/$Tag/$UpdaterArtifact"
+    }
+    try {
+        Invoke-WebRequest -Uri $UpdaterUrl -OutFile $UpdaterDst -UseBasicParsing
+        Write-Host "-> Installed updater: $UpdaterDst"
+    } catch {
+        Write-Warning "Updater asset not available yet ($UpdaterArtifact). Continuing with legacy helper fallback."
+    }
 
     # ── Verify SHA256 checksum ─────────────────────────────────────────────────
     Write-Host "-> Verifying checksum..."
@@ -97,6 +121,27 @@ if ($Binary) {
         exit 1
     }
     Write-Host "-> Checksum verified ✓"
+
+    # Verify updater checksum when updater asset exists; otherwise fall back safely.
+    if (Test-Path $UpdaterDst) {
+        $UpdaterChecksumEntry = $ChecksumLines |
+            Where-Object { $_ -match "(^|\s)\*?$([regex]::Escape($UpdaterArtifact))$" } |
+            Select-Object -First 1
+
+        if (-not $UpdaterChecksumEntry) {
+            Write-Warning "No checksum entry found for $UpdaterArtifact. Removing unverified updater and continuing with legacy helper fallback."
+            Remove-Item $UpdaterDst -Force -ErrorAction SilentlyContinue
+        } else {
+            $UpdaterExpectedHash = ($UpdaterChecksumEntry -split '\s+')[0]
+            $UpdaterActualHash = (Get-FileHash $UpdaterDst -Algorithm SHA256).Hash.ToLower()
+            if ($UpdaterActualHash -ne $UpdaterExpectedHash.ToLower()) {
+                Write-Warning "Updater checksum mismatch. Removing unverified updater and continuing with legacy helper fallback."
+                Remove-Item $UpdaterDst -Force -ErrorAction SilentlyContinue
+            } else {
+                Write-Host "-> Updater checksum verified ✓"
+            }
+        }
+    }
 }
 
 # ── Build the manifest JSON ────────────────────────────────────────────────────
