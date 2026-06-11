@@ -121,6 +121,27 @@ if ($Binary) {
         exit 1
     }
     Write-Host "-> Checksum verified ✓"
+
+    # Verify updater checksum when updater asset exists; otherwise fall back safely.
+    if (Test-Path $UpdaterDst) {
+        $UpdaterChecksumEntry = $ChecksumLines |
+            Where-Object { $_ -match "(^|\s)\*?$([regex]::Escape($UpdaterArtifact))$" } |
+            Select-Object -First 1
+
+        if (-not $UpdaterChecksumEntry) {
+            Write-Warning "No checksum entry found for $UpdaterArtifact. Removing unverified updater and continuing with legacy helper fallback."
+            Remove-Item $UpdaterDst -Force -ErrorAction SilentlyContinue
+        } else {
+            $UpdaterExpectedHash = ($UpdaterChecksumEntry -split '\s+')[0]
+            $UpdaterActualHash = (Get-FileHash $UpdaterDst -Algorithm SHA256).Hash.ToLower()
+            if ($UpdaterActualHash -ne $UpdaterExpectedHash.ToLower()) {
+                Write-Warning "Updater checksum mismatch. Removing unverified updater and continuing with legacy helper fallback."
+                Remove-Item $UpdaterDst -Force -ErrorAction SilentlyContinue
+            } else {
+                Write-Host "-> Updater checksum verified ✓"
+            }
+        }
+    }
 }
 
 # ── Build the manifest JSON ────────────────────────────────────────────────────
