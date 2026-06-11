@@ -29,6 +29,18 @@ $DefaultExtensionId = "gaonohfjfpdlfapccfaanenfcojfknli"
 $GithubRepo        = "ClickSentinel/FreeMiD"
 $Artifact          = "freemid-windows-x86_64.exe"
 
+if ($Tag) {
+    $Tag = $Tag.Trim()
+}
+if (-not $Tag) {
+    $Tag = "latest"
+}
+
+# Accept either "0.4.0" or "v0.4.0" for convenience.
+if ($Tag -ne "latest" -and -not $Tag.StartsWith("v")) {
+    $Tag = "v$Tag"
+}
+
 if (-not $ExtensionId) {
     $ExtensionId = $DefaultExtensionId
     Write-Host "-> Using default extension ID: $ExtensionId"
@@ -58,6 +70,8 @@ if ($Binary) {
         Write-Warning "Local updater not found at $LocalUpdater (continuing with legacy helper fallback)."
     }
 } else {
+    Write-Host "-> Release tag: $Tag"
+
     if ($Tag -eq "latest") {
         $DownloadUrl = "https://github.com/$GithubRepo/releases/latest/download/$Artifact"
     } else {
@@ -93,13 +107,20 @@ if ($Binary) {
     Write-Host "-> Verifying checksum..."
     $ChecksumsUrl = $DownloadUrl -replace [regex]::Escape($Artifact), 'checksums.sha256'
     try {
-        $ChecksumData = (Invoke-WebRequest -Uri $ChecksumsUrl -UseBasicParsing).Content
+        $ChecksumContent = (Invoke-WebRequest -Uri $ChecksumsUrl -UseBasicParsing).Content
     } catch {
         Write-Error "Failed to download checksums.sha256: $_"
         Remove-Item $BinDst -Force -ErrorAction SilentlyContinue
         exit 1
     }
-    $ChecksumLines = $ChecksumData -split "`n" |
+
+    if ($ChecksumContent -is [byte[]]) {
+        $ChecksumData = [System.Text.Encoding]::UTF8.GetString($ChecksumContent)
+    } else {
+        $ChecksumData = [string]$ChecksumContent
+    }
+
+    $ChecksumLines = $ChecksumData -split "`r?`n" |
         ForEach-Object { $_.Trim() } |
         Where-Object { $_ }
 
