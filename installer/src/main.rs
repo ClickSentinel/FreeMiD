@@ -20,7 +20,7 @@ fn main() {
 #[cfg(target_os = "windows")]
 mod win {
     use std::fs::File;
-    use std::io::Read;
+    use std::io::{Read, Write};
     use std::os::windows::process::CommandExt;
     use std::path::PathBuf;
     use std::process::Command;
@@ -148,9 +148,36 @@ mod win {
         Done(Result<(), String>),
     }
 
+    fn installer_log_path() -> PathBuf {
+        let mut path = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            let mut p = PathBuf::from(local_app_data);
+            p.push("FreeMiD");
+            let _ = std::fs::create_dir_all(&p);
+            p
+        } else {
+            PathBuf::from(".")
+        };
+        path.push("setup.log");
+        path
+    }
+
+    fn append_setup_log(line: &str) {
+        let path = installer_log_path();
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{}", line);
+        }
+    }
+
+    fn log_step(line: &str) {
+        println!("{}", line);
+        append_setup_log(line);
+    }
+
     fn run_gui(extension_id: String) -> Result<(), String> {
         nwg::init().map_err(|e| format!("Failed to initialize GUI: {}", e))?;
         nwg::Font::set_global_family("Segoe UI").map_err(|e| format!("Failed to set UI font: {}", e))?;
+
+        let log_path = installer_log_path();
 
         let ui = Ui::build(&extension_id).map_err(|e| format!("Failed to build UI: {}", e))?;
         let notice_handle = ui.notice.handle.clone();
@@ -164,12 +191,19 @@ mod win {
 
         std::thread::spawn(move || {
             let status_sender = notice_sender.clone();
+            append_setup_log(&format!("FreeMiD Setup v{} starting", VERSION));
             let result = run_install(&extension_id, |msg| {
                 if let Ok(mut q) = event_queue_for_thread.lock() {
                     q.push(InstallEvent::Status(msg.to_string()));
                 }
+                append_setup_log(msg);
                 status_sender.notice();
             });
+
+            match &result {
+                Ok(()) => append_setup_log("Installation complete."),
+                Err(e) => append_setup_log(&format!("Installation failed: {}", e)),
+            }
 
             if let Ok(mut q) = event_queue_for_thread.lock() {
                 q.push(InstallEvent::Done(result));
@@ -201,26 +235,22 @@ mod win {
                                     {
                                         let ui = ui_events.borrow_mut();
                                         ui.status.set_text("Installation complete.");
-                                        ui.note.set_text("Check the FreeMiD browser extension. If the host is not detected immediately, open chrome://extensions and click Reload on FreeMiD.");
+                                        ui.note.set_text(&format!(
+                                            "Check the FreeMiD browser extension. If the host is not detected immediately, open chrome://extensions and click Reload on FreeMiD.\n\nLog file: {}",
+                                            log_path.display()
+                                        ));
                                     }
-                                    nwg::simple_message(
-                                        "FreeMiD Setup",
-                                        "Installation complete. Check the FreeMiD browser extension and reload it if needed.",
-                                    );
                                 }
                                 Err(e) => {
                                     {
                                         let ui = ui_events.borrow_mut();
                                         ui.status.set_text("Installation failed.");
-                                        ui.note.set_text("Install failed. Check your internet connection and access to GitHub Releases, then run Setup again.");
+                                        ui.note.set_text(&format!(
+                                            "Install failed. Check your internet connection and access to GitHub Releases, then run Setup again.\n\nDetails: {}\n\nLog file: {}",
+                                            e,
+                                            log_path.display()
+                                        ));
                                     }
-                                    nwg::simple_message(
-                                        "FreeMiD Setup - Error",
-                                        &format!(
-                                            "Install failed. Check your internet connection and verify you can access GitHub Releases.\n\nDetails:\n{}",
-                                            e
-                                        ),
-                                    );
                                 }
                             },
                         }
@@ -253,7 +283,7 @@ mod win {
             let mut notice = nwg::Notice::default();
 
             nwg::Window::builder()
-                .size((460, 210))
+                .size((460, 240))
                 .position((300, 300))
                 .title(&format!("FreeMiD Setup v{}", VERSION))
                 .flags(nwg::WindowFlags::MAIN_WINDOW | nwg::WindowFlags::VISIBLE)
@@ -277,7 +307,7 @@ mod win {
                 .text(&format!("Setup configures native host access for extension ID: {}", extension_id))
                 .parent(&window)
                 .position((16, 76))
-                .size((428, 90))
+                .size((428, 150))
                 .build(&mut note)?;
 
             nwg::Notice::builder()
@@ -300,12 +330,12 @@ mod win {
         F: FnMut(&str),
     {
         set_status("Status: Starting installation...");
+        log_step("Status: Starting installation...");
 
-        println!("FreeMiD Setup  v{}", VERSION);
-        println!("{}", "-".repeat(38));
-        println!();
+        log_step(&format!("FreeMiD Setup  v{}", VERSION));
+        log_step(&"-".repeat(38));
 
-        println!("[1/7] Stopping any running FreeMiD process...");
+        log_step("[1/7] Stopping any running FreeMiD process...");
         set_status("Status: Stopping existing FreeMiD process...");
         let _ = hidden_command("taskkill")
             .args(["/F", "/IM", "freemid.exe", "/T"])
@@ -341,24 +371,24 @@ mod win {
 
         let install_result = (|| -> Result<(), String> {
             if let Ok(local_binary) = std::env::var(LOCAL_BINARY_ENV) {
-                println!("[2/7] Installing from local binary...");
+                log_step("[2/7] Installing from local binary...");
                 set_status("Status: Installing local binary...");
-                println!("      From: {}", local_binary);
+                log_step(&format!("      From: {}", local_binary));
                 std::fs::copy(&local_binary, &staged_bin_dst)
                     .map_err(|e| format!("Failed to copy local binary {}: {}", local_binary, e))?;
                 let size_mb = std::fs::metadata(&staged_bin_dst)
                     .map(|m| m.len() as f64 / 1_048_576.0)
                     .unwrap_or(0.0);
-                println!("      Installed ({:.2} MB)", size_mb);
-                println!("[3/7] Skipping checksum (local binary mode)...");
+                log_step(&format!("      Installed ({:.2} MB)", size_mb));
+                log_step("[3/7] Skipping checksum (local binary mode)...");
                 set_status("Status: Skipping checksum (local mode)...");
             } else {
                 let tag = std::env::var("FREEMID_RELEASE_TAG").unwrap_or_else(|_| "latest".to_string());
                 let (download_url, checksums_url) = build_urls(&tag);
 
-                println!("[2/7] Downloading {} ...", ARTIFACT);
+                log_step(&format!("[2/7] Downloading {} ...", ARTIFACT));
                 set_status("Status: Downloading native host...");
-                println!("      From: {}", download_url);
+                log_step(&format!("      From: {}", download_url));
                 if let Err(e) = download_file(&download_url, &staged_bin_dst) {
                     let _ = std::fs::remove_file(&staged_bin_dst);
                     return Err(e);
@@ -367,9 +397,9 @@ mod win {
                 let size_mb = std::fs::metadata(&staged_bin_dst)
                     .map(|m| m.len() as f64 / 1_048_576.0)
                     .unwrap_or(0.0);
-                println!("      Downloaded ({:.2} MB)", size_mb);
+                log_step(&format!("      Downloaded ({:.2} MB)", size_mb));
 
-                println!("[3/7] Verifying SHA256 checksum...");
+                log_step("[3/7] Verifying SHA256 checksum...");
                 set_status("Status: Verifying checksum...");
                 let checksums_raw = download_text(&checksums_url)?;
                 let expected = extract_checksum(&checksums_raw, ARTIFACT)?;
@@ -382,10 +412,10 @@ mod win {
                         expected, actual
                     ));
                 }
-                println!("      OK  {}...", &actual[..16]);
+                log_step(&format!("      OK  {}...", &actual[..16]));
             }
 
-            println!("[4/7] Installing native host binary...");
+            log_step("[4/7] Installing native host binary...");
             set_status("Status: Installing native host binary...");
             if bin_dst.exists() {
                 std::fs::remove_file(&bin_dst)
@@ -394,7 +424,7 @@ mod win {
             std::fs::rename(&staged_bin_dst, &bin_dst)
                 .map_err(|e| format!("Failed to install binary to {}: {}", bin_dst.display(), e))?;
 
-            println!("[5/7] Writing native messaging manifest...");
+            log_step("[5/7] Writing native messaging manifest...");
             set_status("Status: Writing native messaging manifest...");
             let bin_path_json = bin_dst.display().to_string().replace('\\', "\\\\");
             let manifest = format!(
@@ -406,7 +436,7 @@ mod win {
             std::fs::write(&manifest_path, &manifest)
                 .map_err(|e| format!("Cannot write manifest: {}", e))?;
 
-            println!("[6/7] Registering native messaging host...");
+            log_step("[6/7] Registering native messaging host...");
             set_status("Status: Registering browser host entries...");
             let manifest_str = manifest_path.display().to_string();
             let mut registered_count = 0usize;
@@ -417,9 +447,9 @@ mod win {
                     Ok(()) => {
                         registered_count += 1;
                         registered_names.push(name);
-                        println!("      Registered for {}", name);
+                        log_step(&format!("      Registered for {}", name));
                     }
-                    Err(e) => println!("      Warning ({}): {}", name, e),
+                    Err(e) => log_step(&format!("      Warning ({}): {}", name, e)),
                 }
             }
 
@@ -430,20 +460,19 @@ mod win {
                 );
             }
 
-            println!("      Registered browser targets: {}", registered_names.join(", "));
+            log_step(&format!("      Registered browser targets: {}", registered_names.join(", ")));
 
-            println!("[7/7] Registering Apps & Features entry...");
+            log_step("[7/7] Registering Apps & Features entry...");
             set_status("Status: Registering Apps and Features entry...");
             let setup_dst = install_dir.join(SETUP_EXE_NAME);
             copy_setup_exe(&setup_dst)?;
             register_arp(&install_dir, &bin_dst, &setup_dst)?;
 
-            println!();
-            println!("  Binary:     {}", bin_dst.display());
-            println!("  Setup:      {}", setup_dst.display());
-            println!("  Manifest:   {}", manifest_path.display());
-            println!("  Extension:  {}", extension_id);
-            println!("  ARP Key:    {}", UNINSTALL_KEY);
+            log_step(&format!("  Binary:     {}", bin_dst.display()));
+            log_step(&format!("  Setup:      {}", setup_dst.display()));
+            log_step(&format!("  Manifest:   {}", manifest_path.display()));
+            log_step(&format!("  Extension:  {}", extension_id));
+            log_step(&format!("  ARP Key:    {}", UNINSTALL_KEY));
 
             set_status("Status: \u{2714} Installed");
             Ok(())
