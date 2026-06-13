@@ -1,7 +1,7 @@
 // FreeMiD Windows Installer
 //
-// Double-click freemid-setup.exe to open a small Windows GUI with install and
-// uninstall actions.
+// Double-click freemid-setup.exe to open a small Windows GUI that starts
+// installation immediately and displays progress.
 //
 // To uninstall from command line quietly:
 //   freemid-setup.exe --uninstall --silent
@@ -24,6 +24,7 @@ mod win {
     use std::os::windows::process::CommandExt;
     use std::path::PathBuf;
     use std::process::Command;
+    use std::sync::{Arc, Mutex};
 
     use native_windows_gui as nwg;
     use sha2::{Digest, Sha256};
@@ -36,8 +37,8 @@ mod win {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
     const LOCAL_BINARY_ENV: &str = "FREEMID_BINARY";
     const SETUP_EXE_NAME: &str = "freemid-setup.exe";
+    const STABLE_UPDATER_EXE_NAME: &str = "freemid-apply.exe";
     const UNINSTALL_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\FreeMiD";
-    const LATEST_SETUP_URL: &str = "https://github.com/ClickSentinel/FreeMiD/releases/latest/download/freemid-setup.exe";
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     const BROWSER_HOST_PARENTS: [(&str, &str); 6] = [
         ("Chrome", r"HKCU\Software\Google\Chrome\NativeMessagingHosts"),
@@ -142,19 +143,39 @@ mod win {
         }
     }
 
+    enum InstallEvent {
+        Status(String),
+        Done(Result<(), String>),
+    }
+
     fn run_gui(extension_id: String) -> Result<(), String> {
         nwg::init().map_err(|e| format!("Failed to initialize GUI: {}", e))?;
         nwg::Font::set_global_family("Segoe UI").map_err(|e| format!("Failed to set UI font: {}", e))?;
 
         let ui = Ui::build(&extension_id).map_err(|e| format!("Failed to build UI: {}", e))?;
-        let install_handle = ui.install_button.handle.clone();
-        let uninstall_handle = ui.uninstall_button.handle.clone();
-        let docs_handle = ui.docs_button.handle.clone();
+        let notice_handle = ui.notice.handle.clone();
         let window_handle = ui.window.handle.clone();
 
         let ui = std::rc::Rc::new(std::cell::RefCell::new(ui));
         let ui_events = std::rc::Rc::clone(&ui);
-        let extension_id_for_install = extension_id.clone();
+        let event_queue: Arc<Mutex<Vec<InstallEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let event_queue_for_thread = Arc::clone(&event_queue);
+        let notice_sender = ui.borrow().notice.sender();
+
+        std::thread::spawn(move || {
+            let status_sender = notice_sender.clone();
+            let result = run_install(&extension_id, |msg| {
+                if let Ok(mut q) = event_queue_for_thread.lock() {
+                    q.push(InstallEvent::Status(msg.to_string()));
+                }
+                status_sender.notice();
+            });
+
+            if let Ok(mut q) = event_queue_for_thread.lock() {
+                q.push(InstallEvent::Done(result));
+            }
+            notice_sender.notice();
+        });
 
         let evt_handler = nwg::full_bind_event_handler(&window_handle, move |evt, _evt_data, handle| {
             use nwg::Event as E;
@@ -163,62 +184,47 @@ mod win {
                 E::OnWindowClose => {
                     nwg::stop_thread_dispatch();
                 }
-                E::OnButtonClick if handle == install_handle => {
-                    let result = run_install(&extension_id_for_install, |msg| {
-                        let ui = ui_events.borrow_mut();
-                        ui.status.set_text(msg);
-                    });
-                    match result {
-                        Ok(()) => {
-                            nwg::simple_message(
-                                "FreeMiD Setup",
-                                "Installation complete. Make sure the FreeMiD extension is installed and enabled. If the host is not detected right away, open chrome://extensions and click Reload on FreeMiD.",
-                            );
-                            let ui = ui_events.borrow_mut();
-                            ui.status.set_text("Status: \u{2714} Installed");
-                        }
-                        Err(e) => {
-                            nwg::simple_message(
-                                "FreeMiD Setup - Error",
-                                &format!(
-                                    "Install failed. Check your internet connection and verify you can access GitHub Releases.\n\nDetails:\n{}",
-                                    e
-                                ),
-                            );
-                            let ui = ui_events.borrow_mut();
-                            ui.status.set_text("Status: Failed");
+                E::OnNotice if handle == notice_handle => {
+                    let mut pending = Vec::new();
+                    if let Ok(mut q) = event_queue.lock() {
+                        pending.append(&mut *q);
+                    }
+
+                    for item in pending {
+                        match item {
+                            InstallEvent::Status(msg) => {
+                                let ui = ui_events.borrow_mut();
+                                ui.status.set_text(&msg);
+                            }
+                            InstallEvent::Done(result) => match result {
+                                Ok(()) => {
+                                    {
+                                        let ui = ui_events.borrow_mut();
+                                        ui.status.set_text("Installation complete.");
+                                        ui.note.set_text("Check the FreeMiD browser extension. If the host is not detected immediately, open chrome://extensions and click Reload on FreeMiD.");
+                                    }
+                                    nwg::simple_message(
+                                        "FreeMiD Setup",
+                                        "Installation complete. Check the FreeMiD browser extension and reload it if needed.",
+                                    );
+                                }
+                                Err(e) => {
+                                    {
+                                        let ui = ui_events.borrow_mut();
+                                        ui.status.set_text("Installation failed.");
+                                        ui.note.set_text("Install failed. Check your internet connection and access to GitHub Releases, then run Setup again.");
+                                    }
+                                    nwg::simple_message(
+                                        "FreeMiD Setup - Error",
+                                        &format!(
+                                            "Install failed. Check your internet connection and verify you can access GitHub Releases.\n\nDetails:\n{}",
+                                            e
+                                        ),
+                                    );
+                                }
+                            },
                         }
                     }
-                }
-                E::OnButtonClick if handle == uninstall_handle => {
-                    let result = run_uninstall(|msg| {
-                        let ui = ui_events.borrow_mut();
-                        ui.status.set_text(msg);
-                    });
-                    match result {
-                        Ok(()) => {
-                            nwg::simple_message(
-                                "FreeMiD Setup",
-                                "FreeMiD native host uninstalled.",
-                            );
-                            let ui = ui_events.borrow_mut();
-                            ui.status.set_text("Status: \u{2714} Uninstalled");
-                        }
-                        Err(e) => {
-                            nwg::simple_message(
-                                "FreeMiD Setup - Error",
-                                &format!(
-                                    "Uninstall failed. Close any running FreeMiD process and try again.\n\nDetails:\n{}",
-                                    e
-                                ),
-                            );
-                            let ui = ui_events.borrow_mut();
-                            ui.status.set_text("Status: Failed");
-                        }
-                    }
-                }
-                E::OnButtonClick if handle == docs_handle => {
-                    open_latest_setup();
                 }
                 _ => {}
             }
@@ -233,10 +239,8 @@ mod win {
         window: nwg::Window,
         _title: nwg::Label,
         status: nwg::Label,
-        _note: nwg::Label,
-        install_button: nwg::Button,
-        uninstall_button: nwg::Button,
-        docs_button: nwg::Button,
+        note: nwg::Label,
+        notice: nwg::Notice,
         evt_handler: Option<nwg::EventHandler>,
     }
 
@@ -246,67 +250,46 @@ mod win {
             let mut title = nwg::Label::default();
             let mut status = nwg::Label::default();
             let mut note = nwg::Label::default();
-            let mut install_button = nwg::Button::default();
-            let mut uninstall_button = nwg::Button::default();
-            let mut docs_button = nwg::Button::default();
+            let mut notice = nwg::Notice::default();
 
             nwg::Window::builder()
-                .size((420, 260))
+                .size((460, 210))
                 .position((300, 300))
                 .title(&format!("FreeMiD Setup v{}", VERSION))
                 .flags(nwg::WindowFlags::MAIN_WINDOW | nwg::WindowFlags::VISIBLE)
                 .build(&mut window)?;
 
             nwg::Label::builder()
-                .text("Install or manage FreeMiD on this device.")
+                .text("Installing FreeMiD on this device...")
                 .parent(&window)
                 .position((16, 16))
-                .size((388, 24))
+                .size((428, 24))
                 .build(&mut title)?;
+
+            nwg::Label::builder()
+                .text("Status: Starting installation...")
+                .parent(&window)
+                .position((16, 42))
+                .size((428, 24))
+                .build(&mut status)?;
 
             nwg::Label::builder()
                 .text(&format!("Setup configures native host access for extension ID: {}", extension_id))
                 .parent(&window)
-                .position((16, 42))
-                .size((388, 24))
+                .position((16, 76))
+                .size((428, 90))
                 .build(&mut note)?;
 
-            nwg::Label::builder()
-                .text("Status: Ready")
+            nwg::Notice::builder()
                 .parent(&window)
-                .position((16, 76))
-                .size((388, 24))
-                .build(&mut status)?;
-
-            nwg::Button::builder()
-                .text("Install or Update")
-                .parent(&window)
-                .position((16, 108))
-                .size((388, 40))
-                .build(&mut install_button)?;
-
-            nwg::Button::builder()
-                .text("Uninstall")
-                .parent(&window)
-                .position((16, 160))
-                .size((188, 34))
-                .build(&mut uninstall_button)?;
-
-            nwg::Button::builder()
-                .text("Get Latest Setup")
-                .parent(&window)
-                .position((216, 160))
-                .size((188, 34))
-                .build(&mut docs_button)?;
+                .build(&mut notice)?;
 
             Ok(Self {
                 window,
                 _title: title,
                 status,
-                _note: note,
-                install_button,
-                uninstall_button,
-                docs_button,
+                note,
+                notice,
                 evt_handler: None,
             })
         }
@@ -322,7 +305,7 @@ mod win {
         println!("{}", "-".repeat(38));
         println!();
 
-        println!("[1/5] Stopping any running FreeMiD process...");
+        println!("[1/7] Stopping any running FreeMiD process...");
         set_status("Status: Stopping existing FreeMiD process...");
         let _ = hidden_command("taskkill")
             .args(["/F", "/IM", "freemid.exe", "/T"])
@@ -332,10 +315,13 @@ mod win {
             .map_err(|_| "%LOCALAPPDATA% not set".to_string())?;
         let install_dir = PathBuf::from(local_app_data).join("FreeMiD");
         let bin_dst = install_dir.join("freemid.exe");
+        let staged_bin_dst = install_dir.join(format!("freemid.exe.install-{}.tmp", std::process::id()));
         let manifest_path = install_dir.join(format!("{}.json", HOST_NAME));
 
         std::fs::create_dir_all(&install_dir)
             .map_err(|e| format!("Cannot create install directory: {}", e))?;
+
+        let _ = std::fs::remove_file(&staged_bin_dst);
 
         if bin_dst.exists() {
             let mut unlocked = false;
@@ -353,101 +339,121 @@ mod win {
             }
         }
 
-        if let Ok(local_binary) = std::env::var(LOCAL_BINARY_ENV) {
-            println!("[2/6] Installing from local binary...");
-            set_status("Status: Installing local binary...");
-            println!("      From: {}", local_binary);
-            std::fs::copy(&local_binary, &bin_dst)
-                .map_err(|e| format!("Failed to copy local binary {}: {}", local_binary, e))?;
-            let size_mb = std::fs::metadata(&bin_dst)
-                .map(|m| m.len() as f64 / 1_048_576.0)
-                .unwrap_or(0.0);
-            println!("      Installed ({:.2} MB)", size_mb);
-            println!("[3/6] Skipping checksum (local binary mode)...");
-            set_status("Status: Skipping checksum (local mode)...");
-        } else {
-            let tag = std::env::var("FREEMID_RELEASE_TAG").unwrap_or_else(|_| "latest".to_string());
-            let (download_url, checksums_url) = build_urls(&tag);
+        let install_result = (|| -> Result<(), String> {
+            if let Ok(local_binary) = std::env::var(LOCAL_BINARY_ENV) {
+                println!("[2/7] Installing from local binary...");
+                set_status("Status: Installing local binary...");
+                println!("      From: {}", local_binary);
+                std::fs::copy(&local_binary, &staged_bin_dst)
+                    .map_err(|e| format!("Failed to copy local binary {}: {}", local_binary, e))?;
+                let size_mb = std::fs::metadata(&staged_bin_dst)
+                    .map(|m| m.len() as f64 / 1_048_576.0)
+                    .unwrap_or(0.0);
+                println!("      Installed ({:.2} MB)", size_mb);
+                println!("[3/7] Skipping checksum (local binary mode)...");
+                set_status("Status: Skipping checksum (local mode)...");
+            } else {
+                let tag = std::env::var("FREEMID_RELEASE_TAG").unwrap_or_else(|_| "latest".to_string());
+                let (download_url, checksums_url) = build_urls(&tag);
 
-            println!("[2/6] Downloading {} ...", ARTIFACT);
-            set_status("Status: Downloading native host...");
-            println!("      From: {}", download_url);
-            download_file(&download_url, &bin_dst)?;
-
-            let size_mb = std::fs::metadata(&bin_dst)
-                .map(|m| m.len() as f64 / 1_048_576.0)
-                .unwrap_or(0.0);
-            println!("      Downloaded ({:.2} MB)", size_mb);
-
-            println!("[3/6] Verifying SHA256 checksum...");
-            set_status("Status: Verifying checksum...");
-            let checksums_raw = download_text(&checksums_url)?;
-            let expected = extract_checksum(&checksums_raw, ARTIFACT)?;
-            let actual = file_sha256_hex(&bin_dst)?;
-
-            if actual != expected {
-                let _ = std::fs::remove_file(&bin_dst);
-                return Err(format!(
-                    "Checksum mismatch!\n  Expected: {}\n  Actual:   {}",
-                    expected, actual
-                ));
-            }
-            println!("      OK  {}...", &actual[..16]);
-        }
-
-        println!("[4/6] Writing native messaging manifest...");
-        set_status("Status: Writing native messaging manifest...");
-        let bin_path_json = bin_dst.display().to_string().replace('\\', "\\\\");
-        let manifest = format!(
-            "{{\n  \"name\": \"{host}\",\n  \"description\": \"FreeMiD native messaging host\",\n  \"path\": \"{path}\",\n  \"type\": \"stdio\",\n  \"allowed_origins\": [\n    \"chrome-extension://{ext_id}/\"\n  ]\n}}",
-            host = HOST_NAME,
-            path = bin_path_json,
-            ext_id = extension_id,
-        );
-        std::fs::write(&manifest_path, &manifest)
-            .map_err(|e| format!("Cannot write manifest: {}", e))?;
-
-        println!("[5/6] Registering native messaging host...");
-        set_status("Status: Registering browser host entries...");
-        let manifest_str = manifest_path.display().to_string();
-        let mut registered_count = 0usize;
-        let mut registered_names = Vec::new();
-        for (name, parent) in BROWSER_HOST_PARENTS {
-            let key = format!(r"{}\{}", parent, HOST_NAME);
-            match reg_set(&key, &manifest_str) {
-                Ok(()) => {
-                    registered_count += 1;
-                    registered_names.push(name);
-                    println!("      Registered for {}", name);
+                println!("[2/7] Downloading {} ...", ARTIFACT);
+                set_status("Status: Downloading native host...");
+                println!("      From: {}", download_url);
+                if let Err(e) = download_file(&download_url, &staged_bin_dst) {
+                    let _ = std::fs::remove_file(&staged_bin_dst);
+                    return Err(e);
                 }
-                Err(e) => println!("      Warning ({}): {}", name, e),
+
+                let size_mb = std::fs::metadata(&staged_bin_dst)
+                    .map(|m| m.len() as f64 / 1_048_576.0)
+                    .unwrap_or(0.0);
+                println!("      Downloaded ({:.2} MB)", size_mb);
+
+                println!("[3/7] Verifying SHA256 checksum...");
+                set_status("Status: Verifying checksum...");
+                let checksums_raw = download_text(&checksums_url)?;
+                let expected = extract_checksum(&checksums_raw, ARTIFACT)?;
+                let actual = file_sha256_hex(&staged_bin_dst)?;
+
+                if actual != expected {
+                    let _ = std::fs::remove_file(&staged_bin_dst);
+                    return Err(format!(
+                        "Checksum mismatch!\n  Expected: {}\n  Actual:   {}",
+                        expected, actual
+                    ));
+                }
+                println!("      OK  {}...", &actual[..16]);
             }
-        }
 
-        if registered_count == 0 {
-            return Err(
-                "Could not register FreeMiD for any supported Chromium browser. Install or launch Chrome, Edge, Brave, Chromium, or Vivaldi and run Setup again."
-                    .to_string(),
+            println!("[4/7] Installing native host binary...");
+            set_status("Status: Installing native host binary...");
+            if bin_dst.exists() {
+                std::fs::remove_file(&bin_dst)
+                    .map_err(|e| format!("Failed to replace existing binary {}: {}", bin_dst.display(), e))?;
+            }
+            std::fs::rename(&staged_bin_dst, &bin_dst)
+                .map_err(|e| format!("Failed to install binary to {}: {}", bin_dst.display(), e))?;
+
+            println!("[5/7] Writing native messaging manifest...");
+            set_status("Status: Writing native messaging manifest...");
+            let bin_path_json = bin_dst.display().to_string().replace('\\', "\\\\");
+            let manifest = format!(
+                "{{\n  \"name\": \"{host}\",\n  \"description\": \"FreeMiD native messaging host\",\n  \"path\": \"{path}\",\n  \"type\": \"stdio\",\n  \"allowed_origins\": [\n    \"chrome-extension://{ext_id}/\"\n  ]\n}}",
+                host = HOST_NAME,
+                path = bin_path_json,
+                ext_id = extension_id,
             );
+            std::fs::write(&manifest_path, &manifest)
+                .map_err(|e| format!("Cannot write manifest: {}", e))?;
+
+            println!("[6/7] Registering native messaging host...");
+            set_status("Status: Registering browser host entries...");
+            let manifest_str = manifest_path.display().to_string();
+            let mut registered_count = 0usize;
+            let mut registered_names = Vec::new();
+            for (name, parent) in BROWSER_HOST_PARENTS {
+                let key = format!(r"{}\{}", parent, HOST_NAME);
+                match reg_set(&key, &manifest_str) {
+                    Ok(()) => {
+                        registered_count += 1;
+                        registered_names.push(name);
+                        println!("      Registered for {}", name);
+                    }
+                    Err(e) => println!("      Warning ({}): {}", name, e),
+                }
+            }
+
+            if registered_count == 0 {
+                return Err(
+                    "Could not register FreeMiD for any supported Chromium browser. Install or launch Chrome, Edge, Brave, Chromium, or Vivaldi and run Setup again."
+                        .to_string(),
+                );
+            }
+
+            println!("      Registered browser targets: {}", registered_names.join(", "));
+
+            println!("[7/7] Registering Apps & Features entry...");
+            set_status("Status: Registering Apps and Features entry...");
+            let setup_dst = install_dir.join(SETUP_EXE_NAME);
+            copy_setup_exe(&setup_dst)?;
+            register_arp(&install_dir, &bin_dst, &setup_dst)?;
+
+            println!();
+            println!("  Binary:     {}", bin_dst.display());
+            println!("  Setup:      {}", setup_dst.display());
+            println!("  Manifest:   {}", manifest_path.display());
+            println!("  Extension:  {}", extension_id);
+            println!("  ARP Key:    {}", UNINSTALL_KEY);
+
+            set_status("Status: \u{2714} Installed");
+            Ok(())
+        })();
+
+        if install_result.is_err() {
+            let _ = std::fs::remove_file(&staged_bin_dst);
         }
 
-        println!("      Registered browser targets: {}", registered_names.join(", "));
-
-        println!("[6/6] Registering Apps & Features entry...");
-        set_status("Status: Registering Apps and Features entry...");
-        let setup_dst = install_dir.join(SETUP_EXE_NAME);
-        copy_setup_exe(&setup_dst)?;
-        register_arp(&install_dir, &bin_dst, &setup_dst)?;
-
-        println!();
-        println!("  Binary:     {}", bin_dst.display());
-        println!("  Setup:      {}", setup_dst.display());
-        println!("  Manifest:   {}", manifest_path.display());
-        println!("  Extension:  {}", extension_id);
-        println!("  ARP Key:    {}", UNINSTALL_KEY);
-
-        set_status("Status: \u{2714} Installed");
-        Ok(())
+        install_result
     }
 
     fn run_uninstall<F>(mut set_status: F) -> Result<(), String>
@@ -461,6 +467,9 @@ mod win {
         let install_dir = PathBuf::from(local_app_data).join("FreeMiD");
         let manifest_path = install_dir.join(format!("{}.json", HOST_NAME));
         let bin_dst = install_dir.join("freemid.exe");
+        let setup_dst = install_dir.join(SETUP_EXE_NAME);
+        let updater_dst = install_dir.join(STABLE_UPDATER_EXE_NAME);
+        let updater_log = install_dir.join("updater.log");
 
         let _ = Command::new("taskkill")
             .creation_flags(CREATE_NO_WINDOW)
@@ -481,6 +490,20 @@ mod win {
 
         let _ = std::fs::remove_file(&manifest_path);
         let _ = std::fs::remove_file(&bin_dst);
+        let _ = std::fs::remove_file(&setup_dst);
+        let _ = std::fs::remove_file(&updater_dst);
+        let _ = std::fs::remove_file(&updater_log);
+
+        if let Ok(entries) = std::fs::read_dir(&install_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with("freemid.exe.staged-") || name.starts_with("freemid.exe.install-") {
+                        let _ = std::fs::remove_file(path);
+                    }
+                }
+            }
+        }
 
         if install_dir.exists() {
             let has_remaining = std::fs::read_dir(&install_dir)
@@ -494,12 +517,6 @@ mod win {
 
         set_status("Status: \u{2714} Uninstalled");
         Ok(())
-    }
-
-    fn open_latest_setup() {
-        let _ = hidden_command("cmd")
-            .args(["/C", "start", "", LATEST_SETUP_URL])
-            .status();
     }
 
     fn build_urls(tag: &str) -> (String, String) {

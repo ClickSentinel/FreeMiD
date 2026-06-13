@@ -446,17 +446,6 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
         p
     };
 
-    let helper_path: PathBuf = {
-        let mut p = current_exe.clone();
-        let name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("freemid.exe")
-            .to_owned();
-        p.set_file_name(format!("{}.apply-helper-{}.exe", name, std::process::id()));
-        p
-    };
-
     {
         let mut f = std::fs::File::create(&staged_path)
             .map_err(|e| format!("Cannot create staged file {:?}: {e}", staged_path))?;
@@ -503,56 +492,27 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
 
                 if e.raw_os_error() == Some(740) {
                     append_windows_updater_log("apply_update_windows: trying cmd fallback after stable updater failure");
-                    return spawn_cmd_apply_update(&staged_path, &current_exe)
-                        .map_err(|fallback_err| format!(
+                    return spawn_cmd_apply_update(&staged_path, &current_exe).map_err(|fallback_err| {
+                        let _ = std::fs::remove_file(&staged_path);
+                        format!(
                             "Failed to launch stable updater: {e}; cmd fallback failed: {fallback_err}"
-                        ));
+                        )
+                    });
                 }
             }
         }
     } else {
         append_windows_updater_log(&format!(
-            "apply_update_windows: stable updater missing at {:?}; falling back to legacy helper",
+            "apply_update_windows: stable updater missing at {:?}; falling back to cmd apply",
             stable_updater_path
         ));
     }
 
-    std::fs::copy(&current_exe, &helper_path)
-        .map_err(|e| format!("Cannot create updater helper {:?}: {e}", helper_path))?;
-
-    let spawn_result = std::process::Command::new(&helper_path)
-        .arg("--apply-update")
-        .arg(&staged_path)
-        .arg(&current_exe)
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn();
-
-    if let Err(e) = spawn_result {
-        append_windows_updater_log(&format!(
-            "apply_update_windows: helper launch failed: {} (raw_os_error={:?})",
-            e,
-            e.raw_os_error()
-        ));
-
-        // Some Windows environments can reject launching a copied executable
-        // with ERROR_ELEVATION_REQUIRED (740). Fallback to cmd-based apply.
-        if e.raw_os_error() == Some(740) {
-            let _ = std::fs::remove_file(&helper_path);
-            append_windows_updater_log("apply_update_windows: trying cmd fallback");
-            return spawn_cmd_apply_update(&staged_path, &current_exe)
-                .map_err(|fallback_err| format!(
-                    "Failed to launch updater helper: {e}; cmd fallback failed: {fallback_err}"
-                ));
-        }
-
+    append_windows_updater_log("apply_update_windows: stable updater unavailable, using cmd fallback");
+    spawn_cmd_apply_update(&staged_path, &current_exe).map_err(|e| {
         let _ = std::fs::remove_file(&staged_path);
-        let _ = std::fs::remove_file(&helper_path);
-        return Err(format!("Failed to launch updater helper: {e}"));
-    }
-
-    append_windows_updater_log("apply_update_windows: helper launch succeeded");
-
-    Ok(())
+        format!("Failed to launch cmd apply fallback: {e}")
+    })
 }
 
 #[cfg(windows)]
