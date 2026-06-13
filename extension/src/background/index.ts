@@ -69,6 +69,7 @@ let disconnectReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let applyVerifyTimer: ReturnType<typeof setInterval> | null = null;
 let applyVerifyDeadlineMs: number | null = null;
 let applyVerifyTargetVersion: string | null = null;
+let updateRequestTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectInProgress = false;
 let reconnectQueued = false;
 let reconnectSettleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -80,6 +81,7 @@ let reconnectCooldownUntilMs = 0;
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 130000 : 30000;
+const UPDATE_REQUEST_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 12000 : 8000;
 const POST_UPDATE_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 150;
 const DISCONNECT_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 400;
 const RECONNECT_REQUEST_COOLDOWN_MS = IS_WINDOWS_PLATFORM ? 15000 : 8000;
@@ -106,6 +108,35 @@ function clearApplyVerification(): void {
   }
   applyVerifyDeadlineMs = null;
   applyVerifyTargetVersion = null;
+}
+
+function clearUpdateRequestTimeout(): void {
+  if (updateRequestTimeoutTimer) {
+    clearTimeout(updateRequestTimeoutTimer);
+    updateRequestTimeoutTimer = null;
+  }
+}
+
+function manualInstallRequiredError(): string {
+  return IS_WINDOWS_PLATFORM
+    ? 'Manual bootstrap required: install native host v0.4.0 via setup, then retry in-app updates.'
+    : 'Manual bootstrap required: install the latest native host once, then retry in-app updates.';
+}
+
+function armUpdateRequestTimeout(): void {
+  clearUpdateRequestTimeout();
+  updateRequestTimeoutTimer = setTimeout(() => {
+    updateRequestTimeoutTimer = null;
+    if (updateStatus?.status !== 'requested') return;
+
+    updateStatus = {
+      status: 'failed',
+      error: IS_WINDOWS_PLATFORM
+        ? 'Host did not acknowledge update. Install v0.4.0 with Setup once, then retry in-app updates.'
+        : 'Host did not acknowledge update command. Please reinstall the native host manually.',
+    };
+    broadcastStatus();
+  }, UPDATE_REQUEST_TIMEOUT_MS);
 }
 
 function maybeFinalizeAppliedVersion(): boolean {
@@ -331,6 +362,11 @@ function connectNativeHost(): void {
         }
         if (typeof m.selfUpdateSupported === 'boolean') {
           hostSelfUpdateSupported = m.selfUpdateSupported;
+        } else {
+          // Legacy hosts do not advertise capability. Require explicit support
+          // to avoid false-positive update attempts that can get stuck in
+          // "requested" forever.
+          hostSelfUpdateSupported = false;
         }
         if (typeof m.runtimeOs === 'string') {
           hostRuntimeOs = m.runtimeOs;
@@ -350,8 +386,20 @@ function connectNativeHost(): void {
         }
         lastError = m.error ?? null;
         if (m.error) console.warn('[FreeMiD] host reported error:', m.error);
+
+        // If a legacy host acknowledged STATUS but never emits UPDATE_STATUS,
+        // fail fast with manual-install guidance instead of waiting indefinitely.
+        if (updateStatus?.status === 'requested' && hostSelfUpdateSupported !== true) {
+          clearUpdateRequestTimeout();
+          updateStatus = {
+            status: 'failed',
+            error: manualInstallRequiredError(),
+          };
+        }
+
         broadcastStatus();
       } else if (m.type === 'UPDATE_STATUS' && m.status) {
+        clearUpdateRequestTimeout();
         updateStatus = {
           status: m.status,
           version: typeof m.version === 'string' ? m.version : undefined,
@@ -388,6 +436,8 @@ function connectNativeHost(): void {
         || updateStatus?.status === 'checking'
         || updateStatus?.status === 'downloading'
         || updateStatus?.status === 'reconnecting';
+
+      clearUpdateRequestTimeout();
 
       resetHostConnection(err);
 
@@ -705,8 +755,18 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       return true;
     }
 
-    if (hostSelfUpdateSupported === false) {
-      sendResponse({ ok: false, manualInstall: true });
+    // Require explicit capability from the host. Older hosts (e.g. v0.3.14)
+    // do not emit this field and cannot process UPDATE, which otherwise leaves
+    // the popup stuck in a spinning "requested" state.
+    if (hostSelfUpdateSupported !== true) {
+      clearApplyVerification();
+      clearUpdateRequestTimeout();
+      updateStatus = {
+        status: 'failed',
+        error: manualInstallRequiredError(),
+      };
+      broadcastStatus();
+      sendResponse({ ok: false, manualInstall: true, error: manualInstallRequiredError() });
       return true;
     }
 
@@ -716,7 +776,14 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       IS_WINDOWS_PLATFORM ? 'windows' : 'other',
       DEV_MIN_WINDOWS_SELF_UPDATE_HOST_VERSION,
     )) {
-      sendResponse({ ok: false, manualInstall: true });
+      clearApplyVerification();
+      clearUpdateRequestTimeout();
+      updateStatus = {
+        status: 'failed',
+        error: manualInstallRequiredError(),
+      };
+      broadcastStatus();
+      sendResponse({ ok: false, manualInstall: true, error: manualInstallRequiredError() });
       return true;
     }
 
@@ -731,12 +798,15 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     });
 
     if (!ok) {
+      clearUpdateRequestTimeout();
       const error = lastError ?? 'Failed to send update command';
       updateStatus = { status: 'failed', error };
       broadcastStatus();
       sendResponse({ ok: false, error });
       return true;
     }
+
+    armUpdateRequestTimeout();
 
     sendResponse({ ok: true });
     return true;

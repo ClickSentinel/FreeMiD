@@ -46,13 +46,17 @@ const RECONNECT_BUTTON_COOLDOWN_MS = 15_000;
 let reconnectButtonUnlockAtMs = 0;
 
 function isUnsupportedPlatformUpdateError(error?: string): boolean {
-  return typeof error === 'string' && /automatic updates are not supported on this platform/i.test(error);
+  return typeof error === 'string' && (
+    /automatic updates are not supported on this platform/i.test(error)
+    || /manual bootstrap required/i.test(error)
+  );
 }
 
 function windowsSetupUrl(): string {
+  // Keep env override for local testing, but default users to install docs.
   return urlLike(DEV_WINDOWS_SETUP_URL)
     ? DEV_WINDOWS_SETUP_URL
-    : githubLatestDownloadUrl('freemid-setup.exe');
+    : githubRepoUrl('installation');
 }
 
 if (versionEl) versionEl.textContent = `v${extensionVersion}`;
@@ -240,11 +244,18 @@ btnUpdate?.addEventListener('click', () => {
   if (btnUpdate?.disabled) return;
 
   void (async () => {
+    const explicitManualBootstrap = latestStatus?.hostSelfUpdateSupported === false;
+    if (explicitManualBootstrap) {
+      setStatus('warning', 'Manual host update required', 'Opening install instructions');
+      void chrome.tabs.create({ url: windowsSetupUrl() });
+      return;
+    }
+
     const unsupportedPlatformUpdate =
       isWindowsPlatform && isUnsupportedPlatformUpdateError(latestStatus?.updateStatus?.error);
 
     if (unsupportedPlatformUpdate) {
-      setStatus('warning', 'Windows setup required', 'Opening setup to complete host update');
+      setStatus('warning', 'Manual host update required', 'Opening install instructions');
       void chrome.tabs.create({ url: windowsSetupUrl() });
       return;
     }
@@ -255,7 +266,7 @@ btnUpdate?.addEventListener('click', () => {
 
     if (res && !res.ok && res.manualInstall) {
       if (isWindowsPlatform) {
-        setStatus('warning', 'Windows setup required', 'Opening setup to complete host update');
+        setStatus('warning', 'Manual host update required', 'Opening install instructions');
         void chrome.tabs.create({ url: windowsSetupUrl() });
       } else {
         setStatus('warning', 'Manual host update required', 'Open install guide to run one-time bootstrap');
@@ -289,6 +300,7 @@ type Status = {
   hostConnected: boolean;
   discordConnected: boolean;
   error?: string | null;
+  hostSelfUpdateSupported?: boolean | null;
   paused?: boolean;
   lastActivity?: {
     title: string;
@@ -439,8 +451,8 @@ function render(status: Status | null): void {
         btnUpdate.classList.add('visible');
         btnUpdate.disabled = false;
         if (isWindowsPlatform && isUnsupportedPlatformUpdateError(status.updateStatus.error)) {
-          btnUpdate.textContent = 'Open Setup';
-          btnUpdate.title = 'Open setup to complete host update';
+          btnUpdate.textContent = 'Install Guide';
+          btnUpdate.title = 'Open install instructions';
         } else {
           btnUpdate.textContent = 'Retry';
           btnUpdate.title = status.updateStatus.error ? `Update failed: ${status.updateStatus.error}` : 'Update failed. Try again.';
@@ -450,13 +462,18 @@ function render(status: Status | null): void {
         btnUpdate.classList.remove('visible');
       }
     } else if (status.updateAvailable) {
-      const availableVersion = status.latestVersion && compareVersions(status.latestVersion, extensionVersion) > 0
-        ? status.latestVersion
-        : extensionVersion;
       btnUpdate.classList.add('visible');
       btnUpdate.disabled = false;
-      btnUpdate.textContent = 'Update';
-      btnUpdate.title = `Update host to v${availableVersion}`;
+      if (status.hostSelfUpdateSupported === false) {
+        btnUpdate.textContent = 'Install Guide';
+        btnUpdate.title = 'Open install instructions for one-time host bootstrap';
+      } else {
+        const availableVersion = status.latestVersion && compareVersions(status.latestVersion, extensionVersion) > 0
+          ? status.latestVersion
+          : extensionVersion;
+        btnUpdate.textContent = 'Update';
+        btnUpdate.title = `Update host to v${availableVersion}`;
+      }
     } else {
       btnUpdate.classList.remove('visible');
     }

@@ -52,16 +52,16 @@ describe('background helpers', () => {
   });
 
   it('gates self-update to hosts at or above minimum supported version', () => {
-    expect(isHostSelfUpdateSupported('0.3.13')).toBe(true);
-    expect(isHostSelfUpdateSupported('0.3.14')).toBe(true);
-    expect(isHostSelfUpdateSupported('0.3.15')).toBe(true);
+    expect(isHostSelfUpdateSupported('0.4.0')).toBe(true);
+    expect(isHostSelfUpdateSupported('0.4.1')).toBe(true);
+    expect(isHostSelfUpdateSupported('0.3.15')).toBe(false);
     expect(isHostSelfUpdateSupported('0.3.12')).toBe(false);
     expect(isHostSelfUpdateSupported(null)).toBe(false);
   });
 
   it('enforces stricter minimum on Windows hosts', () => {
-    expect(isHostSelfUpdateSupported('0.3.13', '0.3.13', 'windows')).toBe(false);
-    expect(isHostSelfUpdateSupported('0.3.14', '0.3.13', 'windows')).toBe(true);
-    expect(isHostSelfUpdateSupported('0.3.15', '0.3.13', 'windows')).toBe(true);
+    expect(isHostSelfUpdateSupported('0.3.15', '0.4.0', 'windows')).toBe(false);
+    expect(isHostSelfUpdateSupported('0.4.0', '0.4.0', 'windows')).toBe(true);
+    expect(isHostSelfUpdateSupported('0.4.1', '0.4.0', 'windows')).toBe(true);
   });
 });
