@@ -179,7 +179,7 @@ mod win {
 
         let log_path = installer_log_path();
 
-        let ui = Ui::build(&extension_id).map_err(|e| format!("Failed to build UI: {}", e))?;
+        let ui = Ui::build().map_err(|e| format!("Failed to build UI: {}", e))?;
         let notice_handle = ui.notice.handle.clone();
         let window_handle = ui.window.handle.clone();
 
@@ -235,10 +235,7 @@ mod win {
                                     {
                                         let ui = ui_events.borrow_mut();
                                         ui.status.set_text("Installation complete.");
-                                        ui.note.set_text(&format!(
-                                            "Check the FreeMiD browser extension. If the host is not detected immediately, open chrome://extensions and click Reload on FreeMiD.\n\nLog file: {}",
-                                            log_path.display()
-                                        ));
+                                        ui.note.set_text("Check the FreeMiD browser extension and reload it if needed.");
                                     }
                                 }
                                 Err(e) => {
@@ -246,9 +243,8 @@ mod win {
                                         let ui = ui_events.borrow_mut();
                                         ui.status.set_text("Installation failed.");
                                         ui.note.set_text(&format!(
-                                            "Install failed. Check your internet connection and access to GitHub Releases, then run Setup again.\n\nDetails: {}\n\nLog file: {}",
-                                            e,
-                                            log_path.display()
+                                            "Install failed. See setup.log for details.\n{}",
+                                            e
                                         ));
                                     }
                                 }
@@ -275,7 +271,7 @@ mod win {
     }
 
     impl Ui {
-        fn build(extension_id: &str) -> Result<Self, nwg::NwgError> {
+        fn build() -> Result<Self, nwg::NwgError> {
             let mut window = nwg::Window::default();
             let mut title = nwg::Label::default();
             let mut status = nwg::Label::default();
@@ -283,31 +279,31 @@ mod win {
             let mut notice = nwg::Notice::default();
 
             nwg::Window::builder()
-                .size((460, 240))
-                .position((300, 300))
+                .size((340, 150))
+                .position((500, 320))
                 .title(&format!("FreeMiD Setup v{}", VERSION))
                 .flags(nwg::WindowFlags::MAIN_WINDOW | nwg::WindowFlags::VISIBLE)
                 .build(&mut window)?;
 
             nwg::Label::builder()
-                .text("Installing FreeMiD on this device...")
+                .text("Installing FreeMiD...")
                 .parent(&window)
-                .position((16, 16))
-                .size((428, 24))
+                .position((12, 12))
+                .size((316, 20))
                 .build(&mut title)?;
 
             nwg::Label::builder()
                 .text("Status: Starting installation...")
                 .parent(&window)
-                .position((16, 42))
-                .size((428, 24))
+                .position((12, 40))
+                .size((316, 20))
                 .build(&mut status)?;
 
             nwg::Label::builder()
-                .text(&format!("Setup configures native host access for extension ID: {}", extension_id))
+                .text("Please keep this window open.")
                 .parent(&window)
-                .position((16, 76))
-                .size((428, 150))
+                .position((12, 68))
+                .size((316, 64))
                 .build(&mut note)?;
 
             nwg::Notice::builder()
