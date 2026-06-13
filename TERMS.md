@@ -15,7 +15,7 @@ By installing or using FreeMiD (the "Software"), you agree to these Terms of Ser
 
 ## 2. What FreeMiD is
 
-FreeMiD is a free, open-source browser extension that displays Discord Rich Presence based on what you are currently watching or listening to in supported web services (YouTube Music, YouTube, Twitch, Netflix, and others). It is provided at no cost and without any paywalled features.
+FreeMiD is a free, open-source browser extension that displays Discord Rich Presence based on what you are currently watching or listening to in supported web services (currently YouTube Music, YouTube, and TIDAL). It is provided at no cost and without any paywalled features.
 
 FreeMiD is licensed under the **GNU General Public License v3.0 or later**. The full licence text is available in the [LICENSE](./LICENSE) file and at [gnu.org/licenses/gpl-3.0](https://www.gnu.org/licenses/gpl-3.0.txt).
 
@@ -23,7 +23,7 @@ FreeMiD is licensed under the **GNU General Public License v3.0 or later**. The 
 
 ## 3. Eligibility
 
-You must be at least 13 years of age to use FreeMiD. By using FreeMiD you represent that you meet this requirement. You must also comply with Discord's [Terms of Service](https://discord.com/terms) and the terms of any web service whose content FreeMiD reads (e.g. YouTube, Twitch, Netflix). FreeMiD is not affiliated with, endorsed by, or partnered with any of those services.
+You must be at least 13 years of age to use FreeMiD. By using FreeMiD you represent that you meet this requirement. You must also comply with Discord's [Terms of Service](https://discord.com/terms) and the terms of any web service whose content FreeMiD reads (e.g. YouTube, YouTube Music, TIDAL). FreeMiD is not affiliated with, endorsed by, or partnered with any of those services.
 
 ---
 
@@ -31,8 +31,8 @@ You must be at least 13 years of age to use FreeMiD. By using FreeMiD you repres
 
 You may:
 
-- Use FreeMiD for personal, non-commercial purposes
-- Fork, modify, and redistribute FreeMiD under the terms of the GPL-3.0 licence
+- Use FreeMiD for lawful purposes
+- Fork, modify, and redistribute FreeMiD under the terms of the GPL-3.0-or-later licence
 - Contribute improvements back to the project
 
 ---
@@ -43,7 +43,7 @@ You must not:
 
 - Use FreeMiD to scrape, collect, or transmit other users' data
 - Modify FreeMiD to bypass the Terms of Service of Discord or any supported web service
-- Distribute modified versions under the FreeMiD name without clear attribution of changes, as required by the GPL-3.0
+- Misrepresent modified versions as official FreeMiD releases
 
 ---
 
@@ -66,7 +66,9 @@ To the fullest extent permitted by applicable law, The FreeMiD team shall not be
 FreeMiD interacts with:
 
 - **Discord** — to display Rich Presence via Discord's API
-- **YouTube / YouTube Music, Twitch, Netflix** — to read publicly visible page metadata in your browser tab
+- **YouTube / YouTube Music / TIDAL** — to read publicly visible page metadata in your browser tab
+
+"Discord", "YouTube", and "TIDAL" are trademarks of their respective owners. FreeMiD is independent and not endorsed by these services.
 
 The FreeMiD team has no control over, and accepts no responsibility for, the availability, accuracy, or policies of these third-party services.
 
@@ -86,5 +88,5 @@ These Terms are governed by the laws of the Province of Newfoundland and Labrado
 
 ## Contact
 
-General enquiries: **<hello@freemid.ca>** (placeholder)  
+General enquiries: **<hello@freemid.ca>**  
 Bug reports: [github.com/ClickSentinel/FreeMiD/issues](https://github.com/ClickSentinel/FreeMiD/issues)
