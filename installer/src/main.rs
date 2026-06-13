@@ -177,8 +177,6 @@ mod win {
         nwg::init().map_err(|e| format!("Failed to initialize GUI: {}", e))?;
         nwg::Font::set_global_family("Segoe UI").map_err(|e| format!("Failed to set UI font: {}", e))?;
 
-        let log_path = installer_log_path();
-
         let ui = Ui::build().map_err(|e| format!("Failed to build UI: {}", e))?;
         let notice_handle = ui.notice.handle.clone();
         let window_handle = ui.window.handle.clone();
