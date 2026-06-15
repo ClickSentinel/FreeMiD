@@ -256,6 +256,9 @@ echo "VITE_DISCORD_CLIENT_ID=your_app_id_here" > extension/.env
 # 2. Build the native host
 cargo build --release          # output: target/release/freemid
 
+# On Windows, make sure any running freemid-setup.exe is closed before rebuilding,
+# otherwise Cargo cannot replace target/release/freemid-setup.exe.
+
 # 3. Build the extension
 cd extension && npm install && npm run build && cd ..
 # output: extension/dist/
