@@ -24,7 +24,6 @@ mod win {
     use std::os::windows::process::CommandExt;
     use std::path::PathBuf;
     use std::process::Command;
-    use std::sync::{Arc, Mutex};
 
     use native_windows_gui as nwg;
     use sha2::{Digest, Sha256};
@@ -143,11 +142,6 @@ mod win {
         }
     }
 
-    enum InstallEvent {
-        Status(String),
-        Done(Result<(), String>),
-    }
-
     fn installer_log_path() -> PathBuf {
         let mut path = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
             let mut p = PathBuf::from(local_app_data);
@@ -176,146 +170,28 @@ mod win {
     fn run_gui(extension_id: String) -> Result<(), String> {
         nwg::init().map_err(|e| format!("Failed to initialize GUI: {}", e))?;
         nwg::Font::set_global_family("Segoe UI").map_err(|e| format!("Failed to set UI font: {}", e))?;
-
-        let ui = Ui::build().map_err(|e| format!("Failed to build UI: {}", e))?;
-        let notice_handle = ui.notice.handle.clone();
-        let window_handle = ui.window.handle.clone();
-
-        let ui = std::rc::Rc::new(std::cell::RefCell::new(ui));
-        let ui_events = std::rc::Rc::clone(&ui);
-        let event_queue: Arc<Mutex<Vec<InstallEvent>>> = Arc::new(Mutex::new(Vec::new()));
-        let event_queue_for_thread = Arc::clone(&event_queue);
-        let notice_sender = ui.borrow().notice.sender();
-
-        std::thread::spawn(move || {
-            let status_sender = notice_sender.clone();
-            append_setup_log(&format!("FreeMiD Setup v{} starting", VERSION));
-            let result = run_install(&extension_id, |msg| {
-                if let Ok(mut q) = event_queue_for_thread.lock() {
-                    q.push(InstallEvent::Status(msg.to_string()));
-                }
-                append_setup_log(msg);
-                status_sender.notice();
-            });
-
-            match &result {
-                Ok(()) => append_setup_log("Installation complete."),
-                Err(e) => append_setup_log(&format!("Installation failed: {}", e)),
+        append_setup_log(&format!("FreeMiD Setup v{} starting", VERSION));
+        let result = run_install(&extension_id, |_| {});
+        match result {
+            Ok(()) => {
+                append_setup_log("Installation complete.");
+                nwg::simple_message(
+                    "FreeMiD Setup",
+                    "Installation complete. Check the FreeMiD browser extension and reload it if needed.",
+                );
+                Ok(())
             }
-
-            if let Ok(mut q) = event_queue_for_thread.lock() {
-                q.push(InstallEvent::Done(result));
+            Err(e) => {
+                append_setup_log(&format!("Installation failed: {}", e));
+                nwg::simple_message(
+                    "FreeMiD Setup - Error",
+                    &format!(
+                        "Install failed. Check your internet connection and verify you can access GitHub Releases.\n\nDetails:\n{}",
+                        e
+                    ),
+                );
+                Err(e)
             }
-            notice_sender.notice();
-        });
-
-        let evt_handler = nwg::full_bind_event_handler(&window_handle, move |evt, _evt_data, handle| {
-            use nwg::Event as E;
-
-            match evt {
-                E::OnWindowClose => {
-                    nwg::stop_thread_dispatch();
-                }
-                E::OnNotice if handle == notice_handle => {
-                    let mut pending = Vec::new();
-                    if let Ok(mut q) = event_queue.lock() {
-                        pending.append(&mut *q);
-                    }
-
-                    for item in pending {
-                        match item {
-                            InstallEvent::Status(msg) => {
-                                let ui = ui_events.borrow_mut();
-                                ui.status.set_text(&msg);
-                            }
-                            InstallEvent::Done(result) => match result {
-                                Ok(()) => {
-                                    {
-                                        let ui = ui_events.borrow_mut();
-                                        ui.status.set_text("Installation complete.");
-                                        ui.note.set_text("Check the FreeMiD browser extension and reload it if needed.");
-                                    }
-                                }
-                                Err(e) => {
-                                    {
-                                        let ui = ui_events.borrow_mut();
-                                        ui.status.set_text("Installation failed.");
-                                        ui.note.set_text(&format!(
-                                            "Install failed. See setup.log for details.\n{}",
-                                            e
-                                        ));
-                                    }
-                                }
-                            },
-                        }
-                    }
-                }
-                _ => {}
-            }
-        });
-
-        ui.borrow_mut().evt_handler = Some(evt_handler);
-        nwg::dispatch_thread_events();
-        Ok(())
-    }
-
-    struct Ui {
-        window: nwg::Window,
-        _title: nwg::Label,
-        status: nwg::Label,
-        note: nwg::Label,
-        notice: nwg::Notice,
-        evt_handler: Option<nwg::EventHandler>,
-    }
-
-    impl Ui {
-        fn build() -> Result<Self, nwg::NwgError> {
-            let mut window = nwg::Window::default();
-            let mut title = nwg::Label::default();
-            let mut status = nwg::Label::default();
-            let mut note = nwg::Label::default();
-            let mut notice = nwg::Notice::default();
-
-            nwg::Window::builder()
-                .size((340, 150))
-                .position((500, 320))
-                .title(&format!("FreeMiD Setup v{}", VERSION))
-                .flags(nwg::WindowFlags::MAIN_WINDOW | nwg::WindowFlags::VISIBLE)
-                .build(&mut window)?;
-
-            nwg::Label::builder()
-                .text("Installing FreeMiD...")
-                .parent(&window)
-                .position((12, 12))
-                .size((316, 20))
-                .build(&mut title)?;
-
-            nwg::Label::builder()
-                .text("Status: Starting installation...")
-                .parent(&window)
-                .position((12, 40))
-                .size((316, 20))
-                .build(&mut status)?;
-
-            nwg::Label::builder()
-                .text("Please keep this window open.")
-                .parent(&window)
-                .position((12, 68))
-                .size((316, 64))
-                .build(&mut note)?;
-
-            nwg::Notice::builder()
-                .parent(&window)
-                .build(&mut notice)?;
-
-            Ok(Self {
-                window,
-                _title: title,
-                status,
-                note,
-                notice,
-                evt_handler: None,
-            })
         }
     }
 
