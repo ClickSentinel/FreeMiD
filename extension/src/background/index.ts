@@ -10,11 +10,11 @@
  *  4. Clear status instantly when the active tab leaves a known domain.
  */
 
-import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
 import { GITHUB_REPO } from '../constants/github';
 import { STORAGE_KEYS } from '../constants/storageKeys';
 import {
   compareVersions,
+  matchActivity,
   MIN_SELF_UPDATE_HOST_VERSION,
   MIN_WINDOWS_SELF_UPDATE_HOST_VERSION,
   isHostSelfUpdateSupported,
@@ -119,7 +119,7 @@ function clearUpdateRequestTimeout(): void {
 
 function manualInstallRequiredError(): string {
   return IS_WINDOWS_PLATFORM
-    ? 'Manual bootstrap required: install native host v0.4.0 via setup, then retry in-app updates.'
+    ? `Manual bootstrap required: install native host v${MIN_WINDOWS_SELF_UPDATE_HOST_VERSION} or later via setup, then retry in-app updates.`
     : 'Manual bootstrap required: install the latest native host once, then retry in-app updates.';
 }
 
@@ -132,7 +132,7 @@ function armUpdateRequestTimeout(): void {
     updateStatus = {
       status: 'failed',
       error: IS_WINDOWS_PLATFORM
-        ? 'Host did not acknowledge update. Install v0.4.0 with Setup once, then retry in-app updates.'
+        ? `Host did not acknowledge update. Install v${MIN_WINDOWS_SELF_UPDATE_HOST_VERSION} or later with Setup once, then retry in-app updates.`
         : 'Host did not acknowledge update command. Please reinstall the native host manually.',
     };
     broadcastStatus();
@@ -582,50 +582,6 @@ function notifyConnectionChange(connected: boolean): void {
 
 // ── Activity registry & content script injection ───────────────────────────────
 
-function matchActivity(url: string): ActivityMeta | null {
-  for (const meta of Object.values(ACTIVITY_REGISTRY)) {
-    if (meta.matches.some((pattern) => urlMatchesPattern(url, pattern))) {
-      return meta;
-    }
-  }
-  return null;
-}
-
-function urlMatchesPattern(url: string, pattern: string): boolean {
-  // Parse both URL and Chrome match pattern into components so we compare
-  // scheme/host/path independently. Prevents URL-string injection via query.
-  try {
-    const parsed = new URL(url);
-
-    const schemeEnd = pattern.indexOf('://');
-    if (schemeEnd === -1) return false;
-    const patternScheme = pattern.slice(0, schemeEnd);
-    const afterScheme = pattern.slice(schemeEnd + 3);
-    const slashIdx = afterScheme.indexOf('/');
-    const patternHost = slashIdx === -1 ? afterScheme : afterScheme.slice(0, slashIdx);
-    const patternPath = slashIdx === -1 ? '' : afterScheme.slice(slashIdx);
-
-    if (patternScheme !== '*' && patternScheme !== parsed.protocol.slice(0, -1)) {
-      return false;
-    }
-
-    const hostRe = new RegExp(
-      '^' + patternHost.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$',
-      'i',
-    );
-    if (!hostRe.test(parsed.hostname)) return false;
-
-    if (!patternPath || patternPath === '/*') return true;
-    const pathRe = new RegExp(
-      '^' + patternPath.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*'),
-      'i',
-    );
-    return pathRe.test(parsed.pathname + parsed.search);
-  } catch {
-    return false;
-  }
-}
-
 /** Map of tabId → activityId for tabs that currently have a script injected. */
 const activeActivityTabs = new Map<number, string>();
 
@@ -835,6 +791,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (nativePort) sendToHost({ type: 'PING' });
   }
   if (alarm.name === 'freemid-update-check') { void checkForUpdates(); }
+  if (alarm.name === 'freemid-host-version-check') {
+    // On non-Windows, if the user manually updated the native host binary
+    // (e.g. via install.sh), the old process is still running. A quiet reconnect
+    // causes Chrome to spawn the new binary, picking up the updated version.
+    if (!IS_WINDOWS_PLATFORM && isUpdateAvailable() && !updateStatus) {
+      requestReconnectNativeHost();
+    }
+  }
 });
 
 chrome.runtime.onSuspend.addListener(() => {
@@ -926,6 +890,13 @@ void chrome.storage.local.get([STORAGE_KEYS.paused, STORAGE_KEYS.enabledSites, S
   chrome.alarms.get('freemid-update-check', (existing) => {
     if (!existing) {
       chrome.alarms.create('freemid-update-check', { delayInMinutes: 2, periodInMinutes: 1440 });
+    }
+  });
+  // Periodically reconnect on non-Windows to pick up externally-installed host
+  // binaries (e.g. after the user runs install.sh to manually update).
+  chrome.alarms.get('freemid-host-version-check', (existing) => {
+    if (!existing) {
+      chrome.alarms.create('freemid-host-version-check', { delayInMinutes: 30, periodInMinutes: 30 });
     }
   });
   // Re-inject activity scripts into any tabs that are already open when the
