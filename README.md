@@ -199,6 +199,18 @@ Windows uses a two-process apply model:
 
 This keeps updates in user context and avoids in-process file lock races.
 
+### Discord install method compatibility
+
+FreeMiD uses Discord's IPC socket for Rich Presence. Compatibility depends on how Discord is installed:
+
+| Discord install | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| Native package (`.deb`, `.rpm`, official installer) | ✅ Works | ✅ Works | ✅ Works |
+| [Flatpak](https://flathub.org/apps/com.discordapp.Discord) | ✅ Works | N/A | N/A |
+| [Snap](https://snapcraft.io/discord) | ❌ Not supported* | N/A | N/A |
+
+\* Discord snap uses strict confinement, which isolates the IPC socket from the host system. The native host cannot access the socket.
+
 ---
 
 ## Uninstall
