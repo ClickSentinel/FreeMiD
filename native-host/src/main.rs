@@ -69,6 +69,9 @@ fn main() {
     );
 
     #[cfg(windows)]
+    update::cleanup_staged_files();
+
+    #[cfg(windows)]
     let _single_instance_guard = match acquire_single_instance_guard_with_grace() {
         Ok(guard) => guard,
         Err(e) => {
