@@ -1,42 +1,81 @@
-import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
 import { githubLatestDownloadUrl, githubRepoUrl } from '../constants/github';
+import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
 
 /**
  * FreeMiD — Popup
  */
 
-const dot        = document.getElementById('dot')!;
-const label      = document.getElementById('status-label')!;
-const sub        = document.getElementById('status-sub')!;
-const helpHost   = document.getElementById('help-host')!;
+const dot = document.getElementById('dot')!;
+const label = document.getElementById('status-label')!;
+const sub = document.getElementById('status-sub')!;
+const helpHost = document.getElementById('help-host')!;
 const helpDiscord = document.getElementById('help-discord')!;
-const btnInstallHost = document.getElementById('btn-install-host') as HTMLButtonElement | null;
-const pageInfo   = document.getElementById('page-info')!;
+const btnInstallHost = document.getElementById(
+  'btn-install-host',
+) as HTMLButtonElement | null;
+const pageInfo = document.getElementById('page-info')!;
 
-const activityPanel = document.getElementById('activity-panel') as HTMLElement | null;
-const activityTitle = document.getElementById('activity-title') as HTMLElement | null;
-const activitySub   = document.getElementById('activity-sub')   as HTMLElement | null;
-const activityMetaText = document.getElementById('activity-meta-text') as HTMLElement | null;
-const activityArt   = document.getElementById('activity-art')   as HTMLImageElement | null;
-const activityLogo  = document.getElementById('activity-logo')  as HTMLImageElement | null;
-const pauseRow  = document.getElementById('pause-row')  as HTMLElement      | null;
-const pauseSub  = document.getElementById('pause-sub')  as HTMLElement      | null;
-const btnPause  = document.getElementById('btn-pause')  as HTMLButtonElement | null;
-const toggleYT  = document.getElementById('toggle-youtube') as HTMLButtonElement | null;
-const toggleYTM = document.getElementById('toggle-ytm')     as HTMLButtonElement | null;
-const toggleTidal = document.getElementById('toggle-tidal') as HTMLButtonElement | null;
-const btnOpenDiscord = document.getElementById('btn-open-discord') as HTMLButtonElement | null;
-const reconnectBtn   = document.getElementById('btn-reconnect')    as HTMLButtonElement | null;
+const activityPanel = document.getElementById(
+  'activity-panel',
+) as HTMLElement | null;
+const activityTitle = document.getElementById(
+  'activity-title',
+) as HTMLElement | null;
+const activitySub = document.getElementById(
+  'activity-sub',
+) as HTMLElement | null;
+const activityMetaText = document.getElementById(
+  'activity-meta-text',
+) as HTMLElement | null;
+const activityArt = document.getElementById(
+  'activity-art',
+) as HTMLImageElement | null;
+const activityLogo = document.getElementById(
+  'activity-logo',
+) as HTMLImageElement | null;
+const pauseRow = document.getElementById('pause-row') as HTMLElement | null;
+const pauseSub = document.getElementById('pause-sub') as HTMLElement | null;
+const btnPause = document.getElementById(
+  'btn-pause',
+) as HTMLButtonElement | null;
+const toggleYT = document.getElementById(
+  'toggle-youtube',
+) as HTMLButtonElement | null;
+const toggleYTM = document.getElementById(
+  'toggle-ytm',
+) as HTMLButtonElement | null;
+const toggleTidal = document.getElementById(
+  'toggle-tidal',
+) as HTMLButtonElement | null;
+const btnOpenDiscord = document.getElementById(
+  'btn-open-discord',
+) as HTMLButtonElement | null;
+const reconnectBtn = document.getElementById(
+  'btn-reconnect',
+) as HTMLButtonElement | null;
 const versionEl = document.getElementById('version');
-const hostVersionEl = document.getElementById('host-version') as HTMLElement | null;
-const btnUpdate     = document.getElementById('btn-update')    as HTMLButtonElement | null;
-const btnUninstall  = document.getElementById('btn-uninstall') as HTMLButtonElement | null;
-const elapsedBar    = document.getElementById('elapsed-bar')   as HTMLElement | null;
-const timelineFill    = document.getElementById('timeline-fill')    as HTMLElement | null;
-const timelineElapsed = document.getElementById('timeline-elapsed') as HTMLElement | null;
-const timelineTotal   = document.getElementById('timeline-total')   as HTMLElement | null;
+const hostVersionEl = document.getElementById(
+  'host-version',
+) as HTMLElement | null;
+const btnUpdate = document.getElementById(
+  'btn-update',
+) as HTMLButtonElement | null;
+const btnUninstall = document.getElementById(
+  'btn-uninstall',
+) as HTMLButtonElement | null;
+const elapsedBar = document.getElementById('elapsed-bar') as HTMLElement | null;
+const timelineFill = document.getElementById(
+  'timeline-fill',
+) as HTMLElement | null;
+const timelineElapsed = document.getElementById(
+  'timeline-elapsed',
+) as HTMLElement | null;
+const timelineTotal = document.getElementById(
+  'timeline-total',
+) as HTMLElement | null;
 const extensionVersion = chrome.runtime.getManifest().version;
-const DEV_WINDOWS_SETUP_URL = import.meta.env.VITE_WINDOWS_SETUP_URL?.trim() || '';
+const DEV_WINDOWS_SETUP_URL =
+  import.meta.env.VITE_WINDOWS_SETUP_URL?.trim() || '';
 let latestStatus: Status | null = null;
 let reconnectGraceUntilMs: number | null = null;
 let reconnectSawDisconnect = false;
@@ -46,9 +85,10 @@ const RECONNECT_BUTTON_COOLDOWN_MS = 15_000;
 let reconnectButtonUnlockAtMs = 0;
 
 function isUnsupportedPlatformUpdateError(error?: string): boolean {
-  return typeof error === 'string' && (
-    /automatic updates are not supported on this platform/i.test(error)
-    || /manual bootstrap required/i.test(error)
+  return (
+    typeof error === 'string' &&
+    (/automatic updates are not supported on this platform/i.test(error) ||
+      /manual bootstrap required/i.test(error))
   );
 }
 
@@ -81,10 +121,14 @@ let timelineKey: string | null = null;
 
 // How long to show "Checking for Discord..." before revealing help panel.
 // Override for local tuning with VITE_DISCORD_CHECK_DELAY_MS.
-const parsedDiscordCheckDelay = Number.parseInt(import.meta.env.VITE_DISCORD_CHECK_DELAY_MS ?? '', 10);
-const DISCORD_CHECK_DELAY_MS = Number.isFinite(parsedDiscordCheckDelay) && parsedDiscordCheckDelay > 0
-  ? parsedDiscordCheckDelay
-  : 10000;
+const parsedDiscordCheckDelay = Number.parseInt(
+  import.meta.env.VITE_DISCORD_CHECK_DELAY_MS ?? '',
+  10,
+);
+const DISCORD_CHECK_DELAY_MS =
+  Number.isFinite(parsedDiscordCheckDelay) && parsedDiscordCheckDelay > 0
+    ? parsedDiscordCheckDelay
+    : 10000;
 let discordCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let discordCheckShown = false;
 
@@ -119,7 +163,8 @@ function formatTimestamp(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   const m = Math.floor(s / 60);
   const h = Math.floor(m / 60);
-  if (h > 0) return `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  if (h > 0)
+    return `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
@@ -140,7 +185,8 @@ function updateTimelineDisplay(): void {
     !timelineFill ||
     !timelineElapsed ||
     !timelineTotal
-  ) return;
+  )
+    return;
 
   const nowSec = Math.floor(Date.now() / 1000);
   const duration = Math.max(0, timelineEndSec - timelineStartSec);
@@ -189,15 +235,22 @@ reconnectBtn?.addEventListener('click', async () => {
     }, 700);
   }
 
-  const res = await chrome.runtime.sendMessage({ type: 'RECONNECT_HOST' }) as
+  const res = (await chrome.runtime.sendMessage({ type: 'RECONNECT_HOST' })) as
     | { ok: true; retryAfterMs?: number }
     | { ok: false; error?: string; retryAfterMs?: number };
 
-  if (typeof res?.retryAfterMs === 'number' && Number.isFinite(res.retryAfterMs) && res.retryAfterMs > 0) {
-    reconnectButtonUnlockAtMs = Math.max(reconnectButtonUnlockAtMs, Date.now() + res.retryAfterMs);
+  if (
+    typeof res?.retryAfterMs === 'number' &&
+    Number.isFinite(res.retryAfterMs) &&
+    res.retryAfterMs > 0
+  ) {
+    reconnectButtonUnlockAtMs = Math.max(
+      reconnectButtonUnlockAtMs,
+      Date.now() + res.retryAfterMs,
+    );
   }
 
-  if (!res || !res.ok) {
+  if (!res?.ok) {
     // If reconnect was throttled by background cooldown, keep current UI state
     // but honor the server-provided lockout so popup reopen cannot bypass it.
     if (res?.error !== 'Reconnect cooling down') {
@@ -207,7 +260,11 @@ reconnectBtn?.addEventListener('click', async () => {
         clearInterval(reconnectPollTimer);
         reconnectPollTimer = null;
       }
-      setStatus('error', 'Reconnect failed', res?.error ?? 'Failed to reconnect native host');
+      setStatus(
+        'error',
+        'Reconnect failed',
+        res?.error ?? 'Failed to reconnect native host',
+      );
     }
 
     reconnectBtn.classList.remove('spinning');
@@ -227,10 +284,14 @@ btnPause?.addEventListener('click', () => {
 function wireSiteToggle(btn: HTMLButtonElement | null, siteId: string): void {
   btn?.addEventListener('click', () => {
     const nowEnabled = btn.getAttribute('aria-checked') !== 'true';
-    void chrome.runtime.sendMessage({ type: 'SET_SITE_ENABLED', siteId, enabled: nowEnabled });
+    void chrome.runtime.sendMessage({
+      type: 'SET_SITE_ENABLED',
+      siteId,
+      enabled: nowEnabled,
+    });
   });
 }
-wireSiteToggle(toggleYT,  'youtube');
+wireSiteToggle(toggleYT, 'youtube');
 wireSiteToggle(toggleYTM, 'youtubemusic');
 wireSiteToggle(toggleTidal, 'tidal');
 
@@ -244,32 +305,52 @@ btnUpdate?.addEventListener('click', () => {
   if (btnUpdate?.disabled) return;
 
   void (async () => {
-    const explicitManualBootstrap = latestStatus?.hostSelfUpdateSupported === false;
+    const explicitManualBootstrap =
+      latestStatus?.hostSelfUpdateSupported === false;
     if (explicitManualBootstrap) {
-      setStatus('warning', 'Manual host update required', 'Opening install instructions');
+      setStatus(
+        'warning',
+        'Manual host update required',
+        'Opening install instructions',
+      );
       void chrome.tabs.create({ url: windowsSetupUrl() });
       return;
     }
 
     const unsupportedPlatformUpdate =
-      isWindowsPlatform && isUnsupportedPlatformUpdateError(latestStatus?.updateStatus?.error);
+      isWindowsPlatform &&
+      isUnsupportedPlatformUpdateError(latestStatus?.updateStatus?.error);
 
     if (unsupportedPlatformUpdate) {
-      setStatus('warning', 'Manual host update required', 'Opening install instructions');
+      setStatus(
+        'warning',
+        'Manual host update required',
+        'Opening install instructions',
+      );
       void chrome.tabs.create({ url: windowsSetupUrl() });
       return;
     }
 
-    const res = await chrome.runtime.sendMessage({ type: 'RUN_HOST_UPDATE' }) as
+    const res = (await chrome.runtime.sendMessage({
+      type: 'RUN_HOST_UPDATE',
+    })) as
       | { ok: true }
       | { ok: false; manualInstall?: boolean; error?: string };
 
     if (res && !res.ok && res.manualInstall) {
       if (isWindowsPlatform) {
-        setStatus('warning', 'Manual host update required', 'Opening install instructions');
+        setStatus(
+          'warning',
+          'Manual host update required',
+          'Opening install instructions',
+        );
         void chrome.tabs.create({ url: windowsSetupUrl() });
       } else {
-        setStatus('warning', 'Manual host update required', 'Open install guide to run one-time bootstrap');
+        setStatus(
+          'warning',
+          'Manual host update required',
+          'Open install guide to run one-time bootstrap',
+        );
         const installGuideUrl = githubRepoUrl('installation');
         void chrome.tabs.create({ url: installGuideUrl });
       }
@@ -277,7 +358,11 @@ btnUpdate?.addEventListener('click', () => {
     }
 
     if (res && !res.ok) {
-      setStatus('error', 'Host update failed to start', res.error ?? 'Failed to send update command');
+      setStatus(
+        'error',
+        'Host update failed to start',
+        res.error ?? 'Failed to send update command',
+      );
     }
   })();
 });
@@ -320,7 +405,14 @@ type Status = {
   latestVersion?: string | null;
   updateAvailable?: boolean;
   updateStatus?: {
-    status: 'requested' | 'checking' | 'downloading' | 'reconnecting' | 'up_to_date' | 'success' | 'failed';
+    status:
+      | 'requested'
+      | 'checking'
+      | 'downloading'
+      | 'reconnecting'
+      | 'up_to_date'
+      | 'success'
+      | 'failed';
     version?: string;
     error?: string;
   } | null;
@@ -332,17 +424,26 @@ function urlLike(value?: string): boolean {
 
 function isUpdateInProgress(updateStatus?: Status['updateStatus']): boolean {
   if (!updateStatus) return false;
-  return updateStatus.status === 'requested'
-    || updateStatus.status === 'checking'
-    || updateStatus.status === 'downloading'
-    || updateStatus.status === 'reconnecting';
+  return (
+    updateStatus.status === 'requested' ||
+    updateStatus.status === 'checking' ||
+    updateStatus.status === 'downloading' ||
+    updateStatus.status === 'reconnecting'
+  );
 }
 
-function clearTimer(timer: ReturnType<typeof setInterval> | null, clearFn: (handle: ReturnType<typeof setInterval>) => void): void {
+function clearTimer(
+  timer: ReturnType<typeof setInterval> | null,
+  clearFn: (handle: ReturnType<typeof setInterval>) => void,
+): void {
   if (timer) clearFn(timer);
 }
 
-function setStatus(kind: 'connecting' | 'warning' | 'error' | 'connected', title: string, message: string): void {
+function setStatus(
+  kind: 'connecting' | 'warning' | 'error' | 'connected',
+  title: string,
+  message: string,
+): void {
   dot.className = `dot ${kind}`;
   label.textContent = title;
   sub.textContent = message;
@@ -355,15 +456,19 @@ function artistFromActivity(act: NonNullable<Status['lastActivity']>): string {
   return '';
 }
 
-function fallbackLogoUrl(act: NonNullable<Status['lastActivity']>): string | null {
-  const service = `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();
+function fallbackLogoUrl(
+  act: NonNullable<Status['lastActivity']>,
+): string | null {
+  const service =
+    `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();
   if (service.includes('tidal')) {
     return chrome.runtime.getURL(PRESENCE_PREVIEW_ASSETS.tidalLogo);
   }
   if (service.includes('youtube music') || service.includes('yt music')) {
     return chrome.runtime.getURL(PRESENCE_PREVIEW_ASSETS.ytmusicLogo);
   }
-  if (service.includes('youtube')) return 'https://www.youtube.com/s/desktop/6cfcd65f/img/logos/favicon_32x32.png';
+  if (service.includes('youtube'))
+    return 'https://www.youtube.com/s/desktop/6cfcd65f/img/logos/favicon_32x32.png';
   return null;
 }
 
@@ -380,7 +485,8 @@ function render(status: Status | null): void {
     reconnectBtn.disabled = true;
   }
 
-  const reconnectGraceActive = reconnectGraceUntilMs != null && Date.now() < reconnectGraceUntilMs;
+  const reconnectGraceActive =
+    reconnectGraceUntilMs != null && Date.now() < reconnectGraceUntilMs;
 
   if (!status) {
     if (reconnectGraceActive) {
@@ -427,7 +533,9 @@ function render(status: Status | null): void {
 
   // Host version
   if (hostVersionEl) {
-    hostVersionEl.textContent = status.hostVersion ? `host v${status.hostVersion}` : '';
+    hostVersionEl.textContent = status.hostVersion
+      ? `host v${status.hostVersion}`
+      : '';
   }
 
   // Inline host update control
@@ -436,26 +544,36 @@ function render(status: Status | null): void {
 
     if (status.updateStatus) {
       const s = status.updateStatus.status;
-      const inProgress = s === 'requested' || s === 'checking' || s === 'downloading' || s === 'reconnecting';
+      const inProgress =
+        s === 'requested' ||
+        s === 'checking' ||
+        s === 'downloading' ||
+        s === 'reconnecting';
 
       if (inProgress) {
         btnUpdate.classList.add('visible', 'spinning');
         btnUpdate.disabled = true;
         btnUpdate.textContent = s === 'reconnecting' ? 'Applying' : 'Updating';
-        btnUpdate.title = s === 'downloading'
-          ? 'Downloading host update...'
-          : s === 'reconnecting'
-            ? 'Restarting host with updated binary...'
-            : 'Checking for updates...';
+        btnUpdate.title =
+          s === 'downloading'
+            ? 'Downloading host update...'
+            : s === 'reconnecting'
+              ? 'Restarting host with updated binary...'
+              : 'Checking for updates...';
       } else if (s === 'failed') {
         btnUpdate.classList.add('visible');
         btnUpdate.disabled = false;
-        if (isWindowsPlatform && isUnsupportedPlatformUpdateError(status.updateStatus.error)) {
+        if (
+          isWindowsPlatform &&
+          isUnsupportedPlatformUpdateError(status.updateStatus.error)
+        ) {
           btnUpdate.textContent = 'Install Guide';
           btnUpdate.title = 'Open install instructions';
         } else {
           btnUpdate.textContent = 'Retry';
-          btnUpdate.title = status.updateStatus.error ? `Update failed: ${status.updateStatus.error}` : 'Update failed. Try again.';
+          btnUpdate.title = status.updateStatus.error
+            ? `Update failed: ${status.updateStatus.error}`
+            : 'Update failed. Try again.';
         }
       } else {
         // up_to_date / success: hide the control until a new update is available.
@@ -466,11 +584,14 @@ function render(status: Status | null): void {
       btnUpdate.disabled = false;
       if (status.hostSelfUpdateSupported === false) {
         btnUpdate.textContent = 'Install Guide';
-        btnUpdate.title = 'Open install instructions for one-time host bootstrap';
+        btnUpdate.title =
+          'Open install instructions for one-time host bootstrap';
       } else {
-        const availableVersion = status.latestVersion && compareVersions(status.latestVersion, extensionVersion) > 0
-          ? status.latestVersion
-          : extensionVersion;
+        const availableVersion =
+          status.latestVersion &&
+          compareVersions(status.latestVersion, extensionVersion) > 0
+            ? status.latestVersion
+            : extensionVersion;
         btnUpdate.textContent = 'Update';
         btnUpdate.title = `Update host to v${availableVersion}`;
       }
@@ -482,15 +603,18 @@ function render(status: Status | null): void {
   // Pause toggle — toggle is ON when Rich Presence is active (not paused)
   setToggle(btnPause, !paused);
   if (pauseSub) pauseSub.textContent = paused ? 'Paused' : 'Active';
-  if (pauseRow) pauseRow.dataset['paused'] = String(paused);
+  if (pauseRow) pauseRow.dataset.paused = String(paused);
 
   // Site toggles
-  setToggle(toggleYT,  status.enabledSites?.['youtube']      ?? true);
-  setToggle(toggleYTM, status.enabledSites?.['youtubemusic'] ?? true);
-  setToggle(toggleTidal, status.enabledSites?.['tidal'] ?? true);
+  setToggle(toggleYT, status.enabledSites?.youtube ?? true);
+  setToggle(toggleYTM, status.enabledSites?.youtubemusic ?? true);
+  setToggle(toggleTidal, status.enabledSites?.tidal ?? true);
 
   if (!status.hostConnected) {
-    if (discordCheckTimer) { clearTimeout(discordCheckTimer); discordCheckTimer = null; }
+    if (discordCheckTimer) {
+      clearTimeout(discordCheckTimer);
+      discordCheckTimer = null;
+    }
     discordCheckShown = false;
 
     const updateInProgress = isUpdateInProgress(status.updateStatus);
@@ -500,7 +624,9 @@ function render(status: Status | null): void {
       setStatus(
         'connecting',
         isReconnecting ? 'Applying update…' : 'Updating host…',
-        isReconnecting ? 'Restarting native host with updated binary' : 'Waiting for native host update process'
+        isReconnecting
+          ? 'Restarting native host with updated binary'
+          : 'Waiting for native host update process',
       );
       stopUptimeTick();
       stopTimelineTick();
@@ -529,28 +655,47 @@ function render(status: Status | null): void {
     if (activityPanel) activityPanel.hidden = true;
     // Show "checking" for DISCORD_CHECK_DELAY_MS before revealing help panel
     if (!discordCheckShown) {
-      setStatus('connecting', 'Checking for Discord…', 'Looking for the Discord desktop app');
+      setStatus(
+        'connecting',
+        'Checking for Discord…',
+        'Looking for the Discord desktop app',
+      );
       if (!discordCheckTimer) {
         discordCheckTimer = setTimeout(() => {
           discordCheckShown = true;
           discordCheckTimer = null;
-          setStatus('warning', 'Waiting for Discord', status.error ?? 'Open the Discord desktop app');
+          setStatus(
+            'warning',
+            'Waiting for Discord',
+            status.error ?? 'Open the Discord desktop app',
+          );
           helpDiscord.classList.remove('hidden');
         }, DISCORD_CHECK_DELAY_MS);
       }
     } else {
-      setStatus('warning', 'Waiting for Discord', status.error ?? 'Open the Discord desktop app');
+      setStatus(
+        'warning',
+        'Waiting for Discord',
+        status.error ?? 'Open the Discord desktop app',
+      );
       helpDiscord.classList.remove('hidden');
     }
     return;
   }
 
   // Discord is connected — clear the check state for next disconnection
-  if (discordCheckTimer) { clearTimeout(discordCheckTimer); discordCheckTimer = null; }
+  if (discordCheckTimer) {
+    clearTimeout(discordCheckTimer);
+    discordCheckTimer = null;
+  }
   discordCheckShown = false;
 
   if (paused) {
-    setStatus('warning', 'Rich Presence paused', 'Toggle to resume sending to Discord');
+    setStatus(
+      'warning',
+      'Rich Presence paused',
+      'Toggle to resume sending to Discord',
+    );
     stopUptimeTick();
     stopTimelineTick();
     if (activityPanel) activityPanel.hidden = true;
@@ -563,7 +708,10 @@ function render(status: Status | null): void {
   if (act) {
     if (activityTitle) activityTitle.textContent = act.title;
     if (activitySub) {
-      const album = act.largeImageText && act.largeImageText !== act.title ? act.largeImageText : '';
+      const album =
+        act.largeImageText && act.largeImageText !== act.title
+          ? act.largeImageText
+          : '';
       activitySub.textContent = album;
     }
     if (activityMetaText) {
@@ -586,7 +734,9 @@ function render(status: Status | null): void {
     }
 
     if (activityLogo) {
-      const logoUrl = urlLike(act.smallImageKey) ? act.smallImageKey : fallbackLogoUrl(act);
+      const logoUrl = urlLike(act.smallImageKey)
+        ? act.smallImageKey
+        : fallbackLogoUrl(act);
       if (logoUrl) {
         activityLogo.src = logoUrl;
         activityLogo.hidden = false;
@@ -637,11 +787,16 @@ chrome.runtime.onMessage.addListener((msg: unknown) => {
 
 async function fetchStatus(retriesLeft = 4, intervalMs = 700): Promise<void> {
   try {
-    const status = (await chrome.runtime.sendMessage({ type: 'GET_STATUS' })) as Status | undefined;
+    const status = (await chrome.runtime.sendMessage({ type: 'GET_STATUS' })) as
+      | Status
+      | undefined;
     render(status ?? null);
     // Retry only while host is connected but Discord handshake is pending.
     if (status?.hostConnected && !status.discordConnected && retriesLeft > 0) {
-      setTimeout(() => void fetchStatus(retriesLeft - 1, intervalMs), intervalMs);
+      setTimeout(
+        () => void fetchStatus(retriesLeft - 1, intervalMs),
+        intervalMs,
+      );
     }
   } catch {
     render(null);
@@ -651,10 +806,16 @@ async function fetchStatus(retriesLeft = 4, intervalMs = 700): Promise<void> {
 void (async () => {
   void fetchStatus();
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
     if (tab?.url) {
-      try { pageInfo.textContent = new URL(tab.url).hostname; }
-      catch { pageInfo.textContent = tab.url; }
+      try {
+        pageInfo.textContent = new URL(tab.url).hostname;
+      } catch {
+        pageInfo.textContent = tab.url;
+      }
     }
   } catch {
     pageInfo.textContent = '—';

@@ -14,7 +14,7 @@ export interface ActivityMeta {
   matches: string[];
 }
 
-export const ACTIVITY_REGISTRY: Record<string, ActivityMeta> = {
+export const ACTIVITY_REGISTRY = {
   youtube: {
     id: 'youtube',
     name: 'YouTube',
@@ -30,4 +30,4 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityMeta> = {
     name: 'TIDAL',
     matches: ['*://tidal.com/*', '*://listen.tidal.com/*'],
   },
-};
+} satisfies Record<string, ActivityMeta>;

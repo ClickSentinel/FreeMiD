@@ -106,7 +106,10 @@ describe('Presence', () => {
     mockChrome(sendMessage);
 
     const callback = vi.fn();
-    const presence = new Presence({ clientId: 'client-123', updateInterval: 1 });
+    const presence = new Presence({
+      clientId: 'client-123',
+      updateInterval: 1,
+    });
 
     presence.on('UpdateData', callback);
     expect(callback).toHaveBeenCalledTimes(1);
@@ -115,6 +118,8 @@ describe('Presence', () => {
     vi.advanceTimersByTime(1000);
 
     expect(callback).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenLastCalledWith({ type: 'FREEMID_CLEAR_ACTIVITY' });
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      type: 'FREEMID_CLEAR_ACTIVITY',
+    });
   });
 });

@@ -12,22 +12,29 @@ export function urlMatchesPattern(url: string, pattern: string): boolean {
     const patternScheme = pattern.slice(0, schemeEnd);
     const afterScheme = pattern.slice(schemeEnd + 3);
     const slashIdx = afterScheme.indexOf('/');
-    const patternHost = slashIdx === -1 ? afterScheme : afterScheme.slice(0, slashIdx);
+    const patternHost =
+      slashIdx === -1 ? afterScheme : afterScheme.slice(0, slashIdx);
     const patternPath = slashIdx === -1 ? '' : afterScheme.slice(slashIdx);
 
-    if (patternScheme !== '*' && patternScheme !== parsed.protocol.slice(0, -1)) {
+    if (
+      patternScheme !== '*' &&
+      patternScheme !== parsed.protocol.slice(0, -1)
+    ) {
       return false;
     }
 
     const hostRe = new RegExp(
-      '^' + patternHost.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$',
+      '^' +
+        patternHost.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') +
+        '$',
       'i',
     );
     if (!hostRe.test(parsed.hostname)) return false;
 
     if (!patternPath || patternPath === '/*') return true;
     const pathRe = new RegExp(
-      '^' + patternPath.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*'),
+      '^' +
+        patternPath.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*'),
       'i',
     );
     return pathRe.test(parsed.pathname + parsed.search);
@@ -55,12 +62,18 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-export function isUpdateAvailable(hostVersion: string | null, latestVersion: string | null): boolean {
+export function isUpdateAvailable(
+  hostVersion: string | null,
+  latestVersion: string | null,
+): boolean {
   if (!hostVersion || !latestVersion) return false;
   return compareVersions(latestVersion, hostVersion) > 0;
 }
 
-export function preferredUpdateVersion(latestVersion: string | null, extensionVersion: string): string {
+export function preferredUpdateVersion(
+  latestVersion: string | null,
+  extensionVersion: string,
+): string {
   if (latestVersion && compareVersions(latestVersion, extensionVersion) > 0) {
     return latestVersion;
   }
@@ -73,7 +86,10 @@ export function isUpdateAvailableForHost(
   extensionVersion: string,
 ): boolean {
   if (!hostVersion) return false;
-  const baselineVersion = preferredUpdateVersion(latestVersion, extensionVersion);
+  const baselineVersion = preferredUpdateVersion(
+    latestVersion,
+    extensionVersion,
+  );
   return compareVersions(baselineVersion, hostVersion) > 0;
 }
 
@@ -84,8 +100,11 @@ export function isHostSelfUpdateSupported(
   minWindowsVersion = MIN_WINDOWS_SELF_UPDATE_HOST_VERSION,
 ): boolean {
   if (!hostVersion) return false;
-  const effectiveMinVersion = platform === 'windows'
-    ? (compareVersions(minWindowsVersion, minVersion) > 0 ? minWindowsVersion : minVersion)
-    : minVersion;
+  const effectiveMinVersion =
+    platform === 'windows'
+      ? compareVersions(minWindowsVersion, minVersion) > 0
+        ? minWindowsVersion
+        : minVersion
+      : minVersion;
   return compareVersions(hostVersion, effectiveMinVersion) >= 0;
 }

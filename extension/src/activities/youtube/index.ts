@@ -1,21 +1,29 @@
-import { Presence } from '../../presence/Presence';
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
+import { Presence } from '../../presence/Presence';
 
 // Replace with your own Discord Application ID if you want custom artwork.
 // Create a free app at https://discord.com/developers/applications
-const presence = new Presence({ clientId: import.meta.env.VITE_DISCORD_CLIENT_ID, updateInterval: 5 });
+const presence = new Presence({
+  clientId: import.meta.env.VITE_DISCORD_CLIENT_ID,
+  updateInterval: 5,
+});
 
 function isWatchPage(): boolean {
   const path = window.location.pathname;
-  return path === '/watch' || path.startsWith('/shorts/') || path.startsWith('/live/');
+  return (
+    path === '/watch' ||
+    path.startsWith('/shorts/') ||
+    path.startsWith('/live/')
+  );
 }
 
 function getTitle(): string {
   return (
-    document.querySelector<HTMLElement>(
-      'h1.ytd-video-primary-info-renderer yt-formatted-string, h1.style-scope.ytd-video-primary-info-renderer'
-    )?.textContent?.trim() ||
-    document.title.replace(' - YouTube', '').trim()
+    document
+      .querySelector<HTMLElement>(
+        'h1.ytd-video-primary-info-renderer yt-formatted-string, h1.style-scope.ytd-video-primary-info-renderer',
+      )
+      ?.textContent?.trim() || document.title.replace(' - YouTube', '').trim()
   );
 }
 
@@ -44,7 +52,9 @@ function getChannel(): string {
 }
 
 function getVideoEl(): HTMLVideoElement | null {
-  return document.querySelector<HTMLVideoElement>('video.html5-main-video, video');
+  return document.querySelector<HTMLVideoElement>(
+    'video.html5-main-video, video',
+  );
 }
 
 function isVideoPlaying(video: HTMLVideoElement | null): boolean {
@@ -63,8 +73,13 @@ function isVideoPlaying(video: HTMLVideoElement | null): boolean {
 
   // On YouTube, the control text reflects the opposite action:
   // "Pause" means the video is currently playing, "Play" means paused.
-  const playButton = document.querySelector<HTMLButtonElement>('.ytp-play-button');
-  const label = (playButton?.getAttribute('aria-label') || playButton?.getAttribute('title') || '').toLowerCase();
+  const playButton =
+    document.querySelector<HTMLButtonElement>('.ytp-play-button');
+  const label = (
+    playButton?.getAttribute('aria-label') ||
+    playButton?.getAttribute('title') ||
+    ''
+  ).toLowerCase();
   if (label.includes('pause')) return true;
   if (label.includes('play')) return false;
 
@@ -75,7 +90,9 @@ function getVideoId(): string | null {
   const id = new URLSearchParams(window.location.search).get('v');
   if (id) return id;
 
-  const pathMatch = window.location.pathname.match(/^\/(?:shorts|live)\/([a-zA-Z0-9_-]{6,})/);
+  const pathMatch = window.location.pathname.match(
+    /^\/(?:shorts|live)\/([a-zA-Z0-9_-]{6,})/,
+  );
   if (pathMatch?.[1]) return pathMatch[1];
 
   const match = window.location.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
@@ -129,7 +146,9 @@ function getChannelIconUrl(): string | undefined {
       const candidates = srcSet
         .split(',')
         .map((entry) => entry.trim().split(/\s+/)[0])
-        .filter((entry): entry is string => !!entry && /^https?:\/\//i.test(entry));
+        .filter(
+          (entry): entry is string => !!entry && /^https?:\/\//i.test(entry),
+        );
 
       // srcset is ordered low to high resolution; use the highest candidate.
       const best = candidates[candidates.length - 1];
@@ -150,8 +169,7 @@ function getChannelIconUrl(): string | undefined {
 function getVideoThumbnailUrl(): string | undefined {
   const ogImage = document
     .querySelector<HTMLMetaElement>('meta[property="og:image"]')
-    ?.content
-    ?.trim();
+    ?.content?.trim();
   if (ogImage && /^https?:\/\//i.test(ogImage)) {
     return ogImage;
   }
@@ -170,16 +188,17 @@ presence.on('UpdateData', () => {
     return;
   }
 
-  const title   = getTitle();
+  const title = getTitle();
   const channel = getChannel();
-  const video   = getVideoEl();
+  const video = getVideoEl();
   const playing = isVideoPlaying(video);
   const duration = video?.duration ?? 0;
-  const elapsed  = video?.currentTime ?? 0;
-  const nowSec   = Math.floor(Date.now() / 1000);
+  const elapsed = video?.currentTime ?? 0;
+  const nowSec = Math.floor(Date.now() / 1000);
   const channelIcon = getChannelIconUrl();
   const videoThumbnail = getVideoThumbnailUrl();
-  const largeImage = channelIcon ?? videoThumbnail ?? PRESENCE_ASSET_KEYS.youtubeLogo;
+  const largeImage =
+    channelIcon ?? videoThumbnail ?? PRESENCE_ASSET_KEYS.youtubeLogo;
   const videoUrl = getVideoUrl();
 
   if (!title || !playing) {
@@ -190,9 +209,10 @@ presence.on('UpdateData', () => {
 
   const hasProgress = playing && duration > 0;
   const startTimestamp = hasProgress ? nowSec - Math.floor(elapsed) : undefined;
-  const endTimestamp = hasProgress && startTimestamp != null
-    ? startTimestamp + Math.floor(duration)
-    : undefined;
+  const endTimestamp =
+    hasProgress && startTimestamp != null
+      ? startTimestamp + Math.floor(duration)
+      : undefined;
 
   presence.setActivity({
     name: 'YouTube',

@@ -12,16 +12,34 @@ import {
 
 describe('background helpers', () => {
   it('matches Chrome-style host patterns against URLs', () => {
-    expect(urlMatchesPattern('https://www.youtube.com/watch?v=abc', '*://www.youtube.com/*')).toBe(true);
-    expect(urlMatchesPattern('https://music.youtube.com/watch?v=abc', '*://music.youtube.com/*')).toBe(true);
-    expect(urlMatchesPattern('https://example.com/', '*://www.youtube.com/*')).toBe(false);
+    expect(
+      urlMatchesPattern(
+        'https://www.youtube.com/watch?v=abc',
+        '*://www.youtube.com/*',
+      ),
+    ).toBe(true);
+    expect(
+      urlMatchesPattern(
+        'https://music.youtube.com/watch?v=abc',
+        '*://music.youtube.com/*',
+      ),
+    ).toBe(true);
+    expect(
+      urlMatchesPattern('https://example.com/', '*://www.youtube.com/*'),
+    ).toBe(false);
     expect(urlMatchesPattern('notaurl', '*://www.youtube.com/*')).toBe(false);
   });
 
   it('maps known URLs to activity metadata', () => {
-    expect(matchActivity('https://www.youtube.com/watch?v=abc')?.id).toBe('youtube');
-    expect(matchActivity('https://music.youtube.com/watch?v=abc')?.id).toBe('youtubemusic');
-    expect(matchActivity('https://listen.tidal.com/album/123')?.id).toBe('tidal');
+    expect(matchActivity('https://www.youtube.com/watch?v=abc')?.id).toBe(
+      'youtube',
+    );
+    expect(matchActivity('https://music.youtube.com/watch?v=abc')?.id).toBe(
+      'youtubemusic',
+    );
+    expect(matchActivity('https://listen.tidal.com/album/123')?.id).toBe(
+      'tidal',
+    );
     expect(matchActivity('https://example.com')).toBeNull();
   });
 

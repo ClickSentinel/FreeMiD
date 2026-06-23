@@ -1,8 +1,11 @@
-import { Presence } from '../../presence/Presence';
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
+import { Presence } from '../../presence/Presence';
 import { parseClock } from '../../utils/parseClock';
 
-const presence = new Presence({ clientId: import.meta.env.VITE_DISCORD_CLIENT_ID, updateInterval: 5 });
+const presence = new Presence({
+  clientId: import.meta.env.VITE_DISCORD_CLIENT_ID,
+  updateInterval: 5,
+});
 
 let activeTrackUrl: string | undefined;
 let playbackAnchorStart: number | undefined;
@@ -47,10 +50,18 @@ function isPlaying(): boolean {
   if (media) return !media.paused && !media.ended;
 
   // Fallback to control semantics if media state is unavailable.
-  if (document.querySelector('[aria-label*="Pause" i], [title*="Pause" i], [data-test*="pause" i]')) {
+  if (
+    document.querySelector(
+      '[aria-label*="Pause" i], [title*="Pause" i], [data-test*="pause" i]',
+    )
+  ) {
     return true;
   }
-  if (document.querySelector('[aria-label*="Play" i], [title*="Play" i], [data-test*="play" i]')) {
+  if (
+    document.querySelector(
+      '[aria-label*="Play" i], [title*="Play" i], [data-test*="play" i]',
+    )
+  ) {
     return false;
   }
 
@@ -59,17 +70,26 @@ function isPlaying(): boolean {
 }
 
 presence.on('UpdateData', () => {
-  const title = text('[data-test="footer-track-title"] a, [data-test="footer-track-title"]');
+  const title = text(
+    '[data-test="footer-track-title"] a, [data-test="footer-track-title"]',
+  );
   const artist = text('[data-test="footer-player"] a[href*="/artist/"]');
-  const collection = text('[data-test="footer-player"] a[href*="/playlist/"], [data-test="footer-player"] a[href*="/album/"]');
+  const collection = text(
+    '[data-test="footer-player"] a[href*="/playlist/"], [data-test="footer-player"] a[href*="/album/"]',
+  );
 
   if (!title) {
     presence.clearPresenceData();
     return;
   }
 
-  const current = parseClock(text('[data-test="current-time"] time, [data-test="current-time"]')) ?? 0;
-  const duration = parseClock(text('[data-test="duration"] time, [data-test="duration"]')) ?? 0;
+  const current =
+    parseClock(
+      text('[data-test="current-time"] time, [data-test="current-time"]'),
+    ) ?? 0;
+  const duration =
+    parseClock(text('[data-test="duration"] time, [data-test="duration"]')) ??
+    0;
   const trackUrl = currentTrackUrl();
   const artUrl = currentArtworkUrl();
 
@@ -77,7 +97,8 @@ presence.on('UpdateData', () => {
   const paused = !isPlaying();
   pausedConfirmTicks = paused ? pausedConfirmTicks + 1 : 0;
 
-  const trackChanged = trackUrl !== activeTrackUrl || playbackAnchorStart === undefined;
+  const trackChanged =
+    trackUrl !== activeTrackUrl || playbackAnchorStart === undefined;
   if (trackChanged) {
     activeTrackUrl = trackUrl;
     playbackAnchorStart = now - current;
@@ -129,6 +150,8 @@ presence.on('UpdateData', () => {
     largeImageUrl: trackUrl,
     smallImageKey: PRESENCE_ASSET_KEYS.tidalLogo,
     smallImageText: 'TIDAL',
-    buttons: trackUrl ? [{ label: 'Listen on TIDAL', url: trackUrl }] : undefined,
+    buttons: trackUrl
+      ? [{ label: 'Listen on TIDAL', url: trackUrl }]
+      : undefined,
   });
 });

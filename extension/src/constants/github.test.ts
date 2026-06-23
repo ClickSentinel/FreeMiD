@@ -15,6 +15,8 @@ describe('github constants', () => {
 
   it('builds repo URLs with and without fragments', () => {
     expect(githubRepoUrl()).toBe('https://github.com/ClickSentinel/FreeMiD');
-    expect(githubRepoUrl('installation')).toBe('https://github.com/ClickSentinel/FreeMiD#installation');
+    expect(githubRepoUrl('installation')).toBe(
+      'https://github.com/ClickSentinel/FreeMiD#installation',
+    );
   });
 });

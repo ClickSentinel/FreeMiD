@@ -18,9 +18,11 @@ export function artistFromActivity(act: ActivityPreview): string {
 }
 
 export function fallbackLogoPath(act: ActivityPreview): string | null {
-  const service = `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();
+  const service =
+    `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();
   if (service.includes('tidal')) return PRESENCE_PREVIEW_ASSETS.tidalLogo;
-  if (service.includes('youtube music') || service.includes('yt music')) return PRESENCE_PREVIEW_ASSETS.ytmusicLogo;
+  if (service.includes('youtube music') || service.includes('yt music'))
+    return PRESENCE_PREVIEW_ASSETS.ytmusicLogo;
   if (service.includes('youtube')) return PRESENCE_PREVIEW_ASSETS.youtubeLogo;
   return null;
 }

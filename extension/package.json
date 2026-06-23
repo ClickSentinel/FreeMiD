@@ -8,9 +8,12 @@
     "build": "vite build && node scripts/build-activities.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.1",
     "@types/chrome": "^0.1.43",
     "@types/node": "^25.9.4",
     "jsdom": "^29.1.1",
