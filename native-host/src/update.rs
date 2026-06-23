@@ -13,8 +13,6 @@
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
-#[cfg(windows)]
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(windows)]
@@ -552,7 +550,9 @@ fn apply_update_windows(data: &[u8]) -> Result<(), UpdateError> {
 
 #[cfg(windows)]
 fn escape_cmd_set_value(path: &std::path::Path) -> String {
-    path.to_string_lossy().replace('"', "\"\"")
+    path.to_string_lossy()
+        .replace('"', "\"\"")
+        .replace('%', "%%")
 }
 
 #[cfg(windows)]
@@ -642,6 +642,64 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Upda
             last_err.unwrap_or_else(|| "unknown error".to_string())
         )))
     }
+}
+
+/// Remove any `<exe>.staged-<pid>.exe` files whose originating process is no longer alive.
+/// Called on startup to clean up files orphaned by a host crash mid-update.
+#[cfg(windows)]
+pub(crate) fn cleanup_staged_files() {
+    let Ok(current_exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(dir) = current_exe.parent() else {
+        return;
+    };
+    let exe_name = current_exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("freemid.exe");
+    let prefix = format!("{}.staged-", exe_name);
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if !name_str.starts_with(&prefix) || !name_str.ends_with(".exe") {
+            continue;
+        }
+        // Strip prefix and trailing ".exe" to isolate the PID digits.
+        let inner = &name_str[prefix.len()..name_str.len() - 4];
+        let Ok(pid) = inner.parse::<u32>() else {
+            continue;
+        };
+        if !is_pid_alive(pid) {
+            let path = entry.path();
+            match std::fs::remove_file(&path) {
+                Ok(()) => eprintln!("[FreeMiD] removed orphaned staged file: {:?}", path),
+                Err(e) => eprintln!(
+                    "[FreeMiD] failed to remove orphaned staged file {:?}: {e}",
+                    path
+                ),
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn is_pid_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    // SAFETY: OpenProcess is a straightforward Win32 query — no memory aliasing.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return false;
+    }
+    unsafe { CloseHandle(handle) };
+    true
 }
 
 #[cfg(test)]
