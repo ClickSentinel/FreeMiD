@@ -11,7 +11,7 @@
  */
 
 import { GITHUB_REPO } from '../constants/github';
-import { STORAGE_KEYS } from '../constants/storageKeys';
+import { SESSION_KEYS, STORAGE_KEYS } from '../constants/storageKeys';
 import {
   compareVersions,
   isHostSelfUpdateSupported,
@@ -158,6 +158,7 @@ function maybeFinalizeAppliedVersion(): boolean {
   if (!applyVerifyTargetVersion || !hostVersion) return false;
   if (compareVersions(hostVersion, applyVerifyTargetVersion) >= 0) {
     clearApplyVerification();
+    clearPendingReconnectSession();
     updateStatus = null;
     broadcastStatus();
     return true;
@@ -165,10 +166,17 @@ function maybeFinalizeAppliedVersion(): boolean {
   return false;
 }
 
-function startApplyVerification(targetVersion: string): void {
+function clearPendingReconnectSession(): void {
+  void chrome.storage.session.remove(SESSION_KEYS.pendingReconnect);
+}
+
+function startApplyVerification(
+  targetVersion: string,
+  deadlineMs = Date.now() + APPLY_VERIFY_TIMEOUT_MS,
+): void {
   clearApplyVerification();
   applyVerifyTargetVersion = targetVersion;
-  applyVerifyDeadlineMs = Date.now() + APPLY_VERIFY_TIMEOUT_MS;
+  applyVerifyDeadlineMs = deadlineMs;
 
   const tick = (): void => {
     if (updateStatus?.status !== 'reconnecting') {
@@ -185,6 +193,7 @@ function startApplyVerification(targetVersion: string): void {
         error: `Host version is still ${current} after update`,
       };
       clearApplyVerification();
+      clearPendingReconnectSession();
       broadcastStatus();
       return;
     }
@@ -449,7 +458,16 @@ function connectNativeHost(): void {
             status: 'reconnecting',
             version: targetVersion,
           };
-          startApplyVerification(targetVersion);
+          const reconnectDeadline = Date.now() + APPLY_VERIFY_TIMEOUT_MS;
+          startApplyVerification(targetVersion, reconnectDeadline);
+          // Persist across SW restarts so the reconnect can be completed even
+          // if the worker is suspended before the timer below fires.
+          void chrome.storage.session.set({
+            [SESSION_KEYS.pendingReconnect]: {
+              version: targetVersion,
+              deadline: reconnectDeadline,
+            },
+          });
           autoReconnectScheduled = true;
           // Reconnect shortly after success so Chrome relaunches the host and
           // picks up the newly replaced binary on disk.
@@ -775,6 +793,7 @@ chrome.runtime.onMessage.addListener(
       // the popup stuck in a spinning "requested" state.
       if (hostSelfUpdateSupported !== true) {
         clearApplyVerification();
+        clearPendingReconnectSession();
         clearUpdateRequestTimeout();
         updateStatus = {
           status: 'failed',
@@ -798,6 +817,7 @@ chrome.runtime.onMessage.addListener(
         )
       ) {
         clearApplyVerification();
+        clearPendingReconnectSession();
         clearUpdateRequestTimeout();
         updateStatus = {
           status: 'failed',
@@ -813,6 +833,7 @@ chrome.runtime.onMessage.addListener(
       }
 
       clearApplyVerification();
+      clearPendingReconnectSession();
       updateStatus = { status: 'requested' };
       broadcastStatus();
 
@@ -965,58 +986,76 @@ async function checkForUpdates(): Promise<void> {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
-// Load persisted state (pause flag, site toggles) before connecting.
-void chrome.storage.local
-  .get([
+// Load persisted state (pause flag, site toggles, pending reconnect) before connecting.
+void Promise.all([
+  chrome.storage.local.get([
     STORAGE_KEYS.paused,
     STORAGE_KEYS.enabledSites,
     STORAGE_KEYS.latestVersion,
-  ])
-  .then((stored) => {
-    if (typeof stored[STORAGE_KEYS.paused] === 'boolean')
-      paused = stored[STORAGE_KEYS.paused] as boolean;
-    if (
-      stored[STORAGE_KEYS.enabledSites] &&
-      typeof stored[STORAGE_KEYS.enabledSites] === 'object'
-    ) {
-      enabledSites = {
-        ...enabledSites,
-        ...(stored[STORAGE_KEYS.enabledSites] as Record<string, boolean>),
-      };
+  ]),
+  chrome.storage.session.get(SESSION_KEYS.pendingReconnect),
+]).then(([stored, session]) => {
+  if (typeof stored[STORAGE_KEYS.paused] === 'boolean')
+    paused = stored[STORAGE_KEYS.paused] as boolean;
+  if (
+    stored[STORAGE_KEYS.enabledSites] &&
+    typeof stored[STORAGE_KEYS.enabledSites] === 'object'
+  ) {
+    enabledSites = {
+      ...enabledSites,
+      ...(stored[STORAGE_KEYS.enabledSites] as Record<string, boolean>),
+    };
+  }
+  if (typeof stored[STORAGE_KEYS.latestVersion] === 'string')
+    latestVersion = stored[STORAGE_KEYS.latestVersion] as string;
+  connectNativeHost();
+  // Restore a pending post-update reconnect if the SW was suspended before
+  // the reconnect timer fired. startApplyVerification will send PINGs and
+  // finalize (or time out) once the new host replies with its version.
+  const pending = session[SESSION_KEYS.pendingReconnect] as
+    | { version: string; deadline: number }
+    | undefined;
+  if (
+    pending !== undefined &&
+    typeof pending.version === 'string' &&
+    typeof pending.deadline === 'number' &&
+    pending.deadline > Date.now()
+  ) {
+    updateStatus = { status: 'reconnecting', version: pending.version };
+    startApplyVerification(pending.version, pending.deadline);
+  } else if (pending !== undefined) {
+    clearPendingReconnectSession();
+  }
+  if (!latestVersion) {
+    void checkForUpdates();
+  }
+  // Schedule daily update check — only create if not already scheduled so a
+  // service-worker restart doesn't reset the 24 h timer.
+  chrome.alarms.get('freemid-update-check', (existing) => {
+    if (!existing) {
+      chrome.alarms.create('freemid-update-check', {
+        delayInMinutes: 2,
+        periodInMinutes: 1440,
+      });
     }
-    if (typeof stored[STORAGE_KEYS.latestVersion] === 'string')
-      latestVersion = stored[STORAGE_KEYS.latestVersion] as string;
-    connectNativeHost();
-    if (!latestVersion) {
-      void checkForUpdates();
-    }
-    // Schedule daily update check — only create if not already scheduled so a
-    // service-worker restart doesn't reset the 24 h timer.
-    chrome.alarms.get('freemid-update-check', (existing) => {
-      if (!existing) {
-        chrome.alarms.create('freemid-update-check', {
-          delayInMinutes: 2,
-          periodInMinutes: 1440,
-        });
-      }
-    });
-    // Periodically reconnect on non-Windows to pick up externally-installed host
-    // binaries (e.g. after the user runs install.sh to manually update).
-    chrome.alarms.get('freemid-host-version-check', (existing) => {
-      if (!existing) {
-        chrome.alarms.create('freemid-host-version-check', {
-          delayInMinutes: 30,
-          periodInMinutes: 30,
-        });
-      }
-    });
-    // Re-inject activity scripts into any tabs that are already open when the
-    // service worker starts (e.g. after the extension is reloaded). Without this,
-    // existing YouTube / YouTube Music tabs become orphaned and stop sending
-    // activity updates until the user manually refreshes the page.
-    chrome.tabs.query({}, (tabs) => {
-      for (const tab of tabs) {
-        if (tab.id && tab.url) void handleTabNavigation(tab.id, tab.url);
-      }
-    });
   });
+  // Periodically reconnect on non-Windows to pick up externally-installed host
+  // binaries (e.g. after the user runs install.sh to manually update).
+  chrome.alarms.get('freemid-host-version-check', (existing) => {
+    if (!existing) {
+      chrome.alarms.create('freemid-host-version-check', {
+        delayInMinutes: 30,
+        periodInMinutes: 30,
+      });
+    }
+  });
+  // Re-inject activity scripts into any tabs that are already open when the
+  // service worker starts (e.g. after the extension is reloaded). Without this,
+  // existing YouTube / YouTube Music tabs become orphaned and stop sending
+  // activity updates until the user manually refreshes the page.
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      if (tab.id && tab.url) void handleTabNavigation(tab.id, tab.url);
+    }
+  });
+});
