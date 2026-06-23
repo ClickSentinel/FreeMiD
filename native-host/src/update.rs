@@ -10,14 +10,13 @@
 //! Progress is reported back to the caller via a `send` closure that writes
 //! `UPDATE_STATUS` JSON messages to the extension.
 
-use hex;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(windows)]
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(windows)]
 use std::time::Duration;
 
@@ -28,14 +27,56 @@ static UPDATE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 const GITHUB_API_LATEST: &str =
     "https://api.github.com/repos/ClickSentinel/FreeMiD/releases/latest";
-const GITHUB_RELEASES_BASE: &str =
-    "https://github.com/ClickSentinel/FreeMiD/releases/download";
+const GITHUB_RELEASES_BASE: &str = "https://github.com/ClickSentinel/FreeMiD/releases/download";
 
 #[derive(Clone, Debug, Default)]
 pub struct UpdateSourceOverrides {
     pub latest_url: Option<String>,
     pub releases_base_url: Option<String>,
 }
+
+/// Typed error for the update flow.
+///
+/// Each variant maps to a distinct failure category so callers can distinguish
+/// a network failure from a checksum mismatch. `Display` preserves the original
+/// human-readable messages that the extension shows in the popup.
+#[derive(Debug)]
+pub(crate) enum UpdateError {
+    /// Self-update is not available on this platform.
+    UnsupportedPlatform(String),
+    /// An update source URL failed validation.
+    InvalidSource(String),
+    /// A network request failed or the response body could not be read.
+    Network(String),
+    /// A downloaded response body exceeded the configured size limit.
+    ResponseTooLarge(String),
+    /// A response body could not be parsed (JSON, UTF-8, or semver).
+    Parse(String),
+    /// The artifact name was not found in the checksums file.
+    ChecksumNotFound(String),
+    /// The downloaded binary's SHA-256 hash did not match the expected value.
+    ChecksumMismatch(String),
+    /// Failed to write, rename, or spawn the applied binary on disk.
+    Apply(String),
+}
+
+impl std::fmt::Display for UpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            Self::UnsupportedPlatform(s)
+            | Self::InvalidSource(s)
+            | Self::Network(s)
+            | Self::ResponseTooLarge(s)
+            | Self::Parse(s)
+            | Self::ChecksumNotFound(s)
+            | Self::ChecksumMismatch(s)
+            | Self::Apply(s) => s,
+        };
+        f.write_str(msg)
+    }
+}
+
+impl std::error::Error for UpdateError {}
 
 /// Platform-specific artifact filename, or `None` if self-update is unsupported.
 fn artifact_name() -> Option<&'static str> {
@@ -60,15 +101,23 @@ pub fn self_update_supported() -> bool {
     artifact_name().is_some()
 }
 
+/// Resets `UPDATE_IN_PROGRESS` to `false` on drop, including on thread panic.
+///
+/// In release builds `panic = "abort"` terminates the process before Drop runs;
+/// this guard primarily protects debug builds and tests from leaving the flag set.
+struct InProgressGuard;
+impl Drop for InProgressGuard {
+    fn drop(&mut self) {
+        UPDATE_IN_PROGRESS.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Spawn a background thread that checks for and applies a new release.
 ///
 /// `send` is called from the background thread to push `UPDATE_STATUS`
 /// messages back to the extension. `write_message` in `main.rs` is
 /// thread-safe (Rust's `io::stdout().lock()` is a process-wide mutex).
-pub fn run_update(
-    overrides: UpdateSourceOverrides,
-    send: impl Fn(Value) + Send + 'static,
-) {
+pub fn run_update(overrides: UpdateSourceOverrides, send: impl Fn(Value) + Send + 'static) {
     if UPDATE_IN_PROGRESS.swap(true, Ordering::SeqCst) {
         send(json!({
             "type": "UPDATE_STATUS",
@@ -79,28 +128,24 @@ pub fn run_update(
     }
 
     std::thread::spawn(move || {
-        let result = do_update(&overrides, &send);
-        UPDATE_IN_PROGRESS.store(false, Ordering::SeqCst);
-        if let Err(e) = result {
+        let _guard = InProgressGuard;
+        if let Err(e) = do_update(&overrides, &send) {
             send(json!({
                 "type": "UPDATE_STATUS",
                 "status": "failed",
-                "error": e
+                "error": e.to_string()
             }));
         }
     });
 }
 
-fn do_update(
-    overrides: &UpdateSourceOverrides,
-    send: &impl Fn(Value),
-) -> Result<(), String> {
+fn do_update(overrides: &UpdateSourceOverrides, send: &impl Fn(Value)) -> Result<(), UpdateError> {
     let artifact = artifact_name().ok_or_else(|| {
-        format!(
+        UpdateError::UnsupportedPlatform(format!(
             "Automatic updates are not supported on this platform (os={}, arch={}). Supported: linux/x86_64, macos/aarch64, macos/x86_64, windows/x86_64",
             std::env::consts::OS,
             std::env::consts::ARCH,
-        )
+        ))
     })?;
 
     let (latest_api_url, releases_base_url) = resolve_update_sources(overrides)?;
@@ -114,25 +159,25 @@ fn do_update(
         .set("Accept", "application/vnd.github+json")
         .set("X-GitHub-Api-Version", "2022-11-28")
         .call()
-        .map_err(|e| format!("GitHub API request failed: {e}"))?;
+        .map_err(|e| UpdateError::Network(format!("GitHub API request failed: {e}")))?;
 
     let body = response
         .into_string()
-        .map_err(|e| format!("Failed to read GitHub API response: {e}"))?;
+        .map_err(|e| UpdateError::Network(format!("Failed to read GitHub API response: {e}")))?;
 
     let data: Value = serde_json::from_str(&body)
-        .map_err(|e| format!("Failed to parse GitHub API response: {e}"))?;
+        .map_err(|e| UpdateError::Parse(format!("Failed to parse GitHub API response: {e}")))?;
 
     let tag = data["tag_name"]
         .as_str()
-        .ok_or_else(|| "GitHub API response missing tag_name".to_string())?;
+        .ok_or_else(|| UpdateError::Parse("GitHub API response missing tag_name".to_string()))?;
 
     // Strip leading 'v' and enforce strict MAJOR.MINOR.PATCH format.
     let latest_version = tag.trim_start_matches('v');
     if !is_strict_semver(latest_version) {
-        return Err(format!(
+        return Err(UpdateError::Parse(format!(
             "GitHub API tag_name is not strict semver (expected vMAJOR.MINOR.PATCH): {tag}"
-        ));
+        )));
     }
 
     if !is_newer(latest_version, env!("CARGO_PKG_VERSION")) {
@@ -156,20 +201,14 @@ fn do_update(
 
     // ── Download and verify the binary ──────────────────────────────────────
     let binary_bytes = download_bytes(&format!("{}/{}", base_url, artifact), &user_agent)?;
-    let checksums = download_string(
-        &format!("{}/checksums.sha256", base_url),
-        &user_agent,
-    )?;
+    let checksums = download_string(&format!("{}/checksums.sha256", base_url), &user_agent)?;
 
     verify_sha256(&binary_bytes, &checksums, artifact)?;
 
     // ── Atomically replace the running binary ────────────────────────────────
     apply_update(&binary_bytes)?;
 
-    eprintln!(
-        "[FreeMiD] Successfully updated to {}",
-        latest_version
-    );
+    eprintln!("[FreeMiD] Successfully updated to {}", latest_version);
 
     send(json!({
         "type": "UPDATE_STATUS",
@@ -189,10 +228,11 @@ fn do_update(
     {
         Ok(())
     }
-
 }
 
-fn resolve_update_sources(overrides: &UpdateSourceOverrides) -> Result<(String, String), String> {
+fn resolve_update_sources(
+    overrides: &UpdateSourceOverrides,
+) -> Result<(String, String), UpdateError> {
     let env_latest_url = std::env::var("FREEMID_UPDATE_LATEST_URL").ok();
     let env_releases_base = std::env::var("FREEMID_UPDATE_RELEASES_BASE").ok();
 
@@ -229,20 +269,20 @@ fn resolve_update_sources(overrides: &UpdateSourceOverrides) -> Result<(String, 
     Ok((latest_url, releases_base))
 }
 
-fn validate_update_source_url(url: &str, label: &str) -> Result<(), String> {
+fn validate_update_source_url(url: &str, label: &str) -> Result<(), UpdateError> {
     let lower = url.to_ascii_lowercase();
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
-        return Err(format!(
+        return Err(UpdateError::InvalidSource(format!(
             "{label} must use http:// or https://, got '{url}'"
-        ));
+        )));
     }
     if lower.starts_with("http://") {
         // Allow plaintext HTTP only for local/dev feeds.
         let local_hosts = ["http://127.0.0.1", "http://localhost", "http://0.0.0.0"];
         if !local_hosts.iter().any(|h| lower.starts_with(h)) {
-            return Err(format!(
+            return Err(UpdateError::InvalidSource(format!(
                 "{label} must use HTTPS for non-local hosts, got '{url}'"
-            ));
+            )));
         }
     }
     Ok(())
@@ -265,22 +305,22 @@ fn is_strict_semver(v: &str) -> bool {
     parts.len() == 3 && parts.iter().all(|p| p.parse::<u64>().is_ok())
 }
 
-fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, String> {
+fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, UpdateError> {
     const MAX_DOWNLOAD_BYTES: u64 = 100 * 1024 * 1024;
 
     let resp = ureq::get(url)
         .set("User-Agent", user_agent)
         .call()
-        .map_err(|e| format!("Download failed ({url}): {e}"))?;
+        .map_err(|e| UpdateError::Network(format!("Download failed ({url}): {e}")))?;
 
     if let Some(content_length) = resp
         .header("Content-Length")
         .and_then(|h| h.parse::<u64>().ok())
     {
         if content_length > MAX_DOWNLOAD_BYTES {
-            return Err(format!(
+            return Err(UpdateError::ResponseTooLarge(format!(
                 "Download too large ({content_length} bytes, max {MAX_DOWNLOAD_BYTES})"
-            ));
+            )));
         }
     }
 
@@ -288,28 +328,42 @@ fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, String> {
     resp.into_reader()
         .take(MAX_DOWNLOAD_BYTES + 1)
         .read_to_end(&mut buf)
-        .map_err(|e| format!("Failed to read download body: {e}"))?;
+        .map_err(|e| UpdateError::Network(format!("Failed to read download body: {e}")))?;
 
     if buf.len() as u64 > MAX_DOWNLOAD_BYTES {
-        return Err(format!(
+        return Err(UpdateError::ResponseTooLarge(format!(
             "Download exceeded max size of {MAX_DOWNLOAD_BYTES} bytes"
-        ));
+        )));
     }
 
     Ok(buf)
 }
 
-fn download_string(url: &str, user_agent: &str) -> Result<String, String> {
+fn download_string(url: &str, user_agent: &str) -> Result<String, UpdateError> {
+    const MAX_CHECKSUMS_BYTES: u64 = 1024 * 1024; // 1 MiB
+
     let resp = ureq::get(url)
         .set("User-Agent", user_agent)
         .call()
-        .map_err(|e| format!("Failed to fetch checksums ({url}): {e}"))?;
+        .map_err(|e| UpdateError::Network(format!("Failed to fetch checksums ({url}): {e}")))?;
 
-    resp.into_string()
-        .map_err(|e| format!("Failed to read checksums body: {e}"))
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .take(MAX_CHECKSUMS_BYTES + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| UpdateError::Network(format!("Failed to read checksums body: {e}")))?;
+
+    if buf.len() as u64 > MAX_CHECKSUMS_BYTES {
+        return Err(UpdateError::ResponseTooLarge(format!(
+            "Checksums file exceeded max size of {MAX_CHECKSUMS_BYTES} bytes"
+        )));
+    }
+
+    String::from_utf8(buf)
+        .map_err(|e| UpdateError::Parse(format!("Checksums file is not valid UTF-8: {e}")))
 }
 
-fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), String> {
+fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), UpdateError> {
     let expected = checksums
         .lines()
         .find_map(|line| {
@@ -324,23 +378,27 @@ fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), Str
                 None
             }
         })
-        .ok_or_else(|| format!("Checksum not found for '{artifact}' in checksums.sha256"))?;
+        .ok_or_else(|| {
+            UpdateError::ChecksumNotFound(format!(
+                "Checksum not found for '{artifact}' in checksums.sha256"
+            ))
+        })?;
 
     let mut hasher = Sha256::new();
     hasher.update(data);
     let actual = hex::encode(hasher.finalize());
 
     if actual != expected {
-        return Err(format!(
+        return Err(UpdateError::ChecksumMismatch(format!(
             "SHA-256 mismatch for '{artifact}'\n  expected: {expected}\n  actual:   {actual}"
-        ));
+        )));
     }
 
     eprintln!("[FreeMiD] Checksum verified ✓");
     Ok(())
 }
 
-fn apply_update(data: &[u8]) -> Result<(), String> {
+fn apply_update(data: &[u8]) -> Result<(), UpdateError> {
     #[cfg(windows)]
     {
         apply_update_windows(data)
@@ -348,8 +406,9 @@ fn apply_update(data: &[u8]) -> Result<(), String> {
 
     #[cfg(not(windows))]
     {
-        let current_exe = std::env::current_exe()
-            .map_err(|e| format!("Cannot determine current binary path: {e}"))?;
+        let current_exe = std::env::current_exe().map_err(|e| {
+            UpdateError::Apply(format!("Cannot determine current binary path: {e}"))
+        })?;
 
         // Write to a sibling temp file on the same filesystem to allow atomic rename.
         let tmp_path: PathBuf = {
@@ -365,12 +424,13 @@ fn apply_update(data: &[u8]) -> Result<(), String> {
 
         // Write binary data.
         {
-            let mut f = std::fs::File::create(&tmp_path)
-                .map_err(|e| format!("Cannot create temp file {:?}: {e}", tmp_path))?;
+            let mut f = std::fs::File::create(&tmp_path).map_err(|e| {
+                UpdateError::Apply(format!("Cannot create temp file {:?}: {e}", tmp_path))
+            })?;
             f.write_all(data)
-                .map_err(|e| format!("Failed to write temp file: {e}"))?;
+                .map_err(|e| UpdateError::Apply(format!("Failed to write temp file: {e}")))?;
             f.flush()
-                .map_err(|e| format!("Failed to flush temp file: {e}"))?;
+                .map_err(|e| UpdateError::Apply(format!("Failed to flush temp file: {e}")))?;
         }
 
         // Set executable bit on Unix.
@@ -378,14 +438,14 @@ fn apply_update(data: &[u8]) -> Result<(), String> {
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| format!("Failed to chmod temp file: {e}"))?;
+                .map_err(|e| UpdateError::Apply(format!("Failed to chmod temp file: {e}")))?;
         }
 
         // Atomic rename — on Linux/macOS this is safe even while the old binary
         // is mapped into memory; the running process keeps the old inode.
         std::fs::rename(&tmp_path, &current_exe).map_err(|e| {
             let _ = std::fs::remove_file(&tmp_path);
-            format!("Failed to replace binary {:?}: {e}", current_exe)
+            UpdateError::Apply(format!("Failed to replace binary {:?}: {e}", current_exe))
         })?;
 
         Ok(())
@@ -398,42 +458,14 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const STABLE_UPDATER_EXE_NAME: &str = "freemid-apply.exe";
 
 #[cfg(windows)]
-fn append_windows_updater_log(line: &str) {
-    let mut path = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let mut p = PathBuf::from(local_app_data);
-        p.push("FreeMiD");
-        let _ = std::fs::create_dir_all(&p);
-        p
-    } else {
-        PathBuf::from(".")
-    };
-    path.push("updater.log");
-
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = writeln!(f, "{}", line);
-    }
-}
+use crate::windows_apply::{append_updater_log, updater_log_path, validate_apply_paths};
 
 #[cfg(windows)]
-fn windows_updater_log_path() -> PathBuf {
-    let mut path = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let mut p = PathBuf::from(local_app_data);
-        p.push("FreeMiD");
-        let _ = std::fs::create_dir_all(&p);
-        p
-    } else {
-        PathBuf::from(".")
-    };
-    path.push("updater.log");
-    path
-}
-
-#[cfg(windows)]
-fn apply_update_windows(data: &[u8]) -> Result<(), String> {
-    append_windows_updater_log("apply_update_windows: begin");
+fn apply_update_windows(data: &[u8]) -> Result<(), UpdateError> {
+    append_updater_log("apply_update_windows: begin");
 
     let current_exe = std::env::current_exe()
-        .map_err(|e| format!("Cannot determine current binary path: {e}"))?;
+        .map_err(|e| UpdateError::Apply(format!("Cannot determine current binary path: {e}")))?;
 
     let staged_path: PathBuf = {
         let mut p = current_exe.clone();
@@ -447,15 +479,16 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
     };
 
     {
-        let mut f = std::fs::File::create(&staged_path)
-            .map_err(|e| format!("Cannot create staged file {:?}: {e}", staged_path))?;
+        let mut f = std::fs::File::create(&staged_path).map_err(|e| {
+            UpdateError::Apply(format!("Cannot create staged file {:?}: {e}", staged_path))
+        })?;
         f.write_all(data)
-            .map_err(|e| format!("Failed to write staged file: {e}"))?;
+            .map_err(|e| UpdateError::Apply(format!("Failed to write staged file: {e}")))?;
         f.flush()
-            .map_err(|e| format!("Failed to flush staged file: {e}"))?;
+            .map_err(|e| UpdateError::Apply(format!("Failed to flush staged file: {e}")))?;
     }
 
-    append_windows_updater_log(&format!(
+    append_updater_log(&format!(
         "apply_update_windows: staged file at {:?}, target {:?}",
         staged_path, current_exe
     ));
@@ -467,7 +500,7 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
         .unwrap_or_else(|| PathBuf::from(STABLE_UPDATER_EXE_NAME));
 
     if stable_updater_path.exists() {
-        append_windows_updater_log(&format!(
+        append_updater_log(&format!(
             "apply_update_windows: attempting stable updater {:?}",
             stable_updater_path
         ));
@@ -480,39 +513,41 @@ fn apply_update_windows(data: &[u8]) -> Result<(), String> {
             .spawn()
         {
             Ok(_) => {
-                append_windows_updater_log("apply_update_windows: stable updater launch succeeded");
+                append_updater_log("apply_update_windows: stable updater launch succeeded");
                 return Ok(());
             }
             Err(e) => {
-                append_windows_updater_log(&format!(
+                append_updater_log(&format!(
                     "apply_update_windows: stable updater launch failed: {} (raw_os_error={:?})",
                     e,
                     e.raw_os_error()
                 ));
 
                 if e.raw_os_error() == Some(740) {
-                    append_windows_updater_log("apply_update_windows: trying cmd fallback after stable updater failure");
-                    return spawn_cmd_apply_update(&staged_path, &current_exe).map_err(|fallback_err| {
+                    append_updater_log(
+                        "apply_update_windows: trying cmd fallback after stable updater failure",
+                    );
+                    let res = spawn_cmd_apply_update(&staged_path, &current_exe);
+                    if res.is_err() {
                         let _ = std::fs::remove_file(&staged_path);
-                        format!(
-                            "Failed to launch stable updater: {e}; cmd fallback failed: {fallback_err}"
-                        )
-                    });
+                    }
+                    return res;
                 }
             }
         }
     } else {
-        append_windows_updater_log(&format!(
+        append_updater_log(&format!(
             "apply_update_windows: stable updater missing at {:?}; falling back to cmd apply",
             stable_updater_path
         ));
     }
 
-    append_windows_updater_log("apply_update_windows: stable updater unavailable, using cmd fallback");
-    spawn_cmd_apply_update(&staged_path, &current_exe).map_err(|e| {
+    append_updater_log("apply_update_windows: stable updater unavailable, using cmd fallback");
+    let res = spawn_cmd_apply_update(&staged_path, &current_exe);
+    if res.is_err() {
         let _ = std::fs::remove_file(&staged_path);
-        format!("Failed to launch cmd apply fallback: {e}")
-    })
+    }
+    res
 }
 
 #[cfg(windows)]
@@ -521,10 +556,13 @@ fn escape_cmd_set_value(path: &std::path::Path) -> String {
 }
 
 #[cfg(windows)]
-fn spawn_cmd_apply_update(staged_path: &std::path::Path, target_path: &std::path::Path) -> Result<(), String> {
+fn spawn_cmd_apply_update(
+    staged_path: &std::path::Path,
+    target_path: &std::path::Path,
+) -> Result<(), UpdateError> {
     let staged = escape_cmd_set_value(staged_path);
     let target = escape_cmd_set_value(target_path);
-    let log_path = escape_cmd_set_value(&windows_updater_log_path());
+    let log_path = escape_cmd_set_value(&updater_log_path());
 
     let command = format!(
         "set \"S={}\" && set \"T={}\" && set \"L={}\" && for /L %i in (1,1,120) do (copy /Y \"%S%\" \"%T%\" >nul && del /F /Q \"%S%\" >nul && (echo cmd_fallback: copy succeeded>>\"%L%\") && exit /B 0 || timeout /T 1 /NOBREAK >nul) && (echo cmd_fallback: timed out>>\"%L%\" & exit /B 1)",
@@ -533,7 +571,7 @@ fn spawn_cmd_apply_update(staged_path: &std::path::Path, target_path: &std::path
         log_path,
     );
 
-    append_windows_updater_log(&format!(
+    append_updater_log(&format!(
         "spawn_cmd_apply_update: launching cmd fallback for staged={:?} target={:?}",
         staged_path, target_path
     ));
@@ -544,49 +582,16 @@ fn spawn_cmd_apply_update(staged_path: &std::path::Path, target_path: &std::path
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map(|_| ())
-        .map_err(|e| format!("Failed to launch cmd apply fallback: {e}"))
+        .map_err(|e| UpdateError::Apply(format!("Failed to launch cmd apply fallback: {e}")))
 }
 
-#[cfg(windows)]
-fn validate_apply_paths(staged: &Path, target: &Path) -> Result<(), String> {
-    let target_name = target
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if target_name != "freemid.exe" {
-        return Err(format!(
-            "Unexpected target binary name: {:?}",
-            target.file_name().unwrap_or_default()
-        ));
-    }
-
-    let staged_name = staged
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if !staged_name.starts_with("freemid.exe.staged-") || !staged_name.ends_with(".exe") {
-        return Err(format!(
-            "Unexpected staged file name: {:?}",
-            staged.file_name().unwrap_or_default()
-        ));
-    }
-
-    if staged.parent() != target.parent() {
-        return Err(format!(
-            "Staged and target directories must match"
-        ));
-    }
-
-    Ok(())
-}
-
-pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> {
+pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), UpdateError> {
     #[cfg(not(windows))]
     {
         let _ = (staged_path, target_path);
-        return Err("--apply-update is only supported on Windows".to_string());
+        Err(UpdateError::UnsupportedPlatform(
+            "--apply-update is only supported on Windows".to_string(),
+        ))
     }
 
     #[cfg(windows)]
@@ -594,16 +599,19 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Stri
         let staged = PathBuf::from(staged_path);
         let target = PathBuf::from(target_path);
 
-        validate_apply_paths(&staged, &target)?;
+        validate_apply_paths(&staged, &target).map_err(UpdateError::Apply)?;
 
-        append_windows_updater_log(&format!(
+        append_updater_log(&format!(
             "run_apply_update: started with staged={:?} target={:?}",
             staged, target
         ));
 
         if !staged.exists() {
-            append_windows_updater_log("run_apply_update: staged file missing");
-            return Err(format!("Staged update file does not exist: {:?}", staged));
+            append_updater_log("run_apply_update: staged file missing");
+            return Err(UpdateError::Apply(format!(
+                "Staged update file does not exist: {:?}",
+                staged
+            )));
         }
 
         let mut last_err: Option<String> = None;
@@ -611,7 +619,7 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Stri
             match std::fs::copy(&staged, &target) {
                 Ok(_) => {
                     let _ = std::fs::remove_file(&staged);
-                    append_windows_updater_log("run_apply_update: copy succeeded and staged removed");
+                    append_updater_log("run_apply_update: copy succeeded and staged removed");
                     return Ok(());
                 }
                 Err(e) => {
@@ -621,15 +629,120 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Stri
             }
         }
 
-        append_windows_updater_log(&format!(
+        append_updater_log(&format!(
             "run_apply_update: timed out, last_err={}",
-            last_err.clone().unwrap_or_else(|| "unknown error".to_string())
+            last_err
+                .clone()
+                .unwrap_or_else(|| "unknown error".to_string())
         ));
 
-        Err(format!(
+        Err(UpdateError::Apply(format!(
             "Timed out applying update to {:?}: {}",
             target,
             last_err.unwrap_or_else(|| "unknown error".to_string())
-        ))
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_strict_semver ──────────────────────────────────────────────────────
+
+    #[test]
+    fn strict_semver_accepts_valid() {
+        assert!(is_strict_semver("0.4.1"));
+        assert!(is_strict_semver("1.0.0"));
+        assert!(is_strict_semver("10.20.300"));
+    }
+
+    #[test]
+    fn strict_semver_rejects_invalid() {
+        assert!(!is_strict_semver(""));
+        assert!(!is_strict_semver("1.0"));
+        assert!(!is_strict_semver("1.0.0.0"));
+        assert!(!is_strict_semver("v1.0.0")); // leading 'v' must be stripped first
+        assert!(!is_strict_semver("1.0.alpha"));
+        assert!(!is_strict_semver("1.0.0-rc1"));
+    }
+
+    // ── is_newer ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn is_newer_detects_patch_bump() {
+        assert!(is_newer("0.4.2", "0.4.1"));
+    }
+
+    #[test]
+    fn is_newer_detects_minor_bump() {
+        assert!(is_newer("0.5.0", "0.4.9"));
+    }
+
+    #[test]
+    fn is_newer_detects_major_bump() {
+        assert!(is_newer("1.0.0", "0.99.99"));
+    }
+
+    #[test]
+    fn is_newer_same_version_is_not_newer() {
+        assert!(!is_newer("0.4.1", "0.4.1"));
+    }
+
+    #[test]
+    fn is_newer_older_is_not_newer() {
+        assert!(!is_newer("0.4.0", "0.4.1"));
+        assert!(!is_newer("0.3.99", "0.4.0"));
+    }
+
+    // ── verify_sha256 ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn verify_sha256_accepts_correct_checksum() {
+        let data = b"hello world";
+        // sha256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe04294e576dc5b4e7e6d8d5e8d
+        // Let's compute it properly:
+        use sha2::{Digest, Sha256};
+        let hash = hex::encode(Sha256::digest(data));
+        let checksums = format!("{}  freemid-linux-x86_64\n", hash);
+        assert!(verify_sha256(data, &checksums, "freemid-linux-x86_64").is_ok());
+    }
+
+    #[test]
+    fn verify_sha256_rejects_wrong_checksum() {
+        let data = b"hello world";
+        let checksums = "0000000000000000000000000000000000000000000000000000000000000000  freemid-linux-x86_64\n";
+        assert!(matches!(
+            verify_sha256(data, checksums, "freemid-linux-x86_64"),
+            Err(UpdateError::ChecksumMismatch(_))
+        ));
+    }
+
+    #[test]
+    fn verify_sha256_rejects_missing_artifact() {
+        let data = b"hello";
+        let checksums = "abc123  freemid-macos-arm64\n";
+        assert!(matches!(
+            verify_sha256(data, checksums, "freemid-linux-x86_64"),
+            Err(UpdateError::ChecksumNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn verify_sha256_handles_dotslash_prefix() {
+        use sha2::{Digest, Sha256};
+        let data = b"test";
+        let hash = hex::encode(Sha256::digest(data));
+        let checksums = format!("{}  ./freemid-linux-x86_64\n", hash);
+        assert!(verify_sha256(data, &checksums, "freemid-linux-x86_64").is_ok());
+    }
+
+    #[test]
+    fn verify_sha256_handles_star_prefix() {
+        use sha2::{Digest, Sha256};
+        let data = b"test";
+        let hash = hex::encode(Sha256::digest(data));
+        let checksums = format!("{}  *freemid-linux-x86_64\n", hash);
+        assert!(verify_sha256(data, &checksums, "freemid-linux-x86_64").is_ok());
     }
 }

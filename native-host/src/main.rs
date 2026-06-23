@@ -1,3 +1,4 @@
+#![deny(clippy::all)]
 //! FreeMiD — Chrome Native Messaging Host
 //!
 //! Chrome spawns this binary when the extension calls
@@ -18,6 +19,8 @@
 
 mod discord_ipc;
 mod update;
+#[cfg(windows)]
+mod windows_apply;
 
 use discord_ipc::{Activity, DiscordIpc, IpcError};
 use serde_json::{json, Value};
@@ -27,7 +30,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::CreateMutexW;
 
@@ -60,7 +63,10 @@ fn main() {
         return;
     }
 
-    eprintln!("[FreeMiD] native host v{} starting", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "[FreeMiD] native host v{} starting",
+        env!("CARGO_PKG_VERSION")
+    );
 
     #[cfg(windows)]
     let _single_instance_guard = match acquire_single_instance_guard_with_grace() {
@@ -72,15 +78,16 @@ fn main() {
     };
 
     LAST_MESSAGE_MS.store(now_unix_ms(), Ordering::Relaxed);
-    std::thread::spawn(|| {
-        loop {
-            std::thread::sleep(Duration::from_secs(10));
-            let last = LAST_MESSAGE_MS.load(Ordering::Relaxed);
-            let now = now_unix_ms();
-            if last > 0 && now.saturating_sub(last) > HOST_IDLE_TIMEOUT_MS {
-                eprintln!("[FreeMiD] idle timeout reached ({} ms); exiting", HOST_IDLE_TIMEOUT_MS);
-                std::process::exit(0);
-            }
+    std::thread::spawn(|| loop {
+        std::thread::sleep(Duration::from_secs(10));
+        let last = LAST_MESSAGE_MS.load(Ordering::Relaxed);
+        let now = now_unix_ms();
+        if last > 0 && now.saturating_sub(last) > HOST_IDLE_TIMEOUT_MS {
+            eprintln!(
+                "[FreeMiD] idle timeout reached ({} ms); exiting",
+                HOST_IDLE_TIMEOUT_MS
+            );
+            std::process::exit(0);
         }
     });
 
@@ -89,7 +96,7 @@ fn main() {
     // Eagerly try to connect to Discord IPC. Don't send STATUS yet — Chrome's
     // native-messaging pipe may not be ready to relay it, causing the message
     // to be silently dropped. The popup polls via PING instead.
-    if let Err(e) = ensure_connected(&mut ipc.lock().unwrap()) {
+    if let Err(e) = ensure_connected(&mut ipc.lock().unwrap_or_else(|e| e.into_inner())) {
         eprintln!("[FreeMiD] initial Discord connect failed: {}", e);
     } else {
         eprintln!("[FreeMiD] Discord IPC connected at startup");
@@ -137,12 +144,12 @@ fn try_acquire_single_instance_guard() -> Result<SingleInstanceGuard, String> {
     let mut name_w: Vec<u16> = SINGLE_INSTANCE_MUTEX_NAME.encode_utf16().collect();
     name_w.push(0);
 
-    let handle = unsafe {
-        CreateMutexW(std::ptr::null(), 0, name_w.as_ptr())
-    };
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name_w.as_ptr()) };
 
     if handle.is_null() {
-        return Err(format!("CreateMutexW failed with error {}", unsafe { GetLastError() }));
+        return Err(format!("CreateMutexW failed with error {}", unsafe {
+            GetLastError()
+        }));
     }
 
     let err = unsafe { GetLastError() };
@@ -162,7 +169,10 @@ fn acquire_single_instance_guard_with_grace() -> Result<SingleInstanceGuard, Str
         match try_acquire_single_instance_guard() {
             Ok(guard) => {
                 if attempt > 0 {
-                    eprintln!("[FreeMiD] single-instance mutex acquired after {} retries", attempt);
+                    eprintln!(
+                        "[FreeMiD] single-instance mutex acquired after {} retries",
+                        attempt
+                    );
                 }
                 return Ok(guard);
             }
@@ -200,8 +210,8 @@ fn read_message() -> io::Result<Option<Value>> {
     }
     let mut buf = vec![0u8; len as usize];
     io::stdin().read_exact(&mut buf)?;
-    let value: Value = serde_json::from_slice(&buf)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let value: Value =
+        serde_json::from_slice(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(Some(value))
 }
 
@@ -213,10 +223,16 @@ pub(crate) fn write_message(value: &Value) {
             return;
         }
     };
-    let len = (data.len() as u32).to_le_bytes();
+    let len = u32::try_from(data.len())
+        .expect("serialized message length exceeds u32::MAX")
+        .to_le_bytes();
     let stdout = io::stdout();
     let mut lock = stdout.lock();
-    if let Err(e) = lock.write_all(&len).and_then(|()| lock.write_all(&data)).and_then(|()| lock.flush()) {
+    if let Err(e) = lock
+        .write_all(&len)
+        .and_then(|()| lock.write_all(&data))
+        .and_then(|()| lock.flush())
+    {
         eprintln!("[FreeMiD] failed to write outbound message: {}", e);
     }
 }
@@ -241,7 +257,9 @@ fn send_status(connected: bool, error: Option<&str>) {
 
 // ── IPC connection management ──────────────────────────────────────────────────
 
-fn ensure_connected(slot: &mut std::sync::MutexGuard<'_, Option<DiscordIpc>>) -> Result<(), IpcError> {
+fn ensure_connected(
+    slot: &mut std::sync::MutexGuard<'_, Option<DiscordIpc>>,
+) -> Result<(), IpcError> {
     if slot.is_some() {
         return Ok(());
     }
@@ -266,15 +284,16 @@ fn with_reconnect<F>(ipc: &Mutex<Option<DiscordIpc>>, mut f: F) -> Result<(), Ip
 where
     F: FnMut(&mut DiscordIpc) -> Result<(), IpcError>,
 {
-    let mut guard = ipc.lock().unwrap();
+    let mut guard = ipc.lock().unwrap_or_else(|e| e.into_inner());
     ensure_connected(&mut guard)?;
 
     // First attempt
-    let first_err = match guard.as_mut().unwrap() {
-        c => match f(c) {
-            Ok(()) => return Ok(()),
-            Err(e) => e,
-        },
+    let c = guard
+        .as_mut()
+        .expect("IPC slot is Some after ensure_connected");
+    let first_err = match f(c) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
     };
 
     if is_transient_ipc_error(&first_err) {
@@ -285,10 +304,15 @@ where
         return Ok(());
     }
 
-    eprintln!("[FreeMiD] IPC call failed ({}) — dropping & reconnecting", first_err);
+    eprintln!(
+        "[FreeMiD] IPC call failed ({}) — dropping & reconnecting",
+        first_err
+    );
     *guard = None;
     ensure_connected(&mut guard)?;
-    f(guard.as_mut().unwrap())
+    f(guard
+        .as_mut()
+        .expect("IPC slot is Some after ensure_connected"))
 }
 
 // ── Message dispatch ───────────────────────────────────────────────────────────
@@ -302,14 +326,14 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
             // so the status dot updates correctly without waiting for the next
             // SET_ACTIVITY call.
             {
-                let mut guard = ipc.lock().unwrap();
+                let mut guard = ipc.lock().unwrap_or_else(|e| e.into_inner());
                 if guard.is_none() {
                     if let Err(e) = ensure_connected(&mut guard) {
                         eprintln!("[FreeMiD] PING: Discord reconnect failed: {}", e);
                     }
                 }
             }
-            let connected = ipc.lock().unwrap().is_some();
+            let connected = ipc.lock().unwrap_or_else(|e| e.into_inner()).is_some();
             send_status(connected, None);
             Ok(())
         }

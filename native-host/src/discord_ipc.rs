@@ -22,6 +22,7 @@ use std::path::PathBuf;
 
 const OPCODE_HANDSHAKE: u32 = 0;
 const OPCODE_FRAME: u32 = 1;
+const OPCODE_CLOSE: u32 = 2;
 const OPCODE_PING: u32 = 3;
 const OPCODE_PONG: u32 = 4;
 const MAX_IPC_FRAME_SIZE: usize = 1024 * 1024;
@@ -109,7 +110,9 @@ pub enum IpcError {
 impl std::fmt::Display for IpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            IpcError::SocketNotFound => write!(f, "Discord IPC socket not found — is Discord running?"),
+            IpcError::SocketNotFound => {
+                write!(f, "Discord IPC socket not found — is Discord running?")
+            }
             IpcError::Io(e) => write!(f, "IO error: {}", e),
             IpcError::Protocol(s) => write!(f, "Discord IPC protocol error: {}", s),
             IpcError::Json(e) => write!(f, "JSON error: {}", e),
@@ -120,11 +123,15 @@ impl std::fmt::Display for IpcError {
 impl std::error::Error for IpcError {}
 
 impl From<io::Error> for IpcError {
-    fn from(e: io::Error) -> Self { IpcError::Io(e) }
+    fn from(e: io::Error) -> Self {
+        IpcError::Io(e)
+    }
 }
 
 impl From<serde_json::Error> for IpcError {
-    fn from(e: serde_json::Error) -> Self { IpcError::Json(e) }
+    fn from(e: serde_json::Error) -> Self {
+        IpcError::Json(e)
+    }
 }
 
 pub type IpcResult<T> = Result<T, IpcError>;
@@ -285,7 +292,11 @@ impl DiscordIpc {
         }
         let mut header = [0u8; 8];
         header[..4].copy_from_slice(&opcode.to_le_bytes());
-        header[4..].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        header[4..].copy_from_slice(
+            &u32::try_from(data.len())
+                .expect("IPC frame length exceeds u32::MAX")
+                .to_le_bytes(),
+        );
         self.stream.write_all(&header)?;
         self.stream.write_all(&data)?;
         Ok(())
@@ -332,12 +343,38 @@ impl DiscordIpc {
                 OPCODE_PING => {
                     self.send_frame(OPCODE_PONG, &resp)?;
                 }
+                OPCODE_CLOSE => {
+                    return Err(IpcError::Protocol(
+                        "Discord closed the connection during handshake".into(),
+                    ));
+                }
                 op => {
                     return Err(IpcError::Protocol(format!(
                         "unexpected opcode {} during handshake",
                         op
                     )));
                 }
+            }
+        }
+    }
+
+    /// Consume frames until the Discord RPC ack (`OPCODE_FRAME`) arrives.
+    ///
+    /// Discord may send `OPCODE_PING` frames before the ack. Consuming only
+    /// one frame without checking the opcode would desync the socket if a ping
+    /// arrives first — all subsequent sends would read the wrong ack. Pings
+    /// are replied to in-place; close frames and errors break the loop.
+    fn drain_ack(&mut self) {
+        loop {
+            match self.recv_frame() {
+                Ok((OPCODE_FRAME, _)) => break,
+                Ok((OPCODE_PING, payload)) => {
+                    let _ = self.send_frame(OPCODE_PONG, &payload);
+                }
+                // OPCODE_CLOSE or any error: stop draining. The broken socket
+                // will be detected on the next send_frame call and trigger a
+                // reconnect via with_reconnect in main.rs.
+                Ok(_) | Err(_) => break,
             }
         }
     }
@@ -349,8 +386,7 @@ impl DiscordIpc {
             "nonce": nonce(),
         });
         self.send_frame(OPCODE_FRAME, &payload)?;
-        // Drain the ack so the socket buffer doesn't grow.
-        let _ = self.recv_frame();
+        self.drain_ack();
         Ok(())
     }
 
@@ -361,7 +397,7 @@ impl DiscordIpc {
             "nonce": nonce(),
         });
         self.send_frame(OPCODE_FRAME, &payload)?;
-        let _ = self.recv_frame();
+        self.drain_ack();
         Ok(())
     }
 }

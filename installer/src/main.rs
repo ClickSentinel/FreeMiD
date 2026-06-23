@@ -40,11 +40,20 @@ mod win {
     const UNINSTALL_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\FreeMiD";
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     const BROWSER_HOST_PARENTS: [(&str, &str); 6] = [
-        ("Chrome", r"HKCU\Software\Google\Chrome\NativeMessagingHosts"),
-        ("Chrome Beta", r"HKCU\Software\Google\Chrome Beta\NativeMessagingHosts"),
+        (
+            "Chrome",
+            r"HKCU\Software\Google\Chrome\NativeMessagingHosts",
+        ),
+        (
+            "Chrome Beta",
+            r"HKCU\Software\Google\Chrome Beta\NativeMessagingHosts",
+        ),
         ("Chromium", r"HKCU\Software\Chromium\NativeMessagingHosts"),
         ("Edge", r"HKCU\Software\Microsoft\Edge\NativeMessagingHosts"),
-        ("Brave", r"HKCU\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts"),
+        (
+            "Brave",
+            r"HKCU\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
+        ),
         ("Vivaldi", r"HKCU\Software\Vivaldi\NativeMessagingHosts"),
     ];
 
@@ -157,7 +166,11 @@ mod win {
 
     fn append_setup_log(line: &str) {
         let path = installer_log_path();
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             let _ = writeln!(f, "{}", line);
         }
     }
@@ -169,7 +182,8 @@ mod win {
 
     fn run_gui(extension_id: String) -> Result<(), String> {
         nwg::init().map_err(|e| format!("Failed to initialize GUI: {}", e))?;
-        nwg::Font::set_global_family("Segoe UI").map_err(|e| format!("Failed to set UI font: {}", e))?;
+        nwg::Font::set_global_family("Segoe UI")
+            .map_err(|e| format!("Failed to set UI font: {}", e))?;
         append_setup_log(&format!("FreeMiD Setup v{} starting", VERSION));
         let result = run_install(&extension_id, |_| {});
         match result {
@@ -211,11 +225,12 @@ mod win {
             .args(["/F", "/IM", "freemid.exe", "/T"])
             .output();
 
-        let local_app_data = std::env::var("LOCALAPPDATA")
-            .map_err(|_| "%LOCALAPPDATA% not set".to_string())?;
+        let local_app_data =
+            std::env::var("LOCALAPPDATA").map_err(|_| "%LOCALAPPDATA% not set".to_string())?;
         let install_dir = PathBuf::from(local_app_data).join("FreeMiD");
         let bin_dst = install_dir.join("freemid.exe");
-        let staged_bin_dst = install_dir.join(format!("freemid.exe.install-{}.tmp", std::process::id()));
+        let staged_bin_dst =
+            install_dir.join(format!("freemid.exe.install-{}.tmp", std::process::id()));
         let manifest_path = install_dir.join(format!("{}.json", HOST_NAME));
 
         std::fs::create_dir_all(&install_dir)
@@ -226,7 +241,11 @@ mod win {
         if bin_dst.exists() {
             let mut unlocked = false;
             for _ in 0..10 {
-                if std::fs::OpenOptions::new().write(true).open(&bin_dst).is_ok() {
+                if std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&bin_dst)
+                    .is_ok()
+                {
                     unlocked = true;
                     break;
                 }
@@ -253,7 +272,8 @@ mod win {
                 log_step("[3/7] Skipping checksum (local binary mode)...");
                 set_status("Status: Skipping checksum (local mode)...");
             } else {
-                let tag = std::env::var("FREEMID_RELEASE_TAG").unwrap_or_else(|_| "latest".to_string());
+                let tag =
+                    std::env::var("FREEMID_RELEASE_TAG").unwrap_or_else(|_| "latest".to_string());
                 let (download_url, checksums_url) = build_urls(&tag);
 
                 log_step(&format!("[2/7] Downloading {} ...", ARTIFACT));
@@ -288,8 +308,13 @@ mod win {
             log_step("[4/7] Installing native host binary...");
             set_status("Status: Installing native host binary...");
             if bin_dst.exists() {
-                std::fs::remove_file(&bin_dst)
-                    .map_err(|e| format!("Failed to replace existing binary {}: {}", bin_dst.display(), e))?;
+                std::fs::remove_file(&bin_dst).map_err(|e| {
+                    format!(
+                        "Failed to replace existing binary {}: {}",
+                        bin_dst.display(),
+                        e
+                    )
+                })?;
             }
             std::fs::rename(&staged_bin_dst, &bin_dst)
                 .map_err(|e| format!("Failed to install binary to {}: {}", bin_dst.display(), e))?;
@@ -330,7 +355,10 @@ mod win {
                 );
             }
 
-            log_step(&format!("      Registered browser targets: {}", registered_names.join(", ")));
+            log_step(&format!(
+                "      Registered browser targets: {}",
+                registered_names.join(", ")
+            ));
 
             log_step("[7/7] Registering Apps & Features entry...");
             set_status("Status: Registering Apps and Features entry...");
@@ -361,8 +389,8 @@ mod win {
     {
         set_status("Status: Starting uninstall...");
 
-        let local_app_data = std::env::var("LOCALAPPDATA")
-            .map_err(|_| "%LOCALAPPDATA% not set".to_string())?;
+        let local_app_data =
+            std::env::var("LOCALAPPDATA").map_err(|_| "%LOCALAPPDATA% not set".to_string())?;
         let install_dir = PathBuf::from(local_app_data).join("FreeMiD");
         let manifest_path = install_dir.join(format!("{}.json", HOST_NAME));
         let bin_dst = install_dir.join("freemid.exe");
@@ -397,7 +425,9 @@ mod win {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with("freemid.exe.staged-") || name.starts_with("freemid.exe.install-") {
+                    if name.starts_with("freemid.exe.staged-")
+                        || name.starts_with("freemid.exe.install-")
+                    {
                         let _ = std::fs::remove_file(path);
                     }
                 }
@@ -561,14 +591,23 @@ mod win {
             .map_err(|e| format!("Cannot resolve setup executable path: {}", e))?;
 
         if setup_src != *setup_dst {
-            std::fs::copy(&setup_src, setup_dst)
-                .map_err(|e| format!("Failed to copy setup executable to {}: {}", setup_dst.display(), e))?;
+            std::fs::copy(&setup_src, setup_dst).map_err(|e| {
+                format!(
+                    "Failed to copy setup executable to {}: {}",
+                    setup_dst.display(),
+                    e
+                )
+            })?;
         }
 
         Ok(())
     }
 
-    fn register_arp(install_dir: &PathBuf, bin_dst: &PathBuf, setup_dst: &PathBuf) -> Result<(), String> {
+    fn register_arp(
+        install_dir: &PathBuf,
+        bin_dst: &PathBuf,
+        setup_dst: &PathBuf,
+    ) -> Result<(), String> {
         let install_location = install_dir.display().to_string();
         let display_icon = bin_dst.display().to_string();
         let uninstall_cmd = format!("\"{}\" --uninstall --silent", setup_dst.display());
@@ -576,10 +615,20 @@ mod win {
         reg_set_named(UNINSTALL_KEY, "DisplayName", "REG_SZ", "FreeMiD")?;
         reg_set_named(UNINSTALL_KEY, "DisplayVersion", "REG_SZ", VERSION)?;
         reg_set_named(UNINSTALL_KEY, "Publisher", "REG_SZ", "ClickSentinel")?;
-        reg_set_named(UNINSTALL_KEY, "InstallLocation", "REG_SZ", &install_location)?;
+        reg_set_named(
+            UNINSTALL_KEY,
+            "InstallLocation",
+            "REG_SZ",
+            &install_location,
+        )?;
         reg_set_named(UNINSTALL_KEY, "DisplayIcon", "REG_SZ", &display_icon)?;
         reg_set_named(UNINSTALL_KEY, "UninstallString", "REG_SZ", &uninstall_cmd)?;
-        reg_set_named(UNINSTALL_KEY, "QuietUninstallString", "REG_SZ", &uninstall_cmd)?;
+        reg_set_named(
+            UNINSTALL_KEY,
+            "QuietUninstallString",
+            "REG_SZ",
+            &uninstall_cmd,
+        )?;
         reg_set_named(UNINSTALL_KEY, "NoModify", "REG_DWORD", "1")?;
         reg_set_named(UNINSTALL_KEY, "NoRepair", "REG_DWORD", "1")?;
 
