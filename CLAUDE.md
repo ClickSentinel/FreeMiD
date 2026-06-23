@@ -122,3 +122,13 @@ See `docs/E2E-UPDATER-TESTING.md` and `docs/NATIVE-HOST-UPDATER-ARCHITECTURE.md`
 - **Discord Snap** on Linux: not supported — Snap strict confinement isolates the IPC socket.
 - **Windows updater**: uses `freemid-apply.exe` (a stable helper binary installed alongside `freemid.exe`) to avoid file-lock races when replacing a running binary. Falls back to a `cmd.exe` loop if the helper is missing.
 - **macOS/Linux**: atomic `rename()` replaces the binary in-place; the running process holds the old inode and is unaffected until Chrome reconnects.
+
+## Environment variables (runtime)
+
+These are undocumented dev/debug flags not exposed in normal usage:
+
+| Variable | Effect |
+|----------|--------|
+| `FREEMID_ALLOW_TMP_IPC=1` | On Linux, also search `$TMPDIR`, `$TMP`, `$TEMP`, and `/tmp` for the Discord IPC socket. Disabled by default because `/tmp` is world-writable (TOCTOU risk). Useful when Discord writes its socket to `/tmp` rather than `$XDG_RUNTIME_DIR`. |
+| `FREEMID_UPDATE_LATEST_URL` | Override the GitHub API URL used to fetch the latest release metadata. |
+| `FREEMID_UPDATE_RELEASES_BASE` | Override the base URL used to download release artifacts. |
