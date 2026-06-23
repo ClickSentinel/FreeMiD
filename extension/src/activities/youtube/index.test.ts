@@ -87,9 +87,18 @@ describe('YouTube activity', () => {
     `;
 
     const video = document.querySelector('video') as HTMLVideoElement;
-    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
-    Object.defineProperty(video, 'duration', { configurable: true, get: () => 180 });
-    Object.defineProperty(video, 'currentTime', { configurable: true, get: () => 45 });
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      get: () => false,
+    });
+    Object.defineProperty(video, 'duration', {
+      configurable: true,
+      get: () => 180,
+    });
+    Object.defineProperty(video, 'currentTime', {
+      configurable: true,
+      get: () => 45,
+    });
 
     Object.defineProperty(navigator, 'mediaSession', {
       configurable: true,
@@ -104,12 +113,18 @@ describe('YouTube activity', () => {
         name: 'YouTube',
         details: 'Rusty Arbor Press - Restoration',
         state: 'By my mechanics, Rusty Crew',
-        largeImageKey: 'https://yt3.googleusercontent.com/ytc/example=s800-c-k-c0x00ffffff-no-rj',
+        largeImageKey:
+          'https://yt3.googleusercontent.com/ytc/example=s800-c-k-c0x00ffffff-no-rj',
         largeImageText: 'my mechanics, Rusty Crew',
         largeImageUrl: 'https://www.youtube.com/watch?v=abcdefghijk',
         smallImageKey: 'youtube-logo-1024',
         smallImageText: 'YouTube',
-        buttons: [{ label: 'Watch on YouTube', url: 'https://www.youtube.com/watch?v=abcdefghijk' }],
+        buttons: [
+          {
+            label: 'Watch on YouTube',
+            url: 'https://www.youtube.com/watch?v=abcdefghijk',
+          },
+        ],
       }),
     );
   });
@@ -117,7 +132,8 @@ describe('YouTube activity', () => {
   it('clears presence when video is paused', async () => {
     setLocation('/watch?v=abcdefghijk');
     document.title = 'Fallback Title - YouTube';
-    document.head.innerHTML = '<meta property="og:image" content="https://i.ytimg.com/vi/abcdefghijk/maxresdefault.jpg">';
+    document.head.innerHTML =
+      '<meta property="og:image" content="https://i.ytimg.com/vi/abcdefghijk/maxresdefault.jpg">';
     document.body.innerHTML = `
       <h1 class="style-scope ytd-video-primary-info-renderer">Fallback Video</h1>
       <div id="channel-name"><a>Solo Channel</a></div>
@@ -125,9 +141,18 @@ describe('YouTube activity', () => {
     `;
 
     const video = document.querySelector('video') as HTMLVideoElement;
-    Object.defineProperty(video, 'paused', { configurable: true, get: () => true });
-    Object.defineProperty(video, 'duration', { configurable: true, get: () => 0 });
-    Object.defineProperty(video, 'currentTime', { configurable: true, get: () => 0 });
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      get: () => true,
+    });
+    Object.defineProperty(video, 'duration', {
+      configurable: true,
+      get: () => 0,
+    });
+    Object.defineProperty(video, 'currentTime', {
+      configurable: true,
+      get: () => 0,
+    });
 
     await loadModule();
     capturedUpdateHandler?.();
@@ -146,9 +171,18 @@ describe('YouTube activity', () => {
     `;
 
     const video = document.querySelector('video') as HTMLVideoElement;
-    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
-    Object.defineProperty(video, 'duration', { configurable: true, get: () => 120 });
-    Object.defineProperty(video, 'currentTime', { configurable: true, get: () => 12 });
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      get: () => false,
+    });
+    Object.defineProperty(video, 'duration', {
+      configurable: true,
+      get: () => 120,
+    });
+    Object.defineProperty(video, 'currentTime', {
+      configurable: true,
+      get: () => 12,
+    });
 
     Object.defineProperty(navigator, 'mediaSession', {
       configurable: true,
@@ -163,7 +197,12 @@ describe('YouTube activity', () => {
         details: 'Short Clip',
         state: 'By Creator One',
         largeImageUrl: 'https://www.youtube.com/watch?v=abcdefghijk',
-        buttons: [{ label: 'Watch on YouTube', url: 'https://www.youtube.com/watch?v=abcdefghijk' }],
+        buttons: [
+          {
+            label: 'Watch on YouTube',
+            url: 'https://www.youtube.com/watch?v=abcdefghijk',
+          },
+        ],
       }),
     );
   });
@@ -178,11 +217,26 @@ describe('YouTube activity', () => {
     `;
 
     const video = document.querySelector('video') as HTMLVideoElement;
-    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
-    Object.defineProperty(video, 'ended', { configurable: true, get: () => false });
-    Object.defineProperty(video, 'readyState', { configurable: true, get: () => 4 });
-    Object.defineProperty(video, 'duration', { configurable: true, get: () => 120 });
-    Object.defineProperty(video, 'currentTime', { configurable: true, get: () => 12 });
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      get: () => false,
+    });
+    Object.defineProperty(video, 'ended', {
+      configurable: true,
+      get: () => false,
+    });
+    Object.defineProperty(video, 'readyState', {
+      configurable: true,
+      get: () => 4,
+    });
+    Object.defineProperty(video, 'duration', {
+      configurable: true,
+      get: () => 120,
+    });
+    Object.defineProperty(video, 'currentTime', {
+      configurable: true,
+      get: () => 12,
+    });
 
     Object.defineProperty(navigator, 'mediaSession', {
       configurable: true,
@@ -207,9 +261,18 @@ describe('YouTube activity', () => {
     `;
 
     const video = document.querySelector('video') as HTMLVideoElement;
-    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
-    Object.defineProperty(video, 'ended', { configurable: true, get: () => false });
-    Object.defineProperty(video, 'readyState', { configurable: true, get: () => 0 });
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      get: () => false,
+    });
+    Object.defineProperty(video, 'ended', {
+      configurable: true,
+      get: () => false,
+    });
+    Object.defineProperty(video, 'readyState', {
+      configurable: true,
+      get: () => 0,
+    });
 
     Object.defineProperty(navigator, 'mediaSession', {
       configurable: true,

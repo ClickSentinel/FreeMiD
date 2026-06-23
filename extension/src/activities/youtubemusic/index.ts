@@ -1,8 +1,10 @@
-import { Presence } from '../../presence/Presence';
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
+import { Presence } from '../../presence/Presence';
 import { parseClock } from '../../utils/parseClock';
 
-const presence = new Presence({ clientId: import.meta.env.VITE_DISCORD_CLIENT_ID });
+const presence = new Presence({
+  clientId: import.meta.env.VITE_DISCORD_CLIENT_ID,
+});
 
 let activeTrackId: string | undefined;
 let playbackAnchorStart: number | undefined;
@@ -40,18 +42,21 @@ function getVideoId(): string | undefined {
   // 2. Embedded player title link — always present, always has v= param
   const ytpLink = document.querySelector<HTMLAnchorElement>('a.ytp-title-link');
   if (ytpLink?.href) {
-    const id = new URLSearchParams(ytpLink.search).get('v') ??
-               ytpLink.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/)?.[1];
+    const id =
+      new URLSearchParams(ytpLink.search).get('v') ??
+      ytpLink.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/)?.[1];
     if (id) return id;
   }
 
   // 3. href.match on full page URL (covers direct song navigation)
-  const urlMatch = document.location.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/)?.[1];
+  const urlMatch = document.location.href.match(
+    /[?&]v=([a-zA-Z0-9_-]{11})/,
+  )?.[1];
   if (urlMatch) return urlMatch;
 
   // 4. Title link anchor inside player bar
   const titleLink = document.querySelector<HTMLAnchorElement>(
-    'ytmusic-player-bar a[href*="watch?v="]'
+    'ytmusic-player-bar a[href*="watch?v="]',
   );
   if (titleLink) {
     const id = new URLSearchParams(titleLink.search).get('v');
@@ -60,7 +65,7 @@ function getVideoId(): string | undefined {
 
   // 5. ytimg.com thumbnail URL contains the video ID
   const imgs = document.querySelectorAll<HTMLImageElement>(
-    '#song-image img, ytmusic-player-bar img#img, ytmusic-player-bar img, ytmusic-player img'
+    '#song-image img, ytmusic-player-bar img#img, ytmusic-player-bar img, ytmusic-player img',
   );
   for (const img of imgs) {
     const src = img.src || img.getAttribute('src') || '';
@@ -85,7 +90,9 @@ presence.on('UpdateData', () => {
   // reliable signal, presence will momentarily show the ad as a track.
 
   const ms = navigator.mediaSession;
-  const video = document.querySelector<HTMLVideoElement>('.video-stream, video');
+  const video = document.querySelector<HTMLVideoElement>(
+    '.video-stream, video',
+  );
 
   // Prefer mediaSession — YouTube Music keeps it up-to-date reliably
   let title = ms?.metadata?.title?.trim();
@@ -104,15 +111,19 @@ presence.on('UpdateData', () => {
       playerBar?.querySelector<HTMLElement>('.byline.ytmusic-player-bar') ??
       playerBar?.querySelector<HTMLElement>('yt-formatted-string.byline') ??
       document.querySelector<HTMLElement>('.ytmusic-player-bar .byline')
-    )?.textContent?.trim()?.replace(/\s*•.+$/, '').trim();
+    )?.textContent
+      ?.trim()
+      ?.replace(/\s*•.+$/, '')
+      .trim();
   }
 
   // Page title last resort
   if (!title) {
     const parts = document.title.replace(' - YouTube Music', '').split(' - ');
     if (parts.length >= 2) {
-      title = parts[0].trim();
-      artist = parts.slice(1).join(' - ').trim();
+      const [head, ...rest] = parts;
+      title = (head ?? '').trim();
+      artist = rest.join(' - ').trim();
     }
   }
 
@@ -125,7 +136,9 @@ presence.on('UpdateData', () => {
   const playbackState = ms?.playbackState;
   const paused = playbackState
     ? playbackState !== 'playing'
-    : (video ? video.paused : true);
+    : video
+      ? video.paused
+      : true;
 
   const barTimes = getPlayerBarTimes();
 
@@ -134,7 +147,12 @@ presence.on('UpdateData', () => {
   // barTimes (scraped from the player bar) is the only reliable source.
   const current = barTimes.current ?? 0;
   const duration = barTimes.duration ?? 0;
-  console.debug('[FreeMiD] barTimes:', barTimes, 'video.currentTime:', video?.currentTime?.toFixed(1));
+  console.debug(
+    '[FreeMiD] barTimes:',
+    barTimes,
+    'video.currentTime:',
+    video?.currentTime?.toFixed(1),
+  );
 
   const artUrl = getArtUrl();
   const videoId = getVideoId();
@@ -207,6 +225,8 @@ presence.on('UpdateData', () => {
     largeImageUrl: songUrl,
     smallImageKey: PRESENCE_ASSET_KEYS.ytmusicLogo,
     smallImageText: 'YouTube Music',
-    buttons: songUrl ? [{ label: 'Listen on YT Music', url: songUrl }] : undefined,
+    buttons: songUrl
+      ? [{ label: 'Listen on YT Music', url: songUrl }]
+      : undefined,
   });
 });

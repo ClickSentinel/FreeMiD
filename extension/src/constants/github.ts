@@ -5,6 +5,7 @@ export function githubLatestDownloadUrl(fileName: string): string {
 }
 
 export function githubRepoUrl(fragment?: string): string {
-  return fragment ? `https://github.com/${GITHUB_REPO}#${fragment}` : `https://github.com/${GITHUB_REPO}`;
+  return fragment
+    ? `https://github.com/${GITHUB_REPO}#${fragment}`
+    : `https://github.com/${GITHUB_REPO}`;
 }
-

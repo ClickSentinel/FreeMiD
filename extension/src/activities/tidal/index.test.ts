@@ -28,7 +28,10 @@ vi.mock('../../presence/Presence', () => {
   return { Presence: MockPresence };
 });
 
-function setMediaSessionState(playbackState?: 'playing' | 'paused', metadata?: MediaMetadataInit): void {
+function setMediaSessionState(
+  playbackState?: 'playing' | 'paused',
+  metadata?: MediaMetadataInit,
+): void {
   Object.defineProperty(navigator, 'mediaSession', {
     configurable: true,
     value: playbackState
@@ -96,11 +99,19 @@ describe('TIDAL activity', () => {
         largeImageUrl: `${window.location.origin}/browse/track/123`,
         smallImageKey: 'tidal-logo-1024',
         smallImageText: 'TIDAL',
-        buttons: [{ label: 'Listen on TIDAL', url: `${window.location.origin}/browse/track/123` }],
+        buttons: [
+          {
+            label: 'Listen on TIDAL',
+            url: `${window.location.origin}/browse/track/123`,
+          },
+        ],
       }),
     );
 
-    const activity = presenceInstance.setActivity.mock.calls[0]?.[0] as { startTimestamp?: number; endTimestamp?: number };
+    const activity = presenceInstance.setActivity.mock.calls[0]?.[0] as {
+      startTimestamp?: number;
+      endTimestamp?: number;
+    };
     expect(activity.endTimestamp! - activity.startTimestamp!).toBe(240);
   });
 

@@ -78,7 +78,9 @@ export class Presence {
     // starting a new one — preventing two instances from racing each other
     // with conflicting anchor state.
     const GUARD_KEY = '__freemid_presence_interval';
-    const prevId = (globalThis as Record<string, unknown>)[GUARD_KEY] as ReturnType<typeof setInterval> | undefined;
+    const prevId = (globalThis as Record<string, unknown>)[GUARD_KEY] as
+      | ReturnType<typeof setInterval>
+      | undefined;
     if (prevId !== undefined) clearInterval(prevId);
     if (this.intervalId) clearInterval(this.intervalId);
 
@@ -127,9 +129,11 @@ export class Presence {
       buttons: data.buttons,
     };
 
-    chrome.runtime.sendMessage({ type: 'FREEMID_SET_ACTIVITY', data: activity }).catch(() => {
-      // Background may not be ready yet; data will be pushed on next tick
-    });
+    chrome.runtime
+      .sendMessage({ type: 'FREEMID_SET_ACTIVITY', data: activity })
+      .catch(() => {
+        // Background may not be ready yet; data will be pushed on next tick
+      });
   }
 
   /** Remove the current Discord Rich Presence */
@@ -139,7 +143,9 @@ export class Presence {
       this.intervalId = undefined;
     }
     if (!this.isContextValid()) return;
-    chrome.runtime.sendMessage({ type: 'FREEMID_CLEAR_ACTIVITY' }).catch(() => {});
+    chrome.runtime
+      .sendMessage({ type: 'FREEMID_CLEAR_ACTIVITY' })
+      .catch(() => {});
   }
 
   /**
@@ -149,15 +155,19 @@ export class Presence {
    */
   clearPresenceData(): void {
     if (!this.isContextValid()) return;
-    chrome.runtime.sendMessage({ type: 'FREEMID_CLEAR_ACTIVITY' }).catch(() => {});
+    chrome.runtime
+      .sendMessage({ type: 'FREEMID_CLEAR_ACTIVITY' })
+      .catch(() => {});
   }
 
   /**
    * Utility: get the value of a query-string parameter from the current URL.
    */
-  static getPageVariable<T = string>(varName: string, searchURL?: string): T | undefined {
+  static getPageVariable(
+    varName: string,
+    searchURL?: string,
+  ): string | undefined {
     const url = new URL(searchURL ?? window.location.href);
-    const val = url.searchParams.get(varName);
-    return val !== null ? (val as unknown as T) : undefined;
+    return url.searchParams.get(varName) ?? undefined;
   }
 }

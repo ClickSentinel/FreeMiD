@@ -432,8 +432,8 @@
         <div class="status-label" id="status-label">Connecting…</div>
         <div class="status-sub" id="status-sub">Reaching native host</div>
       </div>
-      <button class="btn-reconnect" id="btn-reconnect" title="Reconnect">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <button type="button" class="btn-reconnect" id="btn-reconnect" title="Reconnect">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
           <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
         </svg>
@@ -446,7 +446,7 @@
         <span>Rich Presence</span>
         <span class="control-sub" id="pause-sub">Active</span>
       </div>
-      <button class="toggle-btn" id="btn-pause" role="switch" aria-checked="true" title="Pause/resume Rich Presence">
+      <button type="button" class="toggle-btn" id="btn-pause" role="switch" aria-checked="true" title="Pause/resume Rich Presence">
         <span class="toggle-thumb"></span>
       </button>
     </div>
@@ -454,13 +454,13 @@
     <div class="help hidden" id="help-host">
       <strong>Native host not installed.</strong>
       <p>Open the install guide for your platform, then reload the extension page. Restart the browser only if needed.</p>
-      <button class="btn-install" id="btn-install-host">Open Install Guide ↗</button>
+      <button type="button" class="btn-install" id="btn-install-host">Open Install Guide ↗</button>
     </div>
 
     <div class="help hidden" id="help-discord">
       <strong>Discord desktop not running.</strong><br />
       Open the Discord desktop client and FreeMiD will connect automatically.
-      <br /><button class="btn-discord" id="btn-open-discord">Open Discord ↗</button>
+      <br /><button type="button" class="btn-discord" id="btn-open-discord">Open Discord ↗</button>
     </div>
 
     <div class="now-playing" id="activity-panel" hidden>
@@ -498,19 +498,19 @@
       <div class="site-toggles">
         <div class="site-row">
           <span>YouTube</span>
-          <button class="toggle-btn" id="toggle-youtube" role="switch" aria-checked="true" title="Toggle YouTube activity">
+          <button type="button" class="toggle-btn" id="toggle-youtube" role="switch" aria-checked="true" title="Toggle YouTube activity">
             <span class="toggle-thumb"></span>
           </button>
         </div>
         <div class="site-row">
           <span>YouTube Music</span>
-          <button class="toggle-btn" id="toggle-ytm" role="switch" aria-checked="true" title="Toggle YouTube Music activity">
+          <button type="button" class="toggle-btn" id="toggle-ytm" role="switch" aria-checked="true" title="Toggle YouTube Music activity">
             <span class="toggle-thumb"></span>
           </button>
         </div>
         <div class="site-row">
           <span>TIDAL</span>
-          <button class="toggle-btn" id="toggle-tidal" role="switch" aria-checked="true" title="Toggle TIDAL activity">
+          <button type="button" class="toggle-btn" id="toggle-tidal" role="switch" aria-checked="true" title="Toggle TIDAL activity">
             <span class="toggle-thumb"></span>
           </button>
         </div>
@@ -525,16 +525,16 @@
     <footer>
       <div class="footer-left">
         <a class="gh-link" href="https://github.com/ClickSentinel/freemid" target="_blank" rel="noopener noreferrer" title="GitHub">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.341-3.369-1.341-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.031 1.531 1.031.892 1.529 2.341 1.088 2.91.832.091-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.682-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836a9.59 9.59 0 0 1 2.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.698 1.028 1.591 1.028 2.682 0 3.841-2.337 4.687-4.565 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.741 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
           </svg>
         </a>
-        <button class="btn-uninstall" id="btn-uninstall" title="Open setup and choose Uninstall">Uninstall</button>
+        <button type="button" class="btn-uninstall" id="btn-uninstall" title="Open setup and choose Uninstall">Uninstall</button>
       </div>
       <div class="version-group">
         <span class="version-ext" id="version"></span>
         <div class="version-host-row">
-          <button class="btn-host-update" id="btn-update" title="Update host">Update</button>
+          <button type="button" class="btn-host-update" id="btn-update" title="Update host">Update</button>
           <span class="version-host" id="host-version"></span>
         </div>
       </div>

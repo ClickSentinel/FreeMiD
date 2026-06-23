@@ -28,7 +28,10 @@ vi.mock('../../presence/Presence', () => {
   return { Presence: MockPresence };
 });
 
-function setMediaSession(playbackState?: 'playing' | 'paused', metadata?: MediaMetadataInit): void {
+function setMediaSession(
+  playbackState?: 'playing' | 'paused',
+  metadata?: MediaMetadataInit,
+): void {
   Object.defineProperty(navigator, 'mediaSession', {
     configurable: true,
     value: playbackState
@@ -98,11 +101,19 @@ describe('YouTube Music activity', () => {
         largeImageUrl: 'https://music.youtube.com/watch?v=abcdefghijk',
         smallImageKey: 'ytmusic-logo-1024',
         smallImageText: 'YouTube Music',
-        buttons: [{ label: 'Listen on YT Music', url: 'https://music.youtube.com/watch?v=abcdefghijk' }],
+        buttons: [
+          {
+            label: 'Listen on YT Music',
+            url: 'https://music.youtube.com/watch?v=abcdefghijk',
+          },
+        ],
       }),
     );
 
-    const activity = presenceInstance.setActivity.mock.calls[0]?.[0] as { startTimestamp?: number; endTimestamp?: number };
+    const activity = presenceInstance.setActivity.mock.calls[0]?.[0] as {
+      startTimestamp?: number;
+      endTimestamp?: number;
+    };
     expect(activity.endTimestamp! - activity.startTimestamp!).toBe(240);
   });
 

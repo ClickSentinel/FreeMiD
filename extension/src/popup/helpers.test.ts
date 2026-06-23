@@ -11,15 +11,23 @@ describe('popup helpers', () => {
   });
 
   it('prefers subtext artist names over activity name', () => {
-    expect(artistFromActivity({ sub: 'by Artist Name', activityName: 'YouTube' })).toBe('Artist Name');
+    expect(
+      artistFromActivity({ sub: 'by Artist Name', activityName: 'YouTube' }),
+    ).toBe('Artist Name');
     expect(artistFromActivity({ activityName: 'TIDAL' })).toBe('TIDAL');
     expect(artistFromActivity({})).toBe('');
   });
 
   it('maps service text to the expected local preview asset path', () => {
-    expect(fallbackLogoPath({ smallImageText: 'TIDAL' })).toBe('icons/tidal-logo-1024.png');
-    expect(fallbackLogoPath({ activityName: 'YouTube Music' })).toBe('icons/ytmusic-logo-1024.png');
-    expect(fallbackLogoPath({ sub: 'By YouTube' })).toBe('icons/youtube-logo-1024.png');
+    expect(fallbackLogoPath({ smallImageText: 'TIDAL' })).toBe(
+      'icons/tidal-logo-1024.png',
+    );
+    expect(fallbackLogoPath({ activityName: 'YouTube Music' })).toBe(
+      'icons/ytmusic-logo-1024.png',
+    );
+    expect(fallbackLogoPath({ sub: 'By YouTube' })).toBe(
+      'icons/youtube-logo-1024.png',
+    );
     expect(fallbackLogoPath({ activityName: 'Unknown' })).toBeNull();
   });
 });

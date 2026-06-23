@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { existsSync, readdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 /**
  * Build all activities as standalone IIFE bundles.
  *
@@ -8,24 +11,21 @@
  * (including Presence.ts) into a single self-contained file.
  */
 import { build, loadEnv } from 'vite';
-import { resolve, dirname } from 'path';
-import { readdirSync, existsSync } from 'fs';
-import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const root      = resolve(__dirname, '..');
-const srcDir    = resolve(root, 'src/activities');
+const root = resolve(__dirname, '..');
+const srcDir = resolve(root, 'src/activities');
 
 // Load .env so VITE_* vars are substituted in activity bundles
 const env = loadEnv('production', root, '');
 
 const activities = readdirSync(srcDir).filter((name) =>
-  existsSync(resolve(srcDir, name, 'index.ts'))
+  existsSync(resolve(srcDir, name, 'index.ts')),
 );
 
 for (const name of activities) {
   const entryFile = resolve(srcDir, name, 'index.ts');
-  const outName   = `activities/${name}/index`;
+  const outName = `activities/${name}/index`;
 
   console.log(`[activities] building ${name}…`);
 
@@ -34,23 +34,23 @@ for (const name of activities) {
     configFile: false,
     logLevel: 'warn',
     build: {
-      outDir:      resolve(root, 'dist'),
+      outDir: resolve(root, 'dist'),
       emptyOutDir: false,
-      minify:      false,
+      minify: false,
       rollupOptions: {
         input: { [outName]: entryFile },
         output: {
-          format:         'iife',
+          format: 'iife',
           entryFileNames: '[name].js',
           // activities don't export — dummy name satisfies Rollup
-          name:           'FreeMiDActivity',
+          name: 'FreeMiDActivity',
         },
       },
     },
     define: Object.fromEntries(
       Object.entries(env)
         .filter(([k]) => k.startsWith('VITE_'))
-        .map(([k, v]) => [`import.meta.env.${k}`, JSON.stringify(v)])
+        .map(([k, v]) => [`import.meta.env.${k}`, JSON.stringify(v)]),
     ),
     resolve: {
       alias: { '@': resolve(root, 'src') },
