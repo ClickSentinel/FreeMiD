@@ -2,6 +2,7 @@
 name = "freemid"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Free, open-source Discord Rich Presence — Chrome native messaging host"

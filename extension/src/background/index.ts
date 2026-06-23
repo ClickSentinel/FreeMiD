@@ -643,6 +643,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // Messages from injected activity scripts and the popup.
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id) return;
+
   const msg = message as Record<string, unknown>;
 
   if (msg.type === 'FREEMID_SET_ACTIVITY' && typeof msg.data === 'object') {
