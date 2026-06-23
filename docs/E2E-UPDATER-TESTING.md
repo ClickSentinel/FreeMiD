@@ -22,7 +22,7 @@ This document defines the end-to-end (E2E) update test process for FreeMiD durin
 ## Test Goals
 
 1. Confirm update decision logic is correct (only when candidate is newer).
-2. Confirm status transitions are correct (`checking -> downloading -> reconnecting -> done`).
+2. Confirm status transitions are correct (`checking -> downloading -> reconnecting -> success`), or `up_to_date` when already current.
 3. Confirm host version refreshes dynamically after apply (without extension reload).
 4. Confirm failure paths produce actionable UI states.
 5. Confirm Windows in-app apply flow remains reliable and extension reconnects to updated host.
