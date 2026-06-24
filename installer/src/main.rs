@@ -109,13 +109,34 @@ mod win {
         }
     }
 
+    /// A Chrome/Chromium extension ID is exactly 32 characters, each in `a`–`p`
+    /// (a base-16 re-encoding of the public-key hash). Enforcing this before the
+    /// value is interpolated into the native-messaging manifest JSON prevents a
+    /// malformed `--extension-id`/`FREEMID_EXTENSION_ID` from corrupting or
+    /// injecting into the manifest's `allowed_origins`.
+    fn is_valid_extension_id(id: &str) -> bool {
+        id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b))
+    }
+
     fn resolve_extension_id(cli_override: Option<&str>) -> String {
-        if let Some(id) = cli_override.filter(|s| !s.trim().is_empty()) {
-            return id.trim().to_string();
+        if let Some(id) = cli_override.map(str::trim).filter(|s| !s.is_empty()) {
+            if !is_valid_extension_id(id) {
+                eprintln!("--extension-id must be 32 characters in the range a-p");
+                std::process::exit(2);
+            }
+            return id.to_string();
         }
-        if let Ok(id) = std::env::var(EXTENSION_ID_ENV) {
-            if !id.trim().is_empty() {
-                return id.trim().to_string();
+        if let Ok(raw) = std::env::var(EXTENSION_ID_ENV) {
+            let id = raw.trim();
+            if !id.is_empty() {
+                if !is_valid_extension_id(id) {
+                    eprintln!(
+                        "{} must be 32 characters in the range a-p",
+                        EXTENSION_ID_ENV
+                    );
+                    std::process::exit(2);
+                }
+                return id.to_string();
             }
         }
         DEFAULT_EXTENSION_ID.to_string()
@@ -398,8 +419,7 @@ mod win {
         let updater_dst = install_dir.join(STABLE_UPDATER_EXE_NAME);
         let updater_log = install_dir.join("updater.log");
 
-        let _ = Command::new("taskkill")
-            .creation_flags(CREATE_NO_WINDOW)
+        let _ = hidden_command("taskkill")
             .args(["/F", "/IM", "freemid.exe", "/T"])
             .output();
 
@@ -464,17 +484,42 @@ mod win {
         (base, checksums)
     }
 
+    // Mirror the native host's update caps so a compromised or misbehaving
+    // release feed cannot exhaust disk/memory during install.
+    const MAX_DOWNLOAD_BYTES: u64 = 100 * 1024 * 1024;
+    const MAX_CHECKSUMS_BYTES: u64 = 1024 * 1024;
+
     fn download_file(url: &str, destination: &PathBuf) -> Result<(), String> {
         let response = ureq::get(url)
             .call()
             .map_err(|e| format!("Download failed from {}: {}", url, e))?;
 
-        let mut reader = response.into_reader();
+        if let Some(content_length) = response
+            .header("Content-Length")
+            .and_then(|h| h.parse::<u64>().ok())
+        {
+            if content_length > MAX_DOWNLOAD_BYTES {
+                return Err(format!(
+                    "Download too large ({} bytes, max {})",
+                    content_length, MAX_DOWNLOAD_BYTES
+                ));
+            }
+        }
+
+        let mut reader = response.into_reader().take(MAX_DOWNLOAD_BYTES + 1);
         let mut file = File::create(destination)
             .map_err(|e| format!("Cannot create {}: {}", destination.display(), e))?;
 
-        std::io::copy(&mut reader, &mut file)
+        let written = std::io::copy(&mut reader, &mut file)
             .map_err(|e| format!("Failed writing {}: {}", destination.display(), e))?;
+
+        if written > MAX_DOWNLOAD_BYTES {
+            let _ = std::fs::remove_file(destination);
+            return Err(format!(
+                "Download exceeded max size of {} bytes",
+                MAX_DOWNLOAD_BYTES
+            ));
+        }
 
         Ok(())
     }
@@ -484,13 +529,20 @@ mod win {
             .call()
             .map_err(|e| format!("Download failed from {}: {}", url, e))?;
 
-        let mut reader = response.into_reader();
-        let mut content = String::new();
+        let mut reader = response.into_reader().take(MAX_CHECKSUMS_BYTES + 1);
+        let mut buf = Vec::new();
         reader
-            .read_to_string(&mut content)
+            .read_to_end(&mut buf)
             .map_err(|e| format!("Failed reading {}: {}", url, e))?;
 
-        Ok(content)
+        if buf.len() as u64 > MAX_CHECKSUMS_BYTES {
+            return Err(format!(
+                "Checksums file exceeded max size of {} bytes",
+                MAX_CHECKSUMS_BYTES
+            ));
+        }
+
+        String::from_utf8(buf).map_err(|e| format!("Checksums file is not valid UTF-8: {}", e))
     }
 
     fn extract_checksum(checksums_raw: &str, artifact: &str) -> Result<String, String> {
@@ -635,10 +687,68 @@ mod win {
         Ok(())
     }
 
+    /// Resolve a Windows system tool to its absolute `System32` path.
+    ///
+    /// `CreateProcessW` (used by `Command::new`) searches the application
+    /// directory and the current directory before `System32`, so launching
+    /// `reg`/`taskkill` by bare name lets an attacker-planted `reg.exe` in the
+    /// directory the installer was run from execute instead. Anchoring to
+    /// `%SystemRoot%\System32` removes that search entirely.
+    fn system32_tool(exe: &str) -> PathBuf {
+        let system_root = std::env::var("SystemRoot")
+            .or_else(|_| std::env::var("windir"))
+            .unwrap_or_else(|_| r"C:\Windows".to_string());
+        let file = if exe.to_ascii_lowercase().ends_with(".exe") {
+            exe.to_string()
+        } else {
+            format!("{exe}.exe")
+        };
+        PathBuf::from(system_root).join("System32").join(file)
+    }
+
     fn hidden_command(program: &str) -> Command {
-        let mut cmd = Command::new(program);
+        let mut cmd = Command::new(system32_tool(program));
         cmd.creation_flags(CREATE_NO_WINDOW);
         cmd
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn default_extension_id_is_well_formed() {
+            assert!(is_valid_extension_id(DEFAULT_EXTENSION_ID));
+        }
+
+        #[test]
+        fn rejects_malformed_extension_ids() {
+            assert!(!is_valid_extension_id(""), "empty");
+            assert!(!is_valid_extension_id("abc"), "too short");
+            assert!(!is_valid_extension_id(&"a".repeat(33)), "too long");
+            assert!(
+                !is_valid_extension_id(&"z".repeat(32)),
+                "'z' is outside a-p"
+            );
+            assert!(!is_valid_extension_id(&"A".repeat(32)), "uppercase");
+            assert!(
+                !is_valid_extension_id(&format!("{}9", "a".repeat(31))),
+                "contains a digit"
+            );
+            // A JSON-breaking payload must be rejected before it can reach the manifest.
+            assert!(!is_valid_extension_id("a\"]}, \"evil\": \"x"));
+        }
+
+        #[test]
+        fn system32_tool_anchors_and_appends_exe() {
+            let reg = system32_tool("reg");
+            assert!(reg.ends_with(r"System32\reg.exe"));
+            // An explicit .exe must not be doubled.
+            let taskkill = system32_tool("taskkill.exe");
+            assert!(taskkill.ends_with(r"System32\taskkill.exe"));
+            // The directory must be absolute, not a bare tool name.
+            assert!(reg.is_absolute());
+        }
     }
 }
 
