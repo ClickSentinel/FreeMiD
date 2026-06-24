@@ -17,6 +17,14 @@ export function artistFromActivity(act: ActivityPreview): string {
   return '';
 }
 
+export function isUnsupportedPlatformUpdateError(error?: string): boolean {
+  return (
+    typeof error === 'string' &&
+    (/automatic updates are not supported on this platform/i.test(error) ||
+      /manual bootstrap required/i.test(error))
+  );
+}
+
 export function fallbackLogoPath(act: ActivityPreview): string | null {
   const service =
     `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();

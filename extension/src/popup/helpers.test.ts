@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { artistFromActivity, fallbackLogoPath, urlLike } from './helpers';
+import {
+  artistFromActivity,
+  fallbackLogoPath,
+  isUnsupportedPlatformUpdateError,
+  urlLike,
+} from './helpers';
 
 describe('popup helpers', () => {
   it('detects URL-like image values', () => {
@@ -29,5 +34,28 @@ describe('popup helpers', () => {
       'icons/youtube-logo-1024.png',
     );
     expect(fallbackLogoPath({ activityName: 'Unknown' })).toBeNull();
+  });
+
+  it('identifies unsupported-platform update errors', () => {
+    expect(
+      isUnsupportedPlatformUpdateError(
+        'automatic updates are not supported on this platform',
+      ),
+    ).toBe(true);
+    expect(isUnsupportedPlatformUpdateError('manual bootstrap required')).toBe(
+      true,
+    );
+    // Case-insensitive
+    expect(
+      isUnsupportedPlatformUpdateError('Automatic Updates Are Not Supported On This Platform'),
+    ).toBe(true);
+    // Transient port errors must not trigger the install-guide path
+    expect(
+      isUnsupportedPlatformUpdateError(
+        'Attempting to use a disconnected port object',
+      ),
+    ).toBe(false);
+    expect(isUnsupportedPlatformUpdateError('network error')).toBe(false);
+    expect(isUnsupportedPlatformUpdateError(undefined)).toBe(false);
   });
 });

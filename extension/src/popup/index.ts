@@ -1,5 +1,6 @@
 import { githubLatestDownloadUrl, githubRepoUrl } from '../constants/github';
 import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
+import { isUnsupportedPlatformUpdateError } from './helpers';
 
 /**
  * FreeMiD — Popup
@@ -84,14 +85,6 @@ const RECONNECT_UI_GRACE_MS = 12_000;
 const RECONNECT_BUTTON_COOLDOWN_MS = 15_000;
 let reconnectButtonUnlockAtMs = 0;
 
-function isUnsupportedPlatformUpdateError(error?: string): boolean {
-  return (
-    typeof error === 'string' &&
-    (/automatic updates are not supported on this platform/i.test(error) ||
-      /manual bootstrap required/i.test(error))
-  );
-}
-
 function windowsSetupUrl(): string {
   // Keep env override for local testing, but default users to install docs.
   return urlLike(DEV_WINDOWS_SETUP_URL)
@@ -131,6 +124,13 @@ const DISCORD_CHECK_DELAY_MS =
     : 10000;
 let discordCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let discordCheckShown = false;
+// Debounce before revealing "Native host not installed" help panel, matching
+// the Discord check pattern. Prevents a false flash during post-update reconnect
+// when lastError carries a stale Chrome port error but the host is about to
+// come back up.
+const HOST_CHECK_DELAY_MS = 2000;
+let hostCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let hostCheckShown = false;
 
 function formatUptime(ms: number): string {
   const totalMin = Math.floor(ms / 60_000);
@@ -637,10 +637,24 @@ function render(status: Status | null): void {
     // If there is no explicit error yet, treat this as a transient connecting
     // state to avoid flashing between statuses while the host handshake settles.
     if (!status.error) {
+      if (hostCheckTimer) {
+        clearTimeout(hostCheckTimer);
+        hostCheckTimer = null;
+      }
+      hostCheckShown = false;
       setStatus('connecting', 'Connecting…', 'Reaching native host');
-    } else {
+    } else if (hostCheckShown) {
       setStatus('error', 'Native host not running', status.error);
       helpHost.classList.remove('hidden');
+    } else {
+      setStatus('error', 'Native host not running', status.error);
+      if (!hostCheckTimer) {
+        hostCheckTimer = setTimeout(() => {
+          hostCheckTimer = null;
+          hostCheckShown = true;
+          render(latestStatus);
+        }, HOST_CHECK_DELAY_MS);
+      }
     }
 
     stopUptimeTick();
@@ -648,6 +662,13 @@ function render(status: Status | null): void {
     if (activityPanel) activityPanel.hidden = true;
     return;
   }
+
+  // Host is connected — clear any pending host-error debounce.
+  if (hostCheckTimer) {
+    clearTimeout(hostCheckTimer);
+    hostCheckTimer = null;
+  }
+  hostCheckShown = false;
 
   if (!status.discordConnected) {
     stopUptimeTick();

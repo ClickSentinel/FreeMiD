@@ -851,4 +851,101 @@ mod tests {
         let checksums = format!("{}  *freemid-linux-x86_64\n", hash);
         assert!(verify_sha256(data, &checksums, "freemid-linux-x86_64").is_ok());
     }
+
+    // ── escape_cmd_set_value (Windows-only) ──────────────────────────────────
+
+    #[cfg(windows)]
+    #[test]
+    fn escape_cmd_plain_path() {
+        use std::path::Path;
+        let p = Path::new(r"C:\Users\Alice\AppData\Local\FreeMiD\freemid.exe");
+        assert_eq!(
+            escape_cmd_set_value(p),
+            r"C:\Users\Alice\AppData\Local\FreeMiD\freemid.exe"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn escape_cmd_doubles_quotes() {
+        use std::path::Path;
+        // A double-quote in the path must be doubled so SET doesn't break out
+        // of the quoted value.
+        let p = Path::new("C:\\bad\"name\\freemid.exe");
+        let result = escape_cmd_set_value(p);
+        assert!(result.contains("\"\""), "quote must be doubled");
+        assert!(
+            !result.contains("bad\"n"),
+            "raw unescaped quote must not remain"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn escape_cmd_doubles_percent() {
+        use std::path::Path;
+        // A bare % inside a SET value is treated as a variable reference and
+        // silently corrupts the path at apply time.
+        let p = Path::new(r"C:\Users\100%user\AppData\Local\FreeMiD\freemid.exe");
+        let result = escape_cmd_set_value(p);
+        assert!(result.contains("%%"), "percent must be doubled");
+        assert!(
+            !result.contains("%u"),
+            "unexpanded %u sequence must not remain"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn escape_cmd_doubles_both() {
+        use std::path::Path;
+        let p = Path::new("C:\\bad\"path\\100%\\freemid.exe");
+        let result = escape_cmd_set_value(p);
+        assert!(result.contains("\"\""));
+        assert!(result.contains("%%"));
+    }
+
+    // ── validate_update_source_url ────────────────────────────────────────────
+
+    #[test]
+    fn update_url_accepts_https() {
+        assert!(validate_update_source_url(
+            "https://github.com/ClickSentinel/FreeMiD/releases/latest",
+            "download"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn update_url_rejects_http_for_remote_host() {
+        assert!(matches!(
+            validate_update_source_url(
+                "http://github.com/ClickSentinel/FreeMiD/releases/latest",
+                "download"
+            ),
+            Err(UpdateError::InvalidSource(_))
+        ));
+    }
+
+    #[test]
+    fn update_url_allows_http_localhost() {
+        assert!(validate_update_source_url("http://localhost:8787/latest.json", "test").is_ok());
+        assert!(validate_update_source_url("http://127.0.0.1:8787/feed", "test").is_ok());
+    }
+
+    #[test]
+    fn update_url_rejects_non_http_schemes() {
+        assert!(matches!(
+            validate_update_source_url("ftp://example.com/freemid.exe", "test"),
+            Err(UpdateError::InvalidSource(_))
+        ));
+        assert!(matches!(
+            validate_update_source_url("", "test"),
+            Err(UpdateError::InvalidSource(_))
+        ));
+        assert!(matches!(
+            validate_update_source_url("not-a-url", "test"),
+            Err(UpdateError::InvalidSource(_))
+        ));
+    }
 }

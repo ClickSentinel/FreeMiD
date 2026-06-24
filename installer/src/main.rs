@@ -66,13 +66,17 @@ mod win {
     }
 
     fn parse_cli_options() -> CliOptions {
+        parse_cli_options_from(std::env::args().skip(1))
+    }
+
+    fn parse_cli_options_from(args: impl Iterator<Item = String>) -> CliOptions {
         let mut options = CliOptions {
             uninstall: false,
             silent: false,
             extension_id: None,
         };
 
-        let mut args = std::env::args().skip(1);
+        let mut args = args.peekable();
         while let Some(arg) = args.next() {
             if arg.eq_ignore_ascii_case("--uninstall") {
                 options.uninstall = true;
@@ -864,6 +868,134 @@ mod win {
             assert!(cmd.contains("for /L %i in (1,1,30)"));
             assert!(cmd.contains("if not exist"));
             assert!(cmd.contains("exit /B 0"));
+        }
+
+        // ── parse_cli_options_from ────────────────────────────────────────────
+
+        fn args(v: &[&str]) -> impl Iterator<Item = String> + '_ {
+            v.iter().map(|s| s.to_string())
+        }
+
+        #[test]
+        fn cli_defaults_when_empty() {
+            let opts = parse_cli_options_from(args(&[]));
+            assert!(!opts.uninstall);
+            assert!(!opts.silent);
+            assert!(opts.extension_id.is_none());
+        }
+
+        #[test]
+        fn cli_uninstall_and_silent() {
+            let opts = parse_cli_options_from(args(&["--uninstall", "--silent"]));
+            assert!(opts.uninstall);
+            assert!(opts.silent);
+        }
+
+        #[test]
+        fn cli_extension_id_space_separated() {
+            let id = "a".repeat(32);
+            let opts = parse_cli_options_from(args(&["--extension-id", &id]));
+            assert_eq!(opts.extension_id.as_deref(), Some(id.as_str()));
+        }
+
+        #[test]
+        fn cli_extension_id_equals_form() {
+            let id = "b".repeat(32);
+            let arg = format!("--extension-id={id}");
+            let opts = parse_cli_options_from(args(&[&arg]));
+            assert_eq!(opts.extension_id.as_deref(), Some(id.as_str()));
+        }
+
+        #[test]
+        fn cli_case_insensitive_flags() {
+            let opts = parse_cli_options_from(args(&["--UNINSTALL", "--Silent"]));
+            assert!(opts.uninstall);
+            assert!(opts.silent);
+        }
+
+        // ── extract_checksum ──────────────────────────────────────────────────
+
+        #[test]
+        fn checksum_finds_artifact() {
+            let raw = "abc123  freemid-windows-x86_64.exe\ndef456  freemid-linux-x86_64\n";
+            assert_eq!(
+                extract_checksum(raw, "freemid-windows-x86_64.exe").unwrap(),
+                "abc123"
+            );
+        }
+
+        #[test]
+        fn checksum_handles_star_prefix() {
+            let raw = "abc123  *freemid-windows-x86_64.exe\n";
+            assert_eq!(
+                extract_checksum(raw, "freemid-windows-x86_64.exe").unwrap(),
+                "abc123"
+            );
+        }
+
+        #[test]
+        fn checksum_lowercases_hash() {
+            let raw = "ABCDEF  freemid-windows-x86_64.exe\n";
+            assert_eq!(
+                extract_checksum(raw, "freemid-windows-x86_64.exe").unwrap(),
+                "abcdef"
+            );
+        }
+
+        #[test]
+        fn checksum_skips_blank_lines() {
+            let raw = "\n\nabc123  freemid-windows-x86_64.exe\n\n";
+            assert_eq!(
+                extract_checksum(raw, "freemid-windows-x86_64.exe").unwrap(),
+                "abc123"
+            );
+        }
+
+        #[test]
+        fn checksum_errors_on_missing_artifact() {
+            let raw = "abc123  freemid-linux-x86_64\n";
+            assert!(extract_checksum(raw, "freemid-windows-x86_64.exe").is_err());
+        }
+
+        #[test]
+        fn checksum_errors_on_empty_file() {
+            assert!(extract_checksum("", "freemid-windows-x86_64.exe").is_err());
+        }
+
+        // ── build_urls ────────────────────────────────────────────────────────
+
+        #[test]
+        fn build_urls_latest() {
+            let (dl, cs, apply) = build_urls("latest");
+            assert_eq!(
+                dl,
+                "https://github.com/ClickSentinel/FreeMiD/releases/latest/download/freemid-windows-x86_64.exe"
+            );
+            assert_eq!(
+                cs,
+                "https://github.com/ClickSentinel/FreeMiD/releases/latest/download/checksums.sha256"
+            );
+            assert_eq!(
+                apply,
+                "https://github.com/ClickSentinel/FreeMiD/releases/latest/download/freemid-apply-windows-x86_64.exe"
+            );
+        }
+
+        #[test]
+        fn build_urls_specific_tag() {
+            let (dl, cs, apply) = build_urls("v0.4.2");
+            assert_eq!(
+                dl,
+                "https://github.com/ClickSentinel/FreeMiD/releases/download/v0.4.2/freemid-windows-x86_64.exe"
+            );
+            assert_eq!(
+                cs,
+                "https://github.com/ClickSentinel/FreeMiD/releases/download/v0.4.2/checksums.sha256"
+            );
+            assert_eq!(
+                apply,
+                "https://github.com/ClickSentinel/FreeMiD/releases/download/v0.4.2/freemid-apply-windows-x86_64.exe"
+            );
         }
     }
 }
