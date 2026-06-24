@@ -22,7 +22,7 @@ mod win {
     use std::fs::File;
     use std::io::{Read, Write};
     use std::os::windows::process::CommandExt;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
 
     use native_windows_gui as nwg;
@@ -435,11 +435,16 @@ mod win {
             let _ = reg_delete(&key);
         }
 
+        // Derive the installer log path directly rather than via
+        // installer_log_path(), which would re-create install_dir as a side effect.
+        let setup_log = install_dir.join("setup.log");
+
         let _ = std::fs::remove_file(&manifest_path);
         let _ = std::fs::remove_file(&bin_dst);
         let _ = std::fs::remove_file(&setup_dst);
         let _ = std::fs::remove_file(&updater_dst);
         let _ = std::fs::remove_file(&updater_log);
+        let _ = std::fs::remove_file(&setup_log);
 
         if let Ok(entries) = std::fs::read_dir(&install_dir) {
             for entry in entries.flatten() {
@@ -454,14 +459,13 @@ mod win {
             }
         }
 
-        if install_dir.exists() {
-            let has_remaining = std::fs::read_dir(&install_dir)
-                .ok()
-                .and_then(|mut it| it.next())
-                .is_some();
-            if !has_remaining {
-                let _ = std::fs::remove_dir(&install_dir);
-            }
+        // Remove the install directory. When uninstall runs from Add/Remove
+        // Programs the running process *is* `install_dir\freemid-setup.exe`, and
+        // Windows will not let a running image delete itself — so the directory
+        // is not yet empty and remove_dir fails. Hand the final delete to a
+        // detached cmd.exe that retries until this process exits.
+        if install_dir.exists() && std::fs::remove_dir(&install_dir).is_err() {
+            schedule_deferred_cleanup(&setup_dst, &install_dir);
         }
 
         set_status("Status: \u{2714} Uninstalled");
@@ -712,6 +716,38 @@ mod win {
         cmd
     }
 
+    /// Build the `cmd.exe` command that finishes uninstall after this process
+    /// exits: retry deleting the (self-locked) setup executable until it is gone,
+    /// then remove the now-empty install directory. The `for /L` retry loop gives
+    /// the user time to dismiss the completion dialog before the lock releases.
+    fn deferred_cleanup_command(setup: &str, dir: &str) -> String {
+        format!(
+            "for /L %i in (1,1,30) do (del /f /q \"{setup}\" >nul 2>nul & if not exist \"{setup}\" (rmdir /q \"{dir}\" >nul 2>nul & exit /B 0) else (ping 127.0.0.1 -n 2 >nul))"
+        )
+    }
+
+    /// Spawn a detached `cmd.exe` to delete the installer's own executable and
+    /// the install directory once this process releases its file lock on exit.
+    fn schedule_deferred_cleanup(setup_dst: &Path, install_dir: &Path) {
+        let command = deferred_cleanup_command(
+            &setup_dst.display().to_string(),
+            &install_dir.display().to_string(),
+        );
+        let cmd_path = system32_tool("cmd");
+        let mut process = Command::new(&cmd_path);
+        process
+            .args(["/C", &command])
+            .creation_flags(CREATE_NO_WINDOW);
+        // Run from System32 so the bare `ping` in the script resolves to the real
+        // tool rather than one planted in the directory the installer was launched
+        // from (cmd searches the working directory before PATH).
+        if let Some(system32_dir) = cmd_path.parent() {
+            process.current_dir(system32_dir);
+        }
+        // spawn (not output) so the child outlives us and can delete this exe.
+        let _ = process.spawn();
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -748,6 +784,20 @@ mod win {
             assert!(taskkill.ends_with(r"System32\taskkill.exe"));
             // The directory must be absolute, not a bare tool name.
             assert!(reg.is_absolute());
+        }
+
+        #[test]
+        fn deferred_cleanup_command_targets_both_paths() {
+            let setup = r"C:\Users\me\AppData\Local\FreeMiD\freemid-setup.exe";
+            let dir = r"C:\Users\me\AppData\Local\FreeMiD";
+            let cmd = deferred_cleanup_command(setup, dir);
+            // Deletes the self-locked exe and removes the directory, quoted.
+            assert!(cmd.contains(&format!("del /f /q \"{setup}\"")));
+            assert!(cmd.contains(&format!("rmdir /q \"{dir}\"")));
+            // Retries (so the user can dismiss the dialog) rather than deleting once.
+            assert!(cmd.contains("for /L %i in (1,1,30)"));
+            assert!(cmd.contains("if not exist"));
+            assert!(cmd.contains("exit /B 0"));
         }
     }
 }
