@@ -30,6 +30,7 @@ mod win {
 
     const GITHUB_REPO: &str = "ClickSentinel/FreeMiD";
     const ARTIFACT: &str = "freemid-windows-x86_64.exe";
+    const APPLY_ARTIFACT: &str = "freemid-apply-windows-x86_64.exe";
     const HOST_NAME: &str = "com.clicksentinel.freemid";
     const DEFAULT_EXTENSION_ID: &str = "gaonohfjfpdlfapccfaanenfcojfknli";
     const EXTENSION_ID_ENV: &str = "FREEMID_EXTENSION_ID";
@@ -240,7 +241,7 @@ mod win {
         log_step(&format!("FreeMiD Setup  v{}", VERSION));
         log_step(&"-".repeat(38));
 
-        log_step("[1/7] Stopping any running FreeMiD process...");
+        log_step("[1/8] Stopping any running FreeMiD process...");
         set_status("Status: Stopping existing FreeMiD process...");
         let _ = hidden_command("taskkill")
             .args(["/F", "/IM", "freemid.exe", "/T"])
@@ -252,12 +253,18 @@ mod win {
         let bin_dst = install_dir.join("freemid.exe");
         let staged_bin_dst =
             install_dir.join(format!("freemid.exe.install-{}.tmp", std::process::id()));
+        let apply_dst = install_dir.join(STABLE_UPDATER_EXE_NAME);
+        let staged_apply_dst = install_dir.join(format!(
+            "freemid-apply.exe.install-{}.tmp",
+            std::process::id()
+        ));
         let manifest_path = install_dir.join(format!("{}.json", HOST_NAME));
 
         std::fs::create_dir_all(&install_dir)
             .map_err(|e| format!("Cannot create install directory: {}", e))?;
 
         let _ = std::fs::remove_file(&staged_bin_dst);
+        let _ = std::fs::remove_file(&staged_apply_dst);
 
         if bin_dst.exists() {
             let mut unlocked = false;
@@ -281,7 +288,7 @@ mod win {
 
         let install_result = (|| -> Result<(), String> {
             if let Ok(local_binary) = std::env::var(LOCAL_BINARY_ENV) {
-                log_step("[2/7] Installing from local binary...");
+                log_step("[2/8] Installing from local binary...");
                 set_status("Status: Installing local binary...");
                 log_step(&format!("      From: {}", local_binary));
                 std::fs::copy(&local_binary, &staged_bin_dst)
@@ -290,32 +297,43 @@ mod win {
                     .map(|m| m.len() as f64 / 1_048_576.0)
                     .unwrap_or(0.0);
                 log_step(&format!("      Installed ({:.2} MB)", size_mb));
-                log_step("[3/7] Skipping checksum (local binary mode)...");
+                log_step("[3/8] Skipping checksum (local binary mode)...");
                 set_status("Status: Skipping checksum (local mode)...");
             } else {
                 let tag =
                     std::env::var("FREEMID_RELEASE_TAG").unwrap_or_else(|_| "latest".to_string());
-                let (download_url, checksums_url) = build_urls(&tag);
+                let (download_url, checksums_url, apply_url) = build_urls(&tag);
 
-                log_step(&format!("[2/7] Downloading {} ...", ARTIFACT));
+                log_step(&format!("[2/8] Downloading {} ...", ARTIFACT));
                 set_status("Status: Downloading native host...");
                 log_step(&format!("      From: {}", download_url));
                 if let Err(e) = download_file(&download_url, &staged_bin_dst) {
                     let _ = std::fs::remove_file(&staged_bin_dst);
                     return Err(e);
                 }
-
                 let size_mb = std::fs::metadata(&staged_bin_dst)
                     .map(|m| m.len() as f64 / 1_048_576.0)
                     .unwrap_or(0.0);
                 log_step(&format!("      Downloaded ({:.2} MB)", size_mb));
 
-                log_step("[3/7] Verifying SHA256 checksum...");
-                set_status("Status: Verifying checksum...");
+                log_step(&format!("      Downloading {} ...", APPLY_ARTIFACT));
+                set_status("Status: Downloading apply helper...");
+                log_step(&format!("      From: {}", apply_url));
+                if let Err(e) = download_file(&apply_url, &staged_apply_dst) {
+                    let _ = std::fs::remove_file(&staged_apply_dst);
+                    return Err(e);
+                }
+                let apply_size_mb = std::fs::metadata(&staged_apply_dst)
+                    .map(|m| m.len() as f64 / 1_048_576.0)
+                    .unwrap_or(0.0);
+                log_step(&format!("      Downloaded ({:.2} MB)", apply_size_mb));
+
+                log_step("[3/8] Verifying SHA256 checksums...");
+                set_status("Status: Verifying checksums...");
                 let checksums_raw = download_text(&checksums_url)?;
+
                 let expected = extract_checksum(&checksums_raw, ARTIFACT)?;
                 let actual = file_sha256_hex(&staged_bin_dst)?;
-
                 if actual != expected {
                     let _ = std::fs::remove_file(&staged_bin_dst);
                     return Err(format!(
@@ -323,10 +341,24 @@ mod win {
                         expected, actual
                     ));
                 }
-                log_step(&format!("      OK  {}...", &actual[..16]));
+                log_step(&format!("      OK  {}... (native host)", &actual[..16]));
+
+                let expected_apply = extract_checksum(&checksums_raw, APPLY_ARTIFACT)?;
+                let actual_apply = file_sha256_hex(&staged_apply_dst)?;
+                if actual_apply != expected_apply {
+                    let _ = std::fs::remove_file(&staged_apply_dst);
+                    return Err(format!(
+                        "Apply helper checksum mismatch!\n  Expected: {}\n  Actual:   {}",
+                        expected_apply, actual_apply
+                    ));
+                }
+                log_step(&format!(
+                    "      OK  {}... (apply helper)",
+                    &actual_apply[..16]
+                ));
             }
 
-            log_step("[4/7] Installing native host binary...");
+            log_step("[4/8] Installing native host binary...");
             set_status("Status: Installing native host binary...");
             if bin_dst.exists() {
                 std::fs::remove_file(&bin_dst).map_err(|e| {
@@ -340,7 +372,38 @@ mod win {
             std::fs::rename(&staged_bin_dst, &bin_dst)
                 .map_err(|e| format!("Failed to install binary to {}: {}", bin_dst.display(), e))?;
 
-            log_step("[5/7] Writing native messaging manifest...");
+            log_step("[5/8] Installing apply helper...");
+            set_status("Status: Installing apply helper...");
+            if staged_apply_dst.exists() {
+                // download mode: staged binary was downloaded and verified
+                if apply_dst.exists() {
+                    std::fs::remove_file(&apply_dst).map_err(|e| {
+                        format!(
+                            "Failed to replace existing apply helper {}: {}",
+                            apply_dst.display(),
+                            e
+                        )
+                    })?;
+                }
+                std::fs::rename(&staged_apply_dst, &apply_dst).map_err(|e| {
+                    format!(
+                        "Failed to install apply helper to {}: {}",
+                        apply_dst.display(),
+                        e
+                    )
+                })?;
+            } else {
+                // local binary mode: copy the freshly installed host as apply helper
+                std::fs::copy(&bin_dst, &apply_dst).map_err(|e| {
+                    format!(
+                        "Failed to copy apply helper from {}: {}",
+                        bin_dst.display(),
+                        e
+                    )
+                })?;
+            }
+
+            log_step("[6/8] Writing native messaging manifest...");
             set_status("Status: Writing native messaging manifest...");
             let bin_path_json = bin_dst.display().to_string().replace('\\', "\\\\");
             let manifest = format!(
@@ -352,7 +415,7 @@ mod win {
             std::fs::write(&manifest_path, &manifest)
                 .map_err(|e| format!("Cannot write manifest: {}", e))?;
 
-            log_step("[6/7] Registering native messaging host...");
+            log_step("[7/8] Registering native messaging host...");
             set_status("Status: Registering browser host entries...");
             let manifest_str = manifest_path.display().to_string();
             let mut registered_count = 0usize;
@@ -381,13 +444,14 @@ mod win {
                 registered_names.join(", ")
             ));
 
-            log_step("[7/7] Registering Apps & Features entry...");
+            log_step("[8/8] Registering Apps & Features entry...");
             set_status("Status: Registering Apps and Features entry...");
             let setup_dst = install_dir.join(SETUP_EXE_NAME);
             copy_setup_exe(&setup_dst)?;
             register_arp(&install_dir, &bin_dst, &setup_dst)?;
 
             log_step(&format!("  Binary:     {}", bin_dst.display()));
+            log_step(&format!("  Apply:      {}", apply_dst.display()));
             log_step(&format!("  Setup:      {}", setup_dst.display()));
             log_step(&format!("  Manifest:   {}", manifest_path.display()));
             log_step(&format!("  Extension:  {}", extension_id));
@@ -399,6 +463,7 @@ mod win {
 
         if install_result.is_err() {
             let _ = std::fs::remove_file(&staged_bin_dst);
+            let _ = std::fs::remove_file(&staged_apply_dst);
         }
 
         install_result
@@ -472,7 +537,7 @@ mod win {
         Ok(())
     }
 
-    fn build_urls(tag: &str) -> (String, String) {
+    fn build_urls(tag: &str) -> (String, String, String) {
         let base = if tag == "latest" {
             format!(
                 "https://github.com/{}/releases/latest/download/{}",
@@ -485,7 +550,8 @@ mod win {
             )
         };
         let checksums = base.replace(ARTIFACT, "checksums.sha256");
-        (base, checksums)
+        let apply = base.replace(ARTIFACT, APPLY_ARTIFACT);
+        (base, checksums, apply)
     }
 
     // Mirror the native host's update caps so a compromised or misbehaving
