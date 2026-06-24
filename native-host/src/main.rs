@@ -55,7 +55,10 @@ fn now_unix_ms() -> u64 {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() == 4 && args[1] == "--apply-update" {
+    // `--apply-update <staged> <target> [old-pid]`: accept the optional trailing
+    // pid (>= 4 args) so a copy of this binary works as the apply helper, matching
+    // the dedicated freemid-apply. The pid is advisory and ignored here.
+    if args.len() >= 4 && args[1] == "--apply-update" {
         if let Err(e) = update::run_apply_update(&args[2], &args[3]) {
             eprintln!("[FreeMiD] update helper failed: {}", e);
             std::process::exit(1);

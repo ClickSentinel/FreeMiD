@@ -497,6 +497,25 @@ fn apply_update_windows(data: &[u8]) -> Result<(), UpdateError> {
         .map(|p| p.join(STABLE_UPDATER_EXE_NAME))
         .unwrap_or_else(|| PathBuf::from(STABLE_UPDATER_EXE_NAME));
 
+    // Self-heal: if the helper was never installed (e.g. the GUI installer did
+    // not ship it), bootstrap it from the running binary. freemid.exe handles
+    // `--apply-update` itself, so a copy works as the apply helper — and it must
+    // be a separate file regardless, since a running image can't overwrite
+    // itself on Windows. This makes the reliable helper path available even on
+    // installs that lack it, instead of dropping to the brittle cmd fallback.
+    if !stable_updater_path.exists() {
+        match std::fs::copy(&current_exe, &stable_updater_path) {
+            Ok(_) => append_updater_log(&format!(
+                "apply_update_windows: bootstrapped stable updater at {:?} from running binary",
+                stable_updater_path
+            )),
+            Err(e) => append_updater_log(&format!(
+                "apply_update_windows: could not bootstrap stable updater at {:?}: {e}",
+                stable_updater_path
+            )),
+        }
+    }
+
     if stable_updater_path.exists() {
         append_updater_log(&format!(
             "apply_update_windows: attempting stable updater {:?}",
@@ -555,6 +574,21 @@ fn escape_cmd_set_value(path: &std::path::Path) -> String {
         .replace('%', "%%")
 }
 
+/// Resolve a Windows system tool to its absolute `System32` path, so it is not
+/// resolved via the working directory / PATH (binary-planting protection).
+#[cfg(windows)]
+fn system32_tool(exe: &str) -> PathBuf {
+    let system_root = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .unwrap_or_else(|_| r"C:\Windows".to_string());
+    let file = if exe.to_ascii_lowercase().ends_with(".exe") {
+        exe.to_string()
+    } else {
+        format!("{exe}.exe")
+    };
+    PathBuf::from(system_root).join("System32").join(file)
+}
+
 #[cfg(windows)]
 fn spawn_cmd_apply_update(
     staged_path: &std::path::Path,
@@ -564,8 +598,14 @@ fn spawn_cmd_apply_update(
     let target = escape_cmd_set_value(target_path);
     let log_path = escape_cmd_set_value(&updater_log_path());
 
+    // `ping -n 2` rather than `timeout`: the host's stdin is the Chrome
+    // native-messaging pipe, which cmd inherits, and `timeout` aborts
+    // immediately ("Input redirection is not supported") under a redirected
+    // stdin — so it never actually waits between copy attempts, and because the
+    // trailing "timed out" log is gated behind its exit code, the failure was
+    // also silent. `ping` waits regardless of stdin and returns success.
     let command = format!(
-        "set \"S={}\" && set \"T={}\" && set \"L={}\" && for /L %i in (1,1,120) do (copy /Y \"%S%\" \"%T%\" >nul && del /F /Q \"%S%\" >nul && (echo cmd_fallback: copy succeeded>>\"%L%\") && exit /B 0 || timeout /T 1 /NOBREAK >nul) && (echo cmd_fallback: timed out>>\"%L%\" & exit /B 1)",
+        "set \"S={}\" && set \"T={}\" && set \"L={}\" && for /L %i in (1,1,120) do (copy /Y \"%S%\" \"%T%\" >nul && del /F /Q \"%S%\" >nul && (echo cmd_fallback: copy succeeded>>\"%L%\") && exit /B 0 || ping -n 2 127.0.0.1 >nul) && (echo cmd_fallback: timed out>>\"%L%\" & exit /B 1)",
         staged,
         target,
         log_path,
@@ -576,10 +616,18 @@ fn spawn_cmd_apply_update(
         staged_path, target_path
     ));
 
-    std::process::Command::new("cmd.exe")
+    let cmd_exe = system32_tool("cmd");
+    let mut builder = std::process::Command::new(&cmd_exe);
+    builder
         .arg("/C")
         .arg(command)
-        .creation_flags(CREATE_NO_WINDOW)
+        .creation_flags(CREATE_NO_WINDOW);
+    // Run from System32 so the bare `ping` in the script resolves to the real
+    // tool, not one planted in the host's working directory.
+    if let Some(system32_dir) = cmd_exe.parent() {
+        builder.current_dir(system32_dir);
+    }
+    builder
         .spawn()
         .map(|_| ())
         .map_err(|e| UpdateError::Apply(format!("Failed to launch cmd apply fallback: {e}")))
