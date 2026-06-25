@@ -23,6 +23,7 @@ import {
 } from './helpers';
 
 const NATIVE_HOST_NAME = 'com.clicksentinel.freemid';
+const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID?.trim() || '';
 const DEV_UPDATE_LATEST_URL =
   import.meta.env.VITE_UPDATE_LATEST_URL?.trim() || '';
 const DEV_UPDATE_RELEASES_BASE =
@@ -93,6 +94,8 @@ let manualReconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
 let reconnectCooldownUntilMs = 0;
+let desktopActivityActive = false;
+const desktopArtCache = new Map<string, string | null>(); // "artist|title" → HTTPS URL or null
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 130000 : 30000;
@@ -376,6 +379,15 @@ function connectNativeHost(): void {
           | 'up_to_date'
           | 'success'
           | 'failed';
+        app?: string;
+        track?: {
+          title: string;
+          artist: string;
+          album?: string;
+          state: string;
+          position_secs?: number;
+          duration_secs?: number;
+        } | null;
       };
       if (m.type === 'STATUS') {
         if (reconnectInProgress) {
@@ -417,10 +429,8 @@ function connectNativeHost(): void {
         }
         if (discordConnected && !wasConnected) {
           discordConnectedSince = Date.now();
-          notifyConnectionChange(true);
         } else if (!discordConnected && wasConnected) {
           discordConnectedSince = null;
-          notifyConnectionChange(false);
         }
         lastError = m.error ?? null;
         if (m.error) console.warn('[FreeMiD] host reported error:', m.error);
@@ -439,6 +449,62 @@ function connectNativeHost(): void {
         }
 
         broadcastStatus();
+      } else if (m.type === 'DESKTOP_MEDIA' && m.app === 'tidal') {
+        const track = m.track;
+        const hasTidalBrowserTab = [...activeActivityTabs.values()].includes(
+          'tidal',
+        );
+        if (!hasTidalBrowserTab && track && track.state === 'playing') {
+          const now = Math.floor(Date.now() / 1000);
+          // position_secs is continuously accurate from the native host
+          // (extrapolated via SMTC LastUpdatedTime), so startTimestamp is
+          // stable across polls and Discord's timer won't reset.
+          const start =
+            track.position_secs != null
+              ? now - Math.floor(track.position_secs)
+              : now;
+          const end =
+            track.duration_secs != null
+              ? start + Math.floor(track.duration_secs)
+              : undefined;
+
+          const artKey = `${track.artist}|${track.title}`;
+          const artUrl = desktopArtCache.get(artKey) ?? null;
+          if (!desktopArtCache.has(artKey)) {
+            void lookupArtworkUrl(track.artist, track.title).then((url) => {
+              desktopArtCache.set(artKey, url);
+              // Trigger a fresh poll so the activity is re-applied with
+              // accurate position + the now-cached art URL.
+              if (desktopActivityActive && nativePort) {
+                sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
+              }
+            });
+          }
+
+          desktopActivityActive = true;
+          setActivity(
+            {
+              application_id: DISCORD_CLIENT_ID || undefined,
+              name: track.artist || 'TIDAL',
+              type: 2,
+              details: track.title,
+              state: track.artist ? `by ${track.artist}` : 'TIDAL',
+              timestamps: { start, end },
+              assets: {
+                large_image: artUrl ?? 'tidal-logo-1024',
+                large_text: track.album || track.title,
+                small_image: artUrl ? 'tidal-logo-1024' : undefined,
+                small_text: artUrl ? 'TIDAL' : undefined,
+              },
+            },
+            'tidal',
+          );
+        } else if (desktopActivityActive && !hasTidalBrowserTab) {
+          desktopActivityActive = false;
+          clearActivity();
+        } else {
+          desktopActivityActive = false;
+        }
       } else if (m.type === 'UPDATE_STATUS' && m.status) {
         clearUpdateRequestTimeout();
         updateStatus = {
@@ -632,14 +698,41 @@ export function clearActivity(): void {
   sendToHost({ type: 'CLEAR_ACTIVITY' });
 }
 
-function notifyConnectionChange(connected: boolean): void {
-  chrome.notifications.create('freemid-status', {
-    type: 'basic',
-    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
-    title: 'FreeMiD',
-    message: connected ? 'Connected to Discord' : 'Disconnected from Discord',
-    silent: true,
-  });
+// ── Desktop media helpers ──────────────────────────────────────────────────────
+
+async function lookupArtworkUrl(
+  artist: string,
+  title: string,
+): Promise<string | null> {
+  try {
+    const query = encodeURIComponent(`${artist} ${title}`);
+    const mbResp = await fetch(
+      `https://musicbrainz.org/ws/2/recording/?query=${query}&fmt=json&limit=5`,
+      {
+        headers: {
+          'User-Agent': `FreeMiD/${chrome.runtime.getManifest().version} (https://github.com/${GITHUB_REPO})`,
+        },
+      },
+    );
+    if (!mbResp.ok) return null;
+
+    const mbData = (await mbResp.json()) as {
+      recordings?: Array<{ releases?: Array<{ id: string }> }>;
+    };
+
+    const releases = mbData.recordings?.flatMap((r) => r.releases ?? []) ?? [];
+    for (const release of releases.slice(0, 3)) {
+      const caaResp = await fetch(
+        `https://coverartarchive.org/release/${release.id}/front-500`,
+        { method: 'HEAD' },
+      );
+      if (caaResp.ok) return caaResp.url;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Activity registry & content script injection ───────────────────────────────
@@ -666,6 +759,12 @@ async function handleTabNavigation(
 
   const forceInject = options?.forceInject === true;
   if (!forceInject && activeActivityTabs.get(tabId) === meta.id) return;
+
+  // If the browser tab is taking over an activity the desktop poller was
+  // managing, hand off cleanly so the desktop flag doesn't linger.
+  if (meta.id === 'tidal' && desktopActivityActive) {
+    desktopActivityActive = false;
+  }
 
   activeActivityTabs.set(tabId, meta.id);
 
@@ -760,6 +859,17 @@ chrome.runtime.onMessage.addListener(
       if (!nativePort) connectNativeHost();
       if (!latestVersion) {
         void checkForUpdates();
+      }
+      // Trigger an immediate desktop media poll when the popup opens so there
+      // is no need to wait for the next keepalive alarm (~24 s).
+      if (
+        nativePort &&
+        hostRuntimeOs === 'windows' &&
+        enabledSites.tidal &&
+        !paused &&
+        ![...activeActivityTabs.values()].includes('tidal')
+      ) {
+        sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
       }
       sendResponse({
         hostConnected,
@@ -886,6 +996,16 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     // Keep an existing host port healthy, but do not auto-spawn a new host.
     // Reconnect should happen on explicit demand (popup/status/activity/update).
     if (nativePort) sendToHost({ type: 'PING' });
+    // Poll Tidal desktop app on Windows when no browser tab has it active.
+    if (
+      nativePort &&
+      hostRuntimeOs === 'windows' &&
+      enabledSites.tidal &&
+      !paused &&
+      ![...activeActivityTabs.values()].includes('tidal')
+    ) {
+      sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
+    }
   }
   if (alarm.name === 'freemid-update-check') {
     void checkForUpdates();

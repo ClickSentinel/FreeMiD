@@ -47,7 +47,9 @@ describe('popup helpers', () => {
     );
     // Case-insensitive
     expect(
-      isUnsupportedPlatformUpdateError('Automatic Updates Are Not Supported On This Platform'),
+      isUnsupportedPlatformUpdateError(
+        'Automatic Updates Are Not Supported On This Platform',
+      ),
     ).toBe(true);
     // Transient port errors must not trigger the install-guide path
     expect(
