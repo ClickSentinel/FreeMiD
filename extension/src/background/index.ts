@@ -428,10 +428,8 @@ function connectNativeHost(): void {
         }
         if (discordConnected && !wasConnected) {
           discordConnectedSince = Date.now();
-          notifyConnectionChange(true);
         } else if (!discordConnected && wasConnected) {
           discordConnectedSince = null;
-          notifyConnectionChange(false);
         }
         lastError = m.error ?? null;
         if (m.error) console.warn('[FreeMiD] host reported error:', m.error);
@@ -678,16 +676,6 @@ export function clearActivity(): void {
   sendToHost({ type: 'CLEAR_ACTIVITY' });
 }
 
-function notifyConnectionChange(connected: boolean): void {
-  chrome.notifications.create('freemid-status', {
-    type: 'basic',
-    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
-    title: 'FreeMiD',
-    message: connected ? 'Connected to Discord' : 'Disconnected from Discord',
-    silent: true,
-  });
-}
-
 // ── Activity registry & content script injection ───────────────────────────────
 
 /** Map of tabId → activityId for tabs that currently have a script injected. */
@@ -812,6 +800,17 @@ chrome.runtime.onMessage.addListener(
       if (!nativePort) connectNativeHost();
       if (!latestVersion) {
         void checkForUpdates();
+      }
+      // Trigger an immediate desktop media poll when the popup opens so there
+      // is no need to wait for the next keepalive alarm (~24 s).
+      if (
+        nativePort &&
+        hostRuntimeOs === 'windows' &&
+        enabledSites['tidal'] &&
+        !paused &&
+        ![...activeActivityTabs.values()].includes('tidal')
+      ) {
+        sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
       }
       sendResponse({
         hostConnected,
