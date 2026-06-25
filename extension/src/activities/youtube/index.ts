@@ -230,3 +230,48 @@ presence.on('UpdateData', () => {
     buttons: [{ label: 'Watch on YouTube', url: videoUrl }],
   });
 });
+
+// ── Event-driven updates ─────────────────────────────────────────────────────
+// Abort listeners registered by any previous injection of this script.
+const EVENTS_KEY = '__freemid_events_abort';
+const prevController = (globalThis as Record<string, unknown>)[EVENTS_KEY] as
+  | AbortController
+  | undefined;
+prevController?.abort();
+const eventsController = new AbortController();
+(globalThis as Record<string, unknown>)[EVENTS_KEY] = eventsController;
+const { signal } = eventsController;
+
+const trigger = () => presence.triggerUpdate();
+
+// Re-evaluate immediately on play/pause — critical for lock handoff speed.
+document.addEventListener('play', trigger, { capture: true, signal });
+document.addEventListener('pause', trigger, { capture: true, signal });
+// loadedmetadata fires when a new video starts loading (SPA navigation).
+document.addEventListener('loadedmetadata', trigger, { capture: true, signal });
+
+// Observe the video title heading for SPA navigation (title updates before loadedmetadata).
+function connectTitleObserver(el: Element): void {
+  const obs = new MutationObserver(trigger);
+  obs.observe(el, { characterData: true, childList: true, subtree: true });
+  signal.addEventListener('abort', () => obs.disconnect());
+}
+
+const titleEl = document.querySelector(
+  'h1.ytd-video-primary-info-renderer, h1.style-scope.ytd-video-primary-info-renderer',
+);
+if (titleEl) {
+  connectTitleObserver(titleEl);
+} else {
+  const watcher = new MutationObserver(() => {
+    const el = document.querySelector(
+      'h1.ytd-video-primary-info-renderer, h1.style-scope.ytd-video-primary-info-renderer',
+    );
+    if (el) {
+      watcher.disconnect();
+      connectTitleObserver(el);
+    }
+  });
+  watcher.observe(document.body, { childList: true, subtree: true });
+  signal.addEventListener('abort', () => watcher.disconnect());
+}

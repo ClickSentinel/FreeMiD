@@ -48,6 +48,7 @@ export class Presence {
   private readonly clientId: string;
   private readonly updateIntervalMs: number;
   private intervalId?: ReturnType<typeof setInterval>;
+  private scheduledCallback: (() => void) | undefined;
 
   constructor({ clientId, updateInterval = 10 }: PresenceConfig) {
     this.clientId = clientId;
@@ -96,6 +97,7 @@ export class Presence {
       void Promise.resolve(callback());
     };
 
+    this.scheduledCallback = safeCallback;
     safeCallback();
     this.intervalId = setInterval(safeCallback, this.updateIntervalMs);
     (globalThis as Record<string, unknown>)[GUARD_KEY] = this.intervalId;
@@ -146,6 +148,15 @@ export class Presence {
     chrome.runtime
       .sendMessage({ type: 'FREEMID_CLEAR_ACTIVITY' })
       .catch(() => {});
+  }
+
+  /**
+   * Immediately fire the UpdateData callback without waiting for the next
+   * interval tick. Used by event-driven observers (MutationObserver, play/pause
+   * events) in activity scripts to push updates as soon as the DOM changes.
+   */
+  triggerUpdate(): void {
+    this.scheduledCallback?.();
   }
 
   /**

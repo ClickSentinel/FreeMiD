@@ -155,3 +155,42 @@ presence.on('UpdateData', () => {
       : undefined,
   });
 });
+
+// ── Event-driven updates ─────────────────────────────────────────────────────
+// Abort listeners registered by any previous injection of this script.
+const EVENTS_KEY = '__freemid_events_abort';
+const prevController = (globalThis as Record<string, unknown>)[EVENTS_KEY] as
+  | AbortController
+  | undefined;
+prevController?.abort();
+const eventsController = new AbortController();
+(globalThis as Record<string, unknown>)[EVENTS_KEY] = eventsController;
+const { signal } = eventsController;
+
+const trigger = () => presence.triggerUpdate();
+
+// Re-evaluate immediately on play/pause — critical for lock handoff speed.
+document.addEventListener('play', trigger, { capture: true, signal });
+document.addEventListener('pause', trigger, { capture: true, signal });
+
+// Observe the footer track title for immediate track-change detection.
+function connectFooterObserver(el: Element): void {
+  const obs = new MutationObserver(trigger);
+  obs.observe(el, { characterData: true, childList: true, subtree: true });
+  signal.addEventListener('abort', () => obs.disconnect());
+}
+
+const footerTitle = document.querySelector('[data-test="footer-track-title"]');
+if (footerTitle) {
+  connectFooterObserver(footerTitle);
+} else {
+  const watcher = new MutationObserver(() => {
+    const el = document.querySelector('[data-test="footer-track-title"]');
+    if (el) {
+      watcher.disconnect();
+      connectFooterObserver(el);
+    }
+  });
+  watcher.observe(document.body, { childList: true, subtree: true });
+  signal.addEventListener('abort', () => watcher.disconnect());
+}

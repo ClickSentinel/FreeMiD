@@ -147,12 +147,6 @@ presence.on('UpdateData', () => {
   // barTimes (scraped from the player bar) is the only reliable source.
   const current = barTimes.current ?? 0;
   const duration = barTimes.duration ?? 0;
-  console.debug(
-    '[FreeMiD] barTimes:',
-    barTimes,
-    'video.currentTime:',
-    video?.currentTime?.toFixed(1),
-  );
 
   const artUrl = getArtUrl();
   const videoId = getVideoId();
@@ -230,3 +224,46 @@ presence.on('UpdateData', () => {
       : undefined,
   });
 });
+
+// ── Event-driven updates ─────────────────────────────────────────────────────
+// Abort listeners registered by any previous injection of this script.
+const EVENTS_KEY = '__freemid_events_abort';
+const prevController = (globalThis as Record<string, unknown>)[EVENTS_KEY] as
+  | AbortController
+  | undefined;
+prevController?.abort();
+const eventsController = new AbortController();
+(globalThis as Record<string, unknown>)[EVENTS_KEY] = eventsController;
+const { signal } = eventsController;
+
+const trigger = () => presence.triggerUpdate();
+
+// Re-evaluate immediately on play/pause — critical for lock handoff speed.
+document.addEventListener('play', trigger, { capture: true, signal });
+document.addEventListener('pause', trigger, { capture: true, signal });
+
+// Observe the player bar title for immediate track-change detection.
+function connectTitleObserver(el: Element): void {
+  const obs = new MutationObserver(trigger);
+  obs.observe(el, { characterData: true, childList: true, subtree: true });
+  signal.addEventListener('abort', () => obs.disconnect());
+}
+
+const titleEl = document.querySelector(
+  'ytmusic-player-bar .title.ytmusic-player-bar, ytmusic-player-bar yt-formatted-string.title',
+);
+if (titleEl) {
+  connectTitleObserver(titleEl);
+} else {
+  const watcher = new MutationObserver(() => {
+    const el = document.querySelector(
+      'ytmusic-player-bar .title.ytmusic-player-bar, ytmusic-player-bar yt-formatted-string.title',
+    );
+    if (el) {
+      watcher.disconnect();
+      connectTitleObserver(el);
+    }
+  });
+  watcher.observe(document.body, { childList: true, subtree: true });
+  signal.addEventListener('abort', () => watcher.disconnect());
+}
