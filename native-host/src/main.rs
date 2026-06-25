@@ -385,13 +385,11 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
         #[cfg(windows)]
         "GET_DESKTOP_MEDIA" => {
             let app = msg.get("app").and_then(Value::as_str).unwrap_or("");
-            eprintln!("[FreeMiD] GET_DESKTOP_MEDIA app={}", app);
             let track = if app == "tidal" {
                 smtc::query_tidal()
             } else {
                 None
             };
-            eprintln!("[FreeMiD] GET_DESKTOP_MEDIA result: {}", if track.is_some() { "found" } else { "not found" });
             write_message(&json!({
                 "type": "DESKTOP_MEDIA",
                 "app": app,

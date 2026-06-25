@@ -27,8 +27,7 @@ pub struct DesktopTrack {
 pub fn query_tidal() -> Option<DesktopTrack> {
     COM_INIT.call_once(|| {
         // S_FALSE (already initialised on this thread) is also acceptable.
-        let result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-        eprintln!("[FreeMiD/smtc] CoInitializeEx result: {:?}", result);
+        let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     });
 
     let manager = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync() {
@@ -53,7 +52,6 @@ pub fn query_tidal() -> Option<DesktopTrack> {
         }
     };
     let count = sessions.Size().ok()?;
-    eprintln!("[FreeMiD/smtc] {} SMTC session(s) found", count);
 
     let session = (0..count)
         .filter_map(|i| sessions.GetAt(i).ok())
@@ -62,7 +60,6 @@ pub fn query_tidal() -> Option<DesktopTrack> {
                 .SourceAppUserModelId()
                 .map(|h| h.to_string())
                 .unwrap_or_default();
-            eprintln!("[FreeMiD/smtc] session id: {}", id);
             id.to_lowercase().contains("tidal")
         })?;
 
@@ -136,14 +133,12 @@ pub fn query_tidal() -> Option<DesktopTrack> {
         _ => None,
     };
 
-    let track = DesktopTrack {
+    Some(DesktopTrack {
         title,
         artist,
         album,
         state,
         position_secs,
         duration_secs,
-    };
-    eprintln!("[FreeMiD/smtc] Tidal track: {:?}", track);
-    Some(track)
+    })
 }
