@@ -20,6 +20,8 @@
 mod discord_ipc;
 mod update;
 #[cfg(windows)]
+mod smtc;
+#[cfg(windows)]
 mod windows_apply;
 
 use discord_ipc::{Activity, DiscordIpc, IpcError};
@@ -378,6 +380,21 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
                     send_status(false, Some(&e.to_string()));
                 }
             }
+            Ok(())
+        }
+        #[cfg(windows)]
+        "GET_DESKTOP_MEDIA" => {
+            let app = msg.get("app").and_then(Value::as_str).unwrap_or("");
+            let track = if app == "tidal" {
+                smtc::query_tidal()
+            } else {
+                None
+            };
+            write_message(&json!({
+                "type": "DESKTOP_MEDIA",
+                "app": app,
+                "track": track,
+            }));
             Ok(())
         }
         other => Err(format!("unknown message type: {}", other)),

@@ -23,6 +23,7 @@ import {
 } from './helpers';
 
 const NATIVE_HOST_NAME = 'com.clicksentinel.freemid';
+const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID?.trim() || '';
 const DEV_UPDATE_LATEST_URL =
   import.meta.env.VITE_UPDATE_LATEST_URL?.trim() || '';
 const DEV_UPDATE_RELEASES_BASE =
@@ -93,6 +94,7 @@ let manualReconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
 let reconnectCooldownUntilMs = 0;
+let desktopActivityActive = false;
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 130000 : 30000;
@@ -376,6 +378,15 @@ function connectNativeHost(): void {
           | 'up_to_date'
           | 'success'
           | 'failed';
+        app?: string;
+        track?: {
+          title: string;
+          artist: string;
+          album?: string;
+          state: string;
+          position_secs?: number;
+          duration_secs?: number;
+        } | null;
       };
       if (m.type === 'STATUS') {
         if (reconnectInProgress) {
@@ -439,6 +450,41 @@ function connectNativeHost(): void {
         }
 
         broadcastStatus();
+      } else if (m.type === 'DESKTOP_MEDIA' && m.app === 'tidal') {
+        const track = m.track;
+        const hasTidalBrowserTab = [...activeActivityTabs.values()].includes('tidal');
+        if (!hasTidalBrowserTab && track && track.state === 'playing') {
+          const now = Math.floor(Date.now() / 1000);
+          const start =
+            track.position_secs != null
+              ? now - Math.floor(track.position_secs)
+              : undefined;
+          const end =
+            start != null && track.duration_secs != null
+              ? start + Math.floor(track.duration_secs)
+              : undefined;
+          desktopActivityActive = true;
+          setActivity(
+            {
+              application_id: DISCORD_CLIENT_ID || undefined,
+              name: track.artist || 'TIDAL',
+              type: 2,
+              details: track.title,
+              state: track.artist ? `by ${track.artist}` : 'TIDAL',
+              timestamps: start != null ? { start, end } : undefined,
+              assets: {
+                large_image: 'tidal-logo-1024',
+                large_text: track.album || track.title,
+              },
+            },
+            'tidal',
+          );
+        } else if (desktopActivityActive && !hasTidalBrowserTab) {
+          desktopActivityActive = false;
+          clearActivity();
+        } else {
+          desktopActivityActive = false;
+        }
       } else if (m.type === 'UPDATE_STATUS' && m.status) {
         clearUpdateRequestTimeout();
         updateStatus = {
@@ -667,6 +713,12 @@ async function handleTabNavigation(
   const forceInject = options?.forceInject === true;
   if (!forceInject && activeActivityTabs.get(tabId) === meta.id) return;
 
+  // If the browser tab is taking over an activity the desktop poller was
+  // managing, hand off cleanly so the desktop flag doesn't linger.
+  if (meta.id === 'tidal' && desktopActivityActive) {
+    desktopActivityActive = false;
+  }
+
   activeActivityTabs.set(tabId, meta.id);
 
   try {
@@ -886,6 +938,16 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     // Keep an existing host port healthy, but do not auto-spawn a new host.
     // Reconnect should happen on explicit demand (popup/status/activity/update).
     if (nativePort) sendToHost({ type: 'PING' });
+    // Poll Tidal desktop app on Windows when no browser tab has it active.
+    if (
+      nativePort &&
+      hostRuntimeOs === 'windows' &&
+      enabledSites['tidal'] &&
+      !paused &&
+      ![...activeActivityTabs.values()].includes('tidal')
+    ) {
+      sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
+    }
   }
   if (alarm.name === 'freemid-update-check') {
     void checkForUpdates();
