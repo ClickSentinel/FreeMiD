@@ -94,7 +94,7 @@ let manualReconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
 let reconnectCooldownUntilMs = 0;
-let desktopActivityActive = false;
+let presenceHolder: string | null = null; // sourceId that currently holds the Discord presence lock
 const desktopArtCache = new Map<string, string | null>(); // "artist|title" → HTTPS URL or null
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
@@ -473,15 +473,13 @@ function connectNativeHost(): void {
           if (!desktopArtCache.has(artKey)) {
             void lookupArtworkUrl(track.artist, track.title).then((url) => {
               desktopArtCache.set(artKey, url);
-              // Trigger a fresh poll so the activity is re-applied with
-              // accurate position + the now-cached art URL.
-              if (desktopActivityActive && nativePort) {
+              // Re-poll to apply the now-cached art URL if still showing.
+              if (presenceHolder === 'tidal-desktop' && nativePort) {
                 sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
               }
             });
           }
 
-          desktopActivityActive = true;
           setActivity(
             {
               application_id: DISCORD_CLIENT_ID || undefined,
@@ -497,13 +495,10 @@ function connectNativeHost(): void {
                 small_text: artUrl ? 'TIDAL' : undefined,
               },
             },
-            'tidal',
+            'tidal-desktop',
           );
-        } else if (desktopActivityActive && !hasTidalBrowserTab) {
-          desktopActivityActive = false;
-          clearActivity();
         } else {
-          desktopActivityActive = false;
+          releasePresence('tidal-desktop');
         }
       } else if (m.type === 'UPDATE_STATUS' && m.status) {
         clearUpdateRequestTimeout();
@@ -643,7 +638,13 @@ function reconnectCooldownRemainingMs(): number {
  */
 export function setActivity(activity: object, siteId?: string): void {
   if (paused) return;
-  if (siteId !== undefined && !enabledSites[siteId]) return;
+  // 'tidal-desktop' shares the 'tidal' site toggle.
+  const toggleKey = siteId === 'tidal-desktop' ? 'tidal' : siteId;
+  if (toggleKey !== undefined && !enabledSites[toggleKey]) return;
+  // Lock model: first playing source claims the lock; others are blocked until
+  // the holder voluntarily releases via releasePresence().
+  if (presenceHolder !== null && presenceHolder !== siteId) return;
+  if (siteId !== undefined) presenceHolder = siteId;
 
   const a = activity as {
     name?: string;
@@ -694,6 +695,15 @@ export function setActivity(activity: object, siteId?: string): void {
 }
 
 export function clearActivity(): void {
+  presenceHolder = null;
+  lastActivity = null;
+  sendToHost({ type: 'CLEAR_ACTIVITY' });
+}
+
+// Release presence held by a specific source. No-op if another source holds it.
+function releasePresence(sourceId: string): void {
+  if (presenceHolder !== sourceId) return;
+  presenceHolder = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
 }
@@ -760,11 +770,9 @@ async function handleTabNavigation(
   const forceInject = options?.forceInject === true;
   if (!forceInject && activeActivityTabs.get(tabId) === meta.id) return;
 
-  // If the browser tab is taking over an activity the desktop poller was
-  // managing, hand off cleanly so the desktop flag doesn't linger.
-  if (meta.id === 'tidal' && desktopActivityActive) {
-    desktopActivityActive = false;
-  }
+  // Tidal web always takes priority over Tidal desktop — release the desktop
+  // lock so the web content script can claim it.
+  if (meta.id === 'tidal') releasePresence('tidal-desktop');
 
   activeActivityTabs.set(tabId, meta.id);
 
@@ -823,7 +831,15 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (msg.type === 'FREEMID_CLEAR_ACTIVITY') {
-      clearActivity();
+      const siteId =
+        sender.tab?.id != null
+          ? activeActivityTabs.get(sender.tab.id)
+          : undefined;
+      if (siteId !== undefined) {
+        releasePresence(siteId);
+      } else {
+        clearActivity();
+      }
       return;
     }
 
@@ -845,8 +861,13 @@ chrome.runtime.onMessage.addListener(
       void chrome.storage.local.set({
         [STORAGE_KEYS.enabledSites]: enabledSites,
       });
-      if (!enabled && [...activeActivityTabs.values()].includes(siteId)) {
-        clearActivity();
+      if (!enabled) {
+        const holdsLock =
+          presenceHolder === siteId ||
+          (siteId === 'tidal' && presenceHolder === 'tidal-desktop');
+        if (holdsLock || [...activeActivityTabs.values()].includes(siteId)) {
+          clearActivity();
+        }
       }
       broadcastStatus();
       return;
@@ -1051,11 +1072,12 @@ function broadcastStatus(): void {
 }
 
 function clearTabActivity(tabId: number): void {
-  if (!activeActivityTabs.has(tabId)) return;
+  const siteId = activeActivityTabs.get(tabId);
+  if (!siteId) return;
   activeActivityTabs.delete(tabId);
-  if (activeActivityTabs.size === 0) {
-    clearActivity();
-  }
+  // Only release the lock if no other tab of the same site is still active.
+  const stillActive = [...activeActivityTabs.values()].includes(siteId);
+  if (!stillActive) releasePresence(siteId);
 }
 
 // ── Version & update check ────────────────────────────────────────────────────
