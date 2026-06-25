@@ -110,6 +110,17 @@ fn main() {
         eprintln!("[FreeMiD] Discord IPC connected at startup");
     }
 
+    // Subscribe to Windows SMTC events so Tidal desktop state is pushed to the
+    // extension immediately on track change, play/pause, or seek — no polling.
+    #[cfg(windows)]
+    smtc::start_watcher(|track| {
+        write_message(&json!({
+            "type": "DESKTOP_MEDIA",
+            "app": "tidal",
+            "track": track,
+        }));
+    });
+
     loop {
         match read_message() {
             Ok(None) => {

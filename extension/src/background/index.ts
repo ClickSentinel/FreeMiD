@@ -996,16 +996,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     // Keep an existing host port healthy, but do not auto-spawn a new host.
     // Reconnect should happen on explicit demand (popup/status/activity/update).
     if (nativePort) sendToHost({ type: 'PING' });
-    // Poll Tidal desktop app on Windows when no browser tab has it active.
-    if (
-      nativePort &&
-      hostRuntimeOs === 'windows' &&
-      enabledSites.tidal &&
-      !paused &&
-      ![...activeActivityTabs.values()].includes('tidal')
-    ) {
-      sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
-    }
   }
   if (alarm.name === 'freemid-update-check') {
     void checkForUpdates();
