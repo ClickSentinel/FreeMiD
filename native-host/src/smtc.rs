@@ -4,7 +4,9 @@ use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
+use windows::Win32::Foundation::FILETIME;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
 
 static COM_INIT: Once = Once::new();
 
@@ -107,13 +109,30 @@ pub fn query_tidal() -> Option<DesktopTrack> {
     .to_string();
 
     // TimeSpan.Duration is in 100-nanosecond intervals.
-    let to_secs = |ts: windows::Foundation::TimeSpan| ts.Duration as f64 / 10_000_000.0;
+    let ticks_to_secs = |ticks: i64| ticks as f64 / 10_000_000.0;
 
     let timeline = session.GetTimelineProperties().ok()?;
-    let position_secs = timeline.Position().ok().map(to_secs);
+
+    // When playing, SMTC position is only updated when Tidal explicitly pushes
+    // it (e.g. on seek). Extrapolate forward using LastUpdatedTime so the
+    // extension receives a continuously-accurate position on every poll.
+    let position_secs = match (timeline.Position().ok(), timeline.LastUpdatedTime().ok()) {
+        (Some(pos), Some(updated)) if state == "playing" => {
+            let mut ft = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+            unsafe { GetSystemTimeAsFileTime(&mut ft) };
+            let now_ticks =
+                ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64;
+            let elapsed_ticks = now_ticks.saturating_sub(updated.UniversalTime as u64);
+            let secs = ticks_to_secs(pos.Duration) + ticks_to_secs(elapsed_ticks as i64);
+            Some(secs.max(0.0))
+        }
+        (Some(pos), _) => Some(ticks_to_secs(pos.Duration).max(0.0)),
+        _ => None,
+    };
+
     let duration_secs = match (timeline.EndTime().ok(), timeline.StartTime().ok()) {
         (Some(end), Some(start)) => {
-            let dur = (end.Duration - start.Duration) as f64 / 10_000_000.0;
+            let dur = ticks_to_secs(end.Duration - start.Duration);
             if dur > 0.0 { Some(dur) } else { None }
         }
         _ => None,

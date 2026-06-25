@@ -95,6 +95,7 @@ let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
 let reconnectCooldownUntilMs = 0;
 let desktopActivityActive = false;
+const desktopArtCache = new Map<string, string | null>(); // "artist|title" → HTTPS URL or null
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 130000 : 30000;
@@ -453,14 +454,31 @@ function connectNativeHost(): void {
         const hasTidalBrowserTab = [...activeActivityTabs.values()].includes('tidal');
         if (!hasTidalBrowserTab && track && track.state === 'playing') {
           const now = Math.floor(Date.now() / 1000);
+          // position_secs is continuously accurate from the native host
+          // (extrapolated via SMTC LastUpdatedTime), so startTimestamp is
+          // stable across polls and Discord's timer won't reset.
           const start =
             track.position_secs != null
               ? now - Math.floor(track.position_secs)
-              : undefined;
+              : now;
           const end =
-            start != null && track.duration_secs != null
+            track.duration_secs != null
               ? start + Math.floor(track.duration_secs)
               : undefined;
+
+          const artKey = `${track.artist}|${track.title}`;
+          const artUrl = desktopArtCache.get(artKey) ?? null;
+          if (!desktopArtCache.has(artKey)) {
+            void lookupArtworkUrl(track.artist, track.title).then((url) => {
+              desktopArtCache.set(artKey, url);
+              // Trigger a fresh poll so the activity is re-applied with
+              // accurate position + the now-cached art URL.
+              if (desktopActivityActive && nativePort) {
+                sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
+              }
+            });
+          }
+
           desktopActivityActive = true;
           setActivity(
             {
@@ -469,10 +487,12 @@ function connectNativeHost(): void {
               type: 2,
               details: track.title,
               state: track.artist ? `by ${track.artist}` : 'TIDAL',
-              timestamps: start != null ? { start, end } : undefined,
+              timestamps: { start, end },
               assets: {
-                large_image: 'tidal-logo-1024',
+                large_image: artUrl ?? 'tidal-logo-1024',
                 large_text: track.album || track.title,
+                small_image: artUrl ? 'tidal-logo-1024' : undefined,
+                small_text: artUrl ? 'TIDAL' : undefined,
               },
             },
             'tidal',
@@ -674,6 +694,29 @@ export function setActivity(activity: object, siteId?: string): void {
 export function clearActivity(): void {
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
+}
+
+// ── Desktop media helpers ──────────────────────────────────────────────────────
+
+async function lookupArtworkUrl(
+  artist: string,
+  title: string,
+): Promise<string | null> {
+  try {
+    const q = encodeURIComponent(`${artist} ${title}`);
+    const resp = await fetch(
+      `https://itunes.apple.com/search?term=${q}&media=music&entity=song&limit=1`,
+    );
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as {
+      results?: Array<{ artworkUrl100?: string }>;
+    };
+    const raw = data.results?.[0]?.artworkUrl100 ?? null;
+    // iTunes returns 100×100 by default; request 512×512 for Discord.
+    return raw ? raw.replace('100x100bb', '512x512bb') : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Activity registry & content script injection ───────────────────────────────
