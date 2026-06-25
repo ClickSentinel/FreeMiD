@@ -4,7 +4,6 @@ use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
-use windows::Win32::Foundation::FILETIME;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
 
@@ -118,8 +117,7 @@ pub fn query_tidal() -> Option<DesktopTrack> {
     // extension receives a continuously-accurate position on every poll.
     let position_secs = match (timeline.Position().ok(), timeline.LastUpdatedTime().ok()) {
         (Some(pos), Some(updated)) if state == "playing" => {
-            let mut ft = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-            unsafe { GetSystemTimeAsFileTime(&mut ft) };
+            let ft = unsafe { GetSystemTimeAsFileTime() };
             let now_ticks =
                 ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64;
             let elapsed_ticks = now_ticks.saturating_sub(updated.UniversalTime as u64);
