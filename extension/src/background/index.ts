@@ -717,7 +717,13 @@ async function lookupArtworkUrl(
   title: string,
 ): Promise<string | null> {
   try {
-    const query = encodeURIComponent(`${artist} ${title}`);
+    // Lucene field qualifiers constrain the search to the artist and recording
+    // name fields. The bare "artist title" free-text query matches any field
+    // across all recordings, returning unrelated songs as top results.
+    const esc = (s: string) => s.replace(/"/g, '\\"');
+    const query = encodeURIComponent(
+      `artist:"${esc(artist)}" AND recording:"${esc(title)}"`,
+    );
     const mbResp = await fetch(
       `https://musicbrainz.org/ws/2/recording/?query=${query}&fmt=json&limit=5`,
       {
@@ -732,7 +738,10 @@ async function lookupArtworkUrl(
       recordings?: Array<{ releases?: Array<{ id: string }> }>;
     };
 
-    const releases = mbData.recordings?.flatMap((r) => r.releases ?? []) ?? [];
+    // Only search releases from the first (highest-scored) recording.
+    // flatMapping all recordings mixes releases from different songs, so the
+    // first cover we try could belong to an entirely wrong track.
+    const releases = mbData.recordings?.[0]?.releases ?? [];
     for (const release of releases.slice(0, 3)) {
       const caaResp = await fetch(
         `https://coverartarchive.org/release/${release.id}/front-500`,
