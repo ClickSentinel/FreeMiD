@@ -473,7 +473,7 @@ function connectNativeHost(): void {
           const artKey = `${track.artist}|${track.title}`;
           const artUrl = desktopArtCache.get(artKey) ?? null;
           if (!desktopArtCache.has(artKey)) {
-            void lookupArtworkUrl(track.artist, track.title).then((url) => {
+            void lookupArtworkUrl(track.artist, track.title, track.album ?? undefined).then((url) => {
               desktopArtCache.set(artKey, url);
               // Re-poll to apply the now-cached art URL if still showing.
               if (presenceHolder === 'tidal-desktop' && nativePort) {
@@ -715,14 +715,14 @@ function releasePresence(sourceId: string): void {
 async function lookupArtworkUrl(
   artist: string,
   title: string,
+  album?: string,
 ): Promise<string | null> {
   try {
-    // Lucene field qualifiers constrain the search to the artist and recording
-    // name fields. The bare "artist title" free-text query matches any field
-    // across all recordings, returning unrelated songs as top results.
     const esc = (s: string) => s.replace(/"/g, '\\"');
+    // -video:true excludes music videos, which score equally high as audio
+    // recordings but have wrong or no art in the Cover Art Archive.
     const query = encodeURIComponent(
-      `artist:"${esc(artist)}" AND recording:"${esc(title)}"`,
+      `artist:"${esc(artist)}" AND recording:"${esc(title)}" AND -video:true`,
     );
     const mbResp = await fetch(
       `https://musicbrainz.org/ws/2/recording/?query=${query}&fmt=json&limit=5`,
@@ -735,19 +735,69 @@ async function lookupArtworkUrl(
     if (!mbResp.ok) return null;
 
     const mbData = (await mbResp.json()) as {
-      recordings?: Array<{ releases?: Array<{ id: string }> }>;
+      recordings?: Array<{
+        releases?: Array<{
+          id: string;
+          title?: string;
+          status?: string;
+          'release-group'?: { id: string; 'primary-type'?: string };
+        }>;
+      }>;
     };
 
-    // Only search releases from the first (highest-scored) recording.
-    // flatMapping all recordings mixes releases from different songs, so the
-    // first cover we try could belong to an entirely wrong track.
-    const releases = mbData.recordings?.[0]?.releases ?? [];
-    for (const release of releases.slice(0, 3)) {
-      const caaResp = await fetch(
-        `https://coverartarchive.org/release/${release.id}/front-500`,
-        { method: 'HEAD' },
-      );
-      if (caaResp.ok) return caaResp.url;
+    // Collect Official releases from the top 3 recordings, deduplicated by
+    // release-group. Score: album-name match (3) > Album type (2) > other (1).
+    const albumLower = album?.toLowerCase().trim();
+    type Candidate = { releaseId: string; rgId?: string; score: number };
+    const seen = new Set<string>();
+    const candidates: Candidate[] = [];
+    for (const rec of (mbData.recordings ?? []).slice(0, 3)) {
+      for (const rel of rec.releases ?? []) {
+        if (rel.status !== 'Official') continue;
+        const rgId = rel['release-group']?.id;
+        const dedupeKey = rgId ?? rel.id;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        const isAlbum = rel['release-group']?.['primary-type'] === 'Album';
+        const nameMatch =
+          !!albumLower &&
+          !!rel.title &&
+          rel.title.toLowerCase().trim() === albumLower;
+        candidates.push({
+          releaseId: rel.id,
+          rgId,
+          score: nameMatch ? 3 : isAlbum ? 2 : 1,
+        });
+      }
+    }
+    candidates.sort((a, b) => b.score - a.score);
+
+    // The release-group endpoint returns canonical front art for the whole album
+    // group and succeeds more often than individual release lookups (individual
+    // releases may lack CAA entries).
+    const triedRgs = new Set<string>();
+    for (const c of candidates.slice(0, 5)) {
+      if (c.rgId && !triedRgs.has(c.rgId)) {
+        triedRgs.add(c.rgId);
+        const resp = await fetch(
+          `https://coverartarchive.org/release-group/${c.rgId}/front`,
+          { method: 'HEAD' },
+        );
+        if (resp.ok) return resp.url;
+      }
+    }
+
+    // Fall back to individual release IDs.
+    const triedRels = new Set<string>();
+    for (const c of candidates.slice(0, 5)) {
+      if (!triedRels.has(c.releaseId)) {
+        triedRels.add(c.releaseId);
+        const resp = await fetch(
+          `https://coverartarchive.org/release/${c.releaseId}/front-500`,
+          { method: 'HEAD' },
+        );
+        if (resp.ok) return resp.url;
+      }
     }
 
     return null;
