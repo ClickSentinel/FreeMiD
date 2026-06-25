@@ -703,17 +703,31 @@ async function lookupArtworkUrl(
   title: string,
 ): Promise<string | null> {
   try {
-    const q = encodeURIComponent(`${artist} ${title}`);
-    const resp = await fetch(
-      `https://itunes.apple.com/search?term=${q}&media=music&entity=song&limit=1`,
+    const query = encodeURIComponent(`${artist} ${title}`);
+    const mbResp = await fetch(
+      `https://musicbrainz.org/ws/2/recording/?query=${query}&fmt=json&limit=5`,
+      {
+        headers: {
+          'User-Agent': `FreeMiD/${chrome.runtime.getManifest().version} (https://github.com/${GITHUB_REPO})`,
+        },
+      },
     );
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as {
-      results?: Array<{ artworkUrl100?: string }>;
+    if (!mbResp.ok) return null;
+
+    const mbData = (await mbResp.json()) as {
+      recordings?: Array<{ releases?: Array<{ id: string }> }>;
     };
-    const raw = data.results?.[0]?.artworkUrl100 ?? null;
-    // iTunes returns 100×100 by default; request 512×512 for Discord.
-    return raw ? raw.replace('100x100bb', '512x512bb') : null;
+
+    const releases = mbData.recordings?.flatMap((r) => r.releases ?? []) ?? [];
+    for (const release of releases.slice(0, 3)) {
+      const caaResp = await fetch(
+        `https://coverartarchive.org/release/${release.id}/front-500`,
+        { method: 'HEAD' },
+      );
+      if (caaResp.ok) return caaResp.url;
+    }
+
+    return null;
   } catch {
     return null;
   }
