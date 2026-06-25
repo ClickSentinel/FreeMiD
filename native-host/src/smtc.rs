@@ -67,7 +67,10 @@ pub fn query_tidal() -> Option<DesktopTrack> {
         Ok(op) => match op.get() {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("[FreeMiD/smtc] TryGetMediaPropertiesAsync().get() failed: {}", e);
+                eprintln!(
+                    "[FreeMiD/smtc] TryGetMediaPropertiesAsync().get() failed: {}",
+                    e
+                );
                 return None;
             }
         },
@@ -115,8 +118,7 @@ pub fn query_tidal() -> Option<DesktopTrack> {
     let position_secs = match (timeline.Position().ok(), timeline.LastUpdatedTime().ok()) {
         (Some(pos), Some(updated)) if state == "playing" => {
             let ft = unsafe { GetSystemTimeAsFileTime() };
-            let now_ticks =
-                ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64;
+            let now_ticks = ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64;
             let elapsed_ticks = now_ticks.saturating_sub(updated.UniversalTime as u64);
             let secs = ticks_to_secs(pos.Duration) + ticks_to_secs(elapsed_ticks as i64);
             Some(secs.max(0.0))
@@ -128,7 +130,11 @@ pub fn query_tidal() -> Option<DesktopTrack> {
     let duration_secs = match (timeline.EndTime().ok(), timeline.StartTime().ok()) {
         (Some(end), Some(start)) => {
             let dur = ticks_to_secs(end.Duration - start.Duration);
-            if dur > 0.0 { Some(dur) } else { None }
+            if dur > 0.0 {
+                Some(dur)
+            } else {
+                None
+            }
         }
         _ => None,
     };

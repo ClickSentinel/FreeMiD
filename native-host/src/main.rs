@@ -18,9 +18,9 @@
 //!   host → ext  { "type": "STATUS", "connected": bool, "error"?: string }
 
 mod discord_ipc;
-mod update;
 #[cfg(windows)]
 mod smtc;
+mod update;
 #[cfg(windows)]
 mod windows_apply;
 

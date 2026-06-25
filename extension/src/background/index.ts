@@ -451,7 +451,9 @@ function connectNativeHost(): void {
         broadcastStatus();
       } else if (m.type === 'DESKTOP_MEDIA' && m.app === 'tidal') {
         const track = m.track;
-        const hasTidalBrowserTab = [...activeActivityTabs.values()].includes('tidal');
+        const hasTidalBrowserTab = [...activeActivityTabs.values()].includes(
+          'tidal',
+        );
         if (!hasTidalBrowserTab && track && track.state === 'playing') {
           const now = Math.floor(Date.now() / 1000);
           // position_secs is continuously accurate from the native host
@@ -863,7 +865,7 @@ chrome.runtime.onMessage.addListener(
       if (
         nativePort &&
         hostRuntimeOs === 'windows' &&
-        enabledSites['tidal'] &&
+        enabledSites.tidal &&
         !paused &&
         ![...activeActivityTabs.values()].includes('tidal')
       ) {
@@ -998,7 +1000,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (
       nativePort &&
       hostRuntimeOs === 'windows' &&
-      enabledSites['tidal'] &&
+      enabledSites.tidal &&
       !paused &&
       ![...activeActivityTabs.values()].includes('tidal')
     ) {
