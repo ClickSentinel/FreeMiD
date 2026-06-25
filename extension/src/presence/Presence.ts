@@ -114,7 +114,7 @@ export class Presence {
       details: data.details,
       state: data.state,
       timestamps:
-        data.startTimestamp !== undefined || data.endTimestamp !== undefined
+        data.startTimestamp !== undefined && data.endTimestamp !== undefined
           ? { start: data.startTimestamp, end: data.endTimestamp }
           : undefined,
       assets:

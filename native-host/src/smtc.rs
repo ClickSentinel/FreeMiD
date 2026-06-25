@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
@@ -10,6 +11,14 @@ use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
 
 static COM_INIT: Once = Once::new();
+static WATCHER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// Signal the SMTC watcher thread to exit. Call before `std::process::exit`
+/// so the thread leaves the COM MTA cleanly before ExitProcess runs DllMain
+/// cleanup — otherwise COM teardown waits for the sleeping thread indefinitely.
+pub fn signal_shutdown() {
+    WATCHER_SHUTDOWN.store(true, Ordering::Release);
+}
 
 #[derive(Debug, Serialize)]
 pub struct DesktopTrack {
@@ -251,9 +260,12 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
 
         // Keep this thread alive so the manager reference and its SessionsChanged
         // subscription remain valid. WinRT event callbacks fire on thread-pool
-        // threads, so this thread just needs to stay alive.
-        loop {
-            std::thread::sleep(Duration::from_secs(3600));
+        // threads, so this thread just needs to stay alive. Poll the shutdown
+        // flag so the thread exits promptly when the process is shutting down;
+        // this lets COM unregister the MTA thread before ExitProcess runs
+        // DllMain cleanup (otherwise COM teardown blocks indefinitely).
+        while !WATCHER_SHUTDOWN.load(Ordering::Acquire) {
+            std::thread::sleep(Duration::from_millis(100));
         }
     });
 }

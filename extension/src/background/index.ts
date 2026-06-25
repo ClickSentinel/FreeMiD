@@ -456,15 +456,17 @@ function connectNativeHost(): void {
         );
         if (!hasTidalBrowserTab && track && track.state === 'playing') {
           const now = Math.floor(Date.now() / 1000);
-          // position_secs is continuously accurate from the native host
-          // (extrapolated via SMTC LastUpdatedTime), so startTimestamp is
-          // stable across polls and Discord's timer won't reset.
+          // Only set timestamps when both position and duration are available.
+          // Sending only `start` (no `end`) causes Discord to show a game-style
+          // counting-up timer instead of a music progress bar. The SMTC fires
+          // MediaPropertiesChanged before TimelinePropertiesChanged, so the first
+          // push may have position but not yet duration — skip timestamps then.
           const start =
-            track.position_secs != null
+            track.position_secs != null && track.duration_secs != null
               ? now - Math.floor(track.position_secs)
-              : now;
+              : undefined;
           const end =
-            track.duration_secs != null
+            start !== undefined && track.duration_secs != null
               ? start + Math.floor(track.duration_secs)
               : undefined;
 
@@ -487,7 +489,7 @@ function connectNativeHost(): void {
               type: 2,
               details: track.title,
               state: track.artist ? `by ${track.artist}` : 'TIDAL',
-              timestamps: { start, end },
+              timestamps: start !== undefined ? { start, end } : undefined,
               assets: {
                 large_image: artUrl ?? 'tidal-logo-1024',
                 large_text: track.album || track.title,
