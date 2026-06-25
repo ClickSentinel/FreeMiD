@@ -26,26 +26,58 @@ pub struct DesktopTrack {
 pub fn query_tidal() -> Option<DesktopTrack> {
     COM_INIT.call_once(|| {
         // S_FALSE (already initialised on this thread) is also acceptable.
-        let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        let result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        eprintln!("[FreeMiD/smtc] CoInitializeEx result: {:?}", result);
     });
 
-    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-        .ok()?
-        .get()
-        .ok()?;
+    let manager = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync() {
+        Ok(op) => match op.get() {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("[FreeMiD/smtc] RequestAsync().get() failed: {}", e);
+                return None;
+            }
+        },
+        Err(e) => {
+            eprintln!("[FreeMiD/smtc] RequestAsync() failed: {}", e);
+            return None;
+        }
+    };
 
-    let sessions = manager.GetSessions().ok()?;
+    let sessions = match manager.GetSessions() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[FreeMiD/smtc] GetSessions() failed: {}", e);
+            return None;
+        }
+    };
     let count = sessions.Size().ok()?;
+    eprintln!("[FreeMiD/smtc] {} SMTC session(s) found", count);
 
     let session = (0..count)
         .filter_map(|i| sessions.GetAt(i).ok())
         .find(|s| {
-            s.SourceAppUserModelId()
-                .map(|id| id.to_string().to_lowercase().contains("tidal"))
-                .unwrap_or(false)
+            let id = s
+                .SourceAppUserModelId()
+                .map(|h| h.to_string())
+                .unwrap_or_default();
+            eprintln!("[FreeMiD/smtc] session id: {}", id);
+            id.to_lowercase().contains("tidal")
         })?;
 
-    let props = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
+    let props = match session.TryGetMediaPropertiesAsync() {
+        Ok(op) => match op.get() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[FreeMiD/smtc] TryGetMediaPropertiesAsync().get() failed: {}", e);
+                return None;
+            }
+        },
+        Err(e) => {
+            eprintln!("[FreeMiD/smtc] TryGetMediaPropertiesAsync() failed: {}", e);
+            return None;
+        }
+    };
 
     let title = props.Title().ok()?.to_string();
     if title.is_empty() {
@@ -87,12 +119,14 @@ pub fn query_tidal() -> Option<DesktopTrack> {
         _ => None,
     };
 
-    Some(DesktopTrack {
+    let track = DesktopTrack {
         title,
         artist,
         album,
         state,
         position_secs,
         duration_secs,
-    })
+    };
+    eprintln!("[FreeMiD/smtc] Tidal track: {:?}", track);
+    Some(track)
 }
