@@ -1,5 +1,10 @@
 # FreeMiD
 
+[![CI](https://github.com/ClickSentinel/FreeMiD/actions/workflows/ci.yml/badge.svg)](https://github.com/ClickSentinel/FreeMiD/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ClickSentinel/FreeMiD)](https://github.com/ClickSentinel/FreeMiD/releases/latest)
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/gaonohfjfpdlfapccfaanenfcojfknli)](https://chromewebstore.google.com/detail/freemid/gaonohfjfpdlfapccfaanenfcojfknli)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 A fully free, open-source Discord Rich Presence bridge for web browsing — no subscription, no paywalled features, no telemetry.
 
 ---
@@ -50,90 +55,34 @@ irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps
 ### Local build
 
 1. Build extension and native host from source using [Building from source](#building-from-source).
-2. Load `extension/dist` via `chrome://extensions` -> **Load unpacked**.
+2. Load `extension/dist` via `chrome://extensions` → **Load unpacked**.
 3. Install the native host with your unpacked extension ID:
 
-```bash
-./install/install.sh --extension-id <your-extension-id>
-```
+   **Linux / macOS:**
 
-or on Windows PowerShell:
+   ```bash
+   ./install/install.sh --extension-id <your-extension-id>
+   ```
 
-```powershell
-irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps1 | iex -ExtensionId <your-extension-id>
-```
+   **Windows:**
 
-1. Reload extension and verify presence updates.
+   ```powershell
+   .\install\install.ps1 -ExtensionId <your-extension-id>
+   ```
+
+4. Reload extension and verify presence updates.
 
 ### End-to-end updater testing without a public release
 
-Detailed dev guide: `docs/E2E-UPDATER-TESTING.md`
-Architecture details: `docs/NATIVE-HOST-UPDATER-ARCHITECTURE.md`
+See [docs/UPDATER.md](docs/UPDATER.md) for architecture details and the full dev testing guide.
 
-Best/easiest path: run a local update feed and point only your local extension build at it.
-
-Quick start (single command):
-
-bash ./scripts/local-update-e2e.sh start
-
-This command builds the candidate native host, prepares a local release feed, starts a local HTTP server, and rebuilds the extension with updater override URLs.
-
-Useful companion commands:
-
-- bash ./scripts/local-update-e2e.sh status
-- bash ./scripts/local-update-e2e.sh stop
-
-1. Build two host binaries.
-
-- baseline (installed): current version (e.g. `0.3.x`)
-- candidate (update): newer version (e.g. `0.4.0`)
-
-1. Prepare local feed files.
+Quick start:
 
 ```bash
-mkdir -p /tmp/freemid-feed/v0.4.0
-cp target/release/freemid /tmp/freemid-feed/v0.4.0/freemid-linux-x86_64
-(cd /tmp/freemid-feed/v0.4.0 && sha256sum freemid-linux-x86_64 > checksums.sha256)
-cat > /tmp/freemid-feed/latest.json <<'JSON'
-{ "tag_name": "v0.4.0" }
-JSON
-python3 -m http.server 8787 --directory /tmp/freemid-feed
+./scripts/local-update-e2e.sh start   # build candidate, serve local feed, rebuild extension
+./scripts/local-update-e2e.sh status
+./scripts/local-update-e2e.sh stop
 ```
-
-1. Configure extension dev build to use local feed in `extension/.env`.
-
-```bash
-VITE_DISCORD_CLIENT_ID=your_app_id_here
-VITE_UPDATE_LATEST_URL=http://127.0.0.1:8787/latest.json
-VITE_UPDATE_RELEASES_BASE=http://127.0.0.1:8787
-VITE_DISCORD_CHECK_DELAY_MS=10000
-VITE_WINDOWS_SETUP_URL=http://127.0.0.1:8787/freemid-setup.exe
-```
-
-Windows VM quick host option:
-
-```powershell
-mkdir C:\freemid-feed -Force
-copy .\freemid-setup.exe C:\freemid-feed\freemid-setup.exe
-cd C:\freemid-feed
-py -m http.server 8787
-```
-
-1. Build and load unpacked extension.
-
-```bash
-cd extension
-npm run build
-```
-
-1. Install baseline native host and trigger update from popup.
-
-Notes:
-
-- Production defaults are unchanged; overrides are only used when provided.
-- Native host also supports runtime env overrides: `FREEMID_UPDATE_LATEST_URL` and `FREEMID_UPDATE_RELEASES_BASE`.
-- Verify full flow: checking -> downloading -> success -> reconnect/apply.
-- Failure tests are easy: corrupt `checksums.sha256`, remove artifact file, or stop local server.
 
 ---
 
@@ -165,7 +114,7 @@ YouTube / YouTube Music / TIDAL tab
 
 **Why a native host?** Discord's IPC protocol uses a local Unix socket (`$XDG_RUNTIME_DIR/discord-ipc-0` on Linux, `$TMPDIR/discord-ipc-0` on macOS). Browsers cannot open Unix sockets directly, so a small native binary bridges the gap. Chrome spawns it on demand and kills it when Chrome closes — you never have to manage it yourself.
 
-> **Metadata sources:** YouTube Music primarily uses `navigator.mediaSession`; TIDAL relies on stable player DOM selectors for title/artist/timestamps. No additional API calls are made by the extension for track metadata.
+> **Metadata sources:** YouTube Music primarily uses `navigator.mediaSession`; TIDAL web relies on stable player DOM selectors for title/artist/timestamps; TIDAL desktop (Windows) uses the Windows System Media Transport Controls (SMTC). No external API calls are made for track metadata (title, artist, timestamps) — those come directly from the page. Album art is looked up via MusicBrainz and Cover Art Archive.
 
 ### Native host lifecycle (Chrome)
 
@@ -346,7 +295,8 @@ mysite: {
 | --- | --- | --- |
 | YouTube Music | ✅ | Title, artist, album art, progress bar, song link button |
 | YouTube | ✅ | Video title, channel name |
-| TIDAL | ✅ | Track title, artist, album art, progress bar, track link button |
+| TIDAL (web) | ✅ | Track title, artist, album art, progress bar, track link button |
+| TIDAL (desktop) | ✅ Windows only | Track title, artist, album art, progress bar — via Windows SMTC; no link button |
 
 ---
 

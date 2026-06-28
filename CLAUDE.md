@@ -51,6 +51,7 @@ npm run dev             # watch mode
 npm run typecheck       # tsc --noEmit
 npm run test            # vitest (watch)
 npm run test:run        # vitest run (single pass, used in CI)
+npx biome check src/   # lint + format check (run before PR)
 ```
 
 The extension requires `extension/.env` with at minimum:
@@ -93,13 +94,13 @@ CI also checks that the default extension ID in `install/install.sh`, `install/i
 
 - Chrome native messaging framing: `u32 LE length | UTF-8 JSON`
 - Extension → host: `{ type: "PING" }`, `{ type: "SET_ACTIVITY", activity: {...} }`, `{ type: "CLEAR_ACTIVITY" }`, `{ type: "UPDATE", latestUrl?, releasesBaseUrl? }`
-- Host → extension: `{ type: "STATUS", connected: bool, version, selfUpdateSupported, runtimeOs, runtimeArch, binaryPath, error? }`, `{ type: "UPDATE_STATUS", status, version?, error? }`
+- Host → extension: `{ type: "STATUS", connected: bool, version, capabilities: string[], selfUpdateSupported, runtimeOs, runtimeArch, binaryPath, error? }`, `{ type: "UPDATE_STATUS", status, version?, error? }`
 
 **Activity injection:** The background service worker listens to `chrome.tabs.onUpdated` and `chrome.tabs.onActivated`. When a tab navigates to a URL matching an entry in `extension/src/activities/registry.ts`, the background injects the corresponding `dist/activities/<id>/index.js` via `chrome.scripting.executeScript`. Each activity is a self-contained IIFE bundle (not code-split with the rest of the extension) — this is why activities are built separately via `scripts/build-activities.mjs` rather than through the main Vite rollup entry points.
 
 **Native host lifecycle:** Chrome spawns the host on first `connectNative()` and kills it when the extension disconnects or Chrome closes. The host has a 45 s idle timeout (resets on each message) as a safety backstop. On Windows, a single-instance named mutex (`Local\FreeMiD.NativeHost`) prevents duplicate host processes during reconnect races.
 
-**Self-update flow:** The popup triggers an update by sending `RUN_HOST_UPDATE` to the background, which forwards `{ type: "UPDATE" }` to the native host. The native host spawns a background thread that downloads and SHA-256-verifies the new binary from GitHub Releases, then atomically replaces itself on disk (Linux/macOS: rename; Windows: stages to `.staged-<pid>.exe` and delegates to `freemid-apply.exe` or a cmd fallback). The extension then reconnects to pick up the new binary.
+**Self-update flow:** Updates are triggered two ways: (1) manually — the popup sends `RUN_HOST_UPDATE` to the background; (2) automatically — `maybeAutoUpdate()` fires after a version check or when presence is released (no song playing), if a newer version is available and no update is already in progress. Both paths call `triggerHostUpdate()`, which sends `{ type: "UPDATE" }` to the native host. The native host spawns a background thread that downloads and SHA-256-verifies the new binary from GitHub Releases, then atomically replaces itself on disk (Linux/macOS: rename; Windows: stages to `.staged-<pid>.exe` and delegates to `freemid-apply.exe` or a cmd fallback). The extension then reconnects to pick up the new binary.
 
 ## Adding a new activity
 
@@ -115,7 +116,7 @@ bash ./scripts/local-update-e2e.sh status
 bash ./scripts/local-update-e2e.sh stop
 ```
 
-See `docs/E2E-UPDATER-TESTING.md` and `docs/NATIVE-HOST-UPDATER-ARCHITECTURE.md` for full details.
+See `docs/UPDATER.md` for architecture details and E2E testing procedures.
 
 ## Platform notes
 
@@ -128,7 +129,7 @@ See `docs/E2E-UPDATER-TESTING.md` and `docs/NATIVE-HOST-UPDATER-ARCHITECTURE.md`
 These are undocumented dev/debug flags not exposed in normal usage:
 
 | Variable | Effect |
-|----------|--------|
+| --- | --- |
 | `FREEMID_ALLOW_TMP_IPC=1` | On Linux, also search `$TMPDIR`, `$TMP`, `$TEMP`, and `/tmp` for the Discord IPC socket. Disabled by default because `/tmp` is world-writable (TOCTOU risk). Useful when Discord writes its socket to `/tmp` rather than `$XDG_RUNTIME_DIR`. |
 | `FREEMID_UPDATE_LATEST_URL` | Override the GitHub API URL used to fetch the latest release metadata. |
 | `FREEMID_UPDATE_RELEASES_BASE` | Override the base URL used to download release artifacts. |
