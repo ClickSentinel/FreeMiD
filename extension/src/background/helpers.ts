@@ -1,4 +1,5 @@
 import { ACTIVITY_REGISTRY, type ActivityMeta } from '../activities/registry';
+import { GITHUB_REPO } from '../constants/github';
 
 export const MIN_SELF_UPDATE_HOST_VERSION = '0.4.0';
 export const MIN_WINDOWS_SELF_UPDATE_HOST_VERSION = '0.4.0';
@@ -91,6 +92,98 @@ export function isUpdateAvailableForHost(
     extensionVersion,
   );
   return compareVersions(baselineVersion, hostVersion) > 0;
+}
+
+export async function lookupArtworkUrl(
+  artist: string,
+  title: string,
+  album?: string,
+): Promise<string | null> {
+  try {
+    const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    // -video:true excludes music videos, which score equally high as audio
+    // recordings but have wrong or no art in the Cover Art Archive.
+    const query = encodeURIComponent(
+      `artist:"${esc(artist)}" AND recording:"${esc(title)}" AND -video:true`,
+    );
+    const mbResp = await fetch(
+      `https://musicbrainz.org/ws/2/recording/?query=${query}&fmt=json&limit=5`,
+      {
+        headers: {
+          'User-Agent': `FreeMiD/${chrome.runtime.getManifest().version} (https://github.com/${GITHUB_REPO})`,
+        },
+      },
+    );
+    if (!mbResp.ok) return null;
+
+    const mbData = (await mbResp.json()) as {
+      recordings?: Array<{
+        releases?: Array<{
+          id: string;
+          title?: string;
+          status?: string;
+          'release-group'?: { id: string; 'primary-type'?: string };
+        }>;
+      }>;
+    };
+
+    // Collect Official releases from the top 3 recordings, deduplicated by
+    // release-group. Score: album-name match (3) > Album type (2) > other (1).
+    const albumLower = album?.toLowerCase().trim();
+    type Candidate = { releaseId: string; rgId?: string; score: number };
+    const seen = new Set<string>();
+    const candidates: Candidate[] = [];
+    for (const rec of (mbData.recordings ?? []).slice(0, 3)) {
+      for (const rel of rec.releases ?? []) {
+        if (rel.status !== 'Official') continue;
+        const rgId = rel['release-group']?.id;
+        const dedupeKey = rgId ?? rel.id;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        const isAlbum = rel['release-group']?.['primary-type'] === 'Album';
+        const nameMatch =
+          !!albumLower &&
+          !!rel.title &&
+          rel.title.toLowerCase().trim() === albumLower;
+        candidates.push({
+          releaseId: rel.id,
+          rgId,
+          score: nameMatch ? 3 : isAlbum ? 2 : 1,
+        });
+      }
+    }
+    candidates.sort((a, b) => b.score - a.score);
+
+    // The release-group endpoint returns canonical front art for the whole album
+    // group and succeeds more often than individual release lookups.
+    // candidates is already deduplicated by rgId via the `seen` Set above.
+    for (const c of candidates.slice(0, 5)) {
+      if (c.rgId) {
+        const resp = await fetch(
+          `https://coverartarchive.org/release-group/${c.rgId}/front`,
+          { method: 'HEAD' },
+        );
+        if (resp.ok) return resp.url;
+      }
+    }
+
+    // Fall back to individual release IDs.
+    const triedRels = new Set<string>();
+    for (const c of candidates.slice(0, 5)) {
+      if (!triedRels.has(c.releaseId)) {
+        triedRels.add(c.releaseId);
+        const resp = await fetch(
+          `https://coverartarchive.org/release/${c.releaseId}/front-500`,
+          { method: 'HEAD' },
+        );
+        if (resp.ok) return resp.url;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function isHostSelfUpdateSupported(

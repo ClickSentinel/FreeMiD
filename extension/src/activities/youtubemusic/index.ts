@@ -128,7 +128,9 @@ presence.on('UpdateData', () => {
   }
 
   if (!title) {
-    presence.clearActivity();
+    // clearPresenceData (not clearActivity) keeps the interval and event
+    // listeners active so presence can recover when a title appears.
+    presence.clearPresenceData();
     return;
   }
 
@@ -147,12 +149,6 @@ presence.on('UpdateData', () => {
   // barTimes (scraped from the player bar) is the only reliable source.
   const current = barTimes.current ?? 0;
   const duration = barTimes.duration ?? 0;
-  console.debug(
-    '[FreeMiD] barTimes:',
-    barTimes,
-    'video.currentTime:',
-    video?.currentTime?.toFixed(1),
-  );
 
   const artUrl = getArtUrl();
   const videoId = getVideoId();
@@ -230,3 +226,17 @@ presence.on('UpdateData', () => {
       : undefined,
   });
 });
+
+// ── Event-driven updates ─────────────────────────────────────────────────────
+const signal = presence.freshSignal();
+const trigger = () => presence.triggerUpdate();
+
+// Re-evaluate immediately on play/pause — critical for lock handoff speed.
+document.addEventListener('play', trigger, { capture: true, signal });
+document.addEventListener('pause', trigger, { capture: true, signal });
+
+// Observe the player bar title for immediate track-change detection.
+presence.watchSelector(
+  'ytmusic-player-bar .title.ytmusic-player-bar, ytmusic-player-bar yt-formatted-string.title',
+  signal,
+);

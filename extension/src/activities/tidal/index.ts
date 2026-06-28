@@ -155,3 +155,14 @@ presence.on('UpdateData', () => {
       : undefined,
   });
 });
+
+// ── Event-driven updates ─────────────────────────────────────────────────────
+const signal = presence.freshSignal();
+const trigger = () => presence.triggerUpdate();
+
+// Re-evaluate immediately on play/pause — critical for lock handoff speed.
+document.addEventListener('play', trigger, { capture: true, signal });
+document.addEventListener('pause', trigger, { capture: true, signal });
+
+// Observe the footer track title for immediate track-change detection.
+presence.watchSelector('[data-test="footer-track-title"]', signal);

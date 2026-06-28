@@ -3,7 +3,7 @@
 **Project:** FreeMiD  
 **Maintainer:** FreeMiD team  
 **Effective date:** 2026-05-30  
-**Last updated:** 2026-05-30
+**Last updated:** 2026-06-27
 
 ---
 
@@ -19,6 +19,8 @@ The use of information received from Google APIs will adhere to the [Chrome Web 
 
 ## What data FreeMiD processes
 
+### Processed locally only
+
 FreeMiD reads the following information **only on your local device** to display your Discord Rich Presence:
 
 | Data | Source | Purpose |
@@ -29,7 +31,18 @@ FreeMiD reads the following information **only on your local device** to display
 | Currently active tab URL | Chrome `tabs` API | Detect which service is open |
 | Local extension settings (`paused`, enabled services, cached latest version) | `chrome.storage.local` | Persist user preferences and update UI state |
 
-Activity metadata listed above is not sent to FreeMiD-operated servers.
+This data is not sent to FreeMiD-operated servers.
+
+### Sent to external services
+
+When the **Tidal desktop app** is running on Windows and no Tidal browser tab is open, FreeMiD reads the current track from the Windows System Media Transport Controls (SMTC) and sends the following data to external services to resolve album artwork:
+
+| Data | Sent to | Purpose |
+| --- | --- | --- |
+| Artist name, track title | MusicBrainz API (`musicbrainz.org`) | Identify the album release associated with the track |
+| Release group or release ID (returned by MusicBrainz) | Cover Art Archive (`coverartarchive.org`) | Resolve the album art URL via an HTTP HEAD request |
+
+No account identifiers, IP-attributable tokens, or personally identifiable information beyond the artist name and track title are included in these requests. Resolved art URLs are cached in memory for the current session and are not persisted to disk. This artwork lookup only runs on Windows when Tidal desktop is active; it does not occur when using Tidal via a browser tab.
 
 ---
 
@@ -44,19 +57,33 @@ Activity metadata listed above is not sent to FreeMiD-operated servers.
 
 ---
 
-## How data flows locally
+## How data flows
+
+**Browser-based services (YouTube, YouTube Music, Tidal web):**
 
 ```text
-Browser tab (YouTube Music / YouTube)
-  └─ Content script reads title / artist / timestamps from the page
+Browser tab
+  └─ Content script reads title / artist / timestamps from the page DOM
        └─ Background service worker receives activity data
             └─ Chrome native messaging pipe (stdin/stdout, local only)
-                 └─ freemid native host binary
-                      └─ Discord IPC Unix socket (local filesystem)
+                 └─ FreeMiD native host binary
+                      └─ Discord IPC socket (local filesystem)
                            └─ Discord desktop app
 ```
 
-FreeMiD does not send your browsing activity metadata to FreeMiD-operated servers. Outbound network requests that may occur include GitHub release/version checks and downloads, and Discord network traffic handled by the Discord desktop app.
+**Tidal desktop app (Windows only):**
+
+```text
+Tidal desktop app
+  └─ Windows SMTC API (System Media Transport Controls)
+       └─ FreeMiD native host binary (event-driven, no polling)
+            └─ Chrome native messaging pipe → Background service worker
+                 ├─ MusicBrainz API  (artist + title → release ID)
+                 │    └─ Cover Art Archive  (release ID → art URL, HEAD only)
+                 └─ Chrome native messaging pipe → native host → Discord IPC socket
+```
+
+FreeMiD does not send your activity metadata to FreeMiD-operated servers. Outbound network requests that may occur include GitHub release/version checks and downloads, MusicBrainz and Cover Art Archive requests for Tidal desktop artwork (Windows only), and Discord network traffic handled by the Discord desktop app.
 
 ---
 
@@ -82,6 +109,11 @@ FreeMiD itself operates no servers. When a Rich Presence activity is set, **Disc
 FreeMiD may contact **GitHub** endpoints (for example `api.github.com` and release asset URLs) for update checks and installer/update downloads. Those requests are handled by your browser/OS network stack and are subject to GitHub policies.
 
 FreeMiD's source code is hosted on **GitHub**. GitHub may collect data when you visit the repository or download a release. Refer to [GitHub's Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement) and [GitHub's Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service) for details.
+
+When the Tidal desktop feature is active (Windows only, no Tidal browser tab open), FreeMiD contacts two additional services to resolve album artwork:
+
+- **MusicBrainz** (`musicbrainz.org`), operated by the MetaBrainz Foundation — receives the artist name and track title as a search query. Refer to the [MetaBrainz Privacy Policy](https://metabrainz.org/privacy) for details.
+- **Cover Art Archive** (`coverartarchive.org`), operated by the Internet Archive — receives an HTTP HEAD request for a release ID returned by MusicBrainz; no track metadata is included. Refer to the [Internet Archive Privacy Policy](https://archive.org/about/terms.php) for details.
 
 ---
 

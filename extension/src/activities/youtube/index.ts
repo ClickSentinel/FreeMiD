@@ -207,7 +207,9 @@ presence.on('UpdateData', () => {
     return;
   }
 
-  const hasProgress = playing && duration > 0;
+  // duration is Infinity for live streams; guard against it to avoid sending
+  // { start } with no { end }, which Discord shows as a counting-up game timer.
+  const hasProgress = playing && duration > 0 && Number.isFinite(duration);
   const startTimestamp = hasProgress ? nowSec - Math.floor(elapsed) : undefined;
   const endTimestamp =
     hasProgress && startTimestamp != null
@@ -230,3 +232,19 @@ presence.on('UpdateData', () => {
     buttons: [{ label: 'Watch on YouTube', url: videoUrl }],
   });
 });
+
+// ── Event-driven updates ─────────────────────────────────────────────────────
+const signal = presence.freshSignal();
+const trigger = () => presence.triggerUpdate();
+
+// Re-evaluate immediately on play/pause — critical for lock handoff speed.
+document.addEventListener('play', trigger, { capture: true, signal });
+document.addEventListener('pause', trigger, { capture: true, signal });
+// loadedmetadata fires when a new video starts loading (SPA navigation).
+document.addEventListener('loadedmetadata', trigger, { capture: true, signal });
+
+// Observe the video title heading for SPA navigation (title updates before loadedmetadata).
+presence.watchSelector(
+  'h1.ytd-video-primary-info-renderer, h1.style-scope.ytd-video-primary-info-renderer',
+  signal,
+);

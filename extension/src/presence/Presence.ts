@@ -48,6 +48,7 @@ export class Presence {
   private readonly clientId: string;
   private readonly updateIntervalMs: number;
   private intervalId?: ReturnType<typeof setInterval>;
+  private scheduledCallback: (() => void) | undefined;
 
   constructor({ clientId, updateInterval = 10 }: PresenceConfig) {
     this.clientId = clientId;
@@ -96,6 +97,7 @@ export class Presence {
       void Promise.resolve(callback());
     };
 
+    this.scheduledCallback = safeCallback;
     safeCallback();
     this.intervalId = setInterval(safeCallback, this.updateIntervalMs);
     (globalThis as Record<string, unknown>)[GUARD_KEY] = this.intervalId;
@@ -112,7 +114,7 @@ export class Presence {
       details: data.details,
       state: data.state,
       timestamps:
-        data.startTimestamp !== undefined || data.endTimestamp !== undefined
+        data.startTimestamp !== undefined && data.endTimestamp !== undefined
           ? { start: data.startTimestamp, end: data.endTimestamp }
           : undefined,
       assets:
@@ -146,6 +148,61 @@ export class Presence {
     chrome.runtime
       .sendMessage({ type: 'FREEMID_CLEAR_ACTIVITY' })
       .catch(() => {});
+  }
+
+  /**
+   * Immediately fire the UpdateData callback without waiting for the next
+   * interval tick. Used by event-driven observers (MutationObserver, play/pause
+   * events) in activity scripts to push updates as soon as the DOM changes.
+   */
+  triggerUpdate(): void {
+    this.scheduledCallback?.();
+  }
+
+  /**
+   * Abort any AbortController stored from a previous injection of this
+   * activity script, then return a fresh AbortSignal for the current one.
+   * Activity scripts pass this signal to addEventListener and MutationObserver
+   * cleanup handlers so they are removed automatically on re-injection.
+   */
+  freshSignal(): AbortSignal {
+    const KEY = '__freemid_events_abort';
+    const prev = (globalThis as Record<string, unknown>)[KEY] as
+      | AbortController
+      | undefined;
+    prev?.abort();
+    const controller = new AbortController();
+    (globalThis as Record<string, unknown>)[KEY] = controller;
+    return controller.signal;
+  }
+
+  /**
+   * Observe `selector` for DOM mutations and call triggerUpdate() when it
+   * changes. If the element is not yet in the DOM, a document.body watcher
+   * waits for it to appear. Both observers are tied to `signal` (obtained from
+   * freshSignal()) so they are disconnected when the activity is re-injected.
+   */
+  watchSelector(selector: string, signal: AbortSignal): void {
+    const connect = (el: Element): void => {
+      const obs = new MutationObserver(() => this.triggerUpdate());
+      obs.observe(el, { characterData: true, childList: true, subtree: true });
+      signal.addEventListener('abort', () => obs.disconnect());
+    };
+
+    const el = document.querySelector(selector);
+    if (el) {
+      connect(el);
+    } else {
+      const watcher = new MutationObserver(() => {
+        const found = document.querySelector(selector);
+        if (found) {
+          watcher.disconnect();
+          connect(found);
+        }
+      });
+      watcher.observe(document.body, { childList: true, subtree: true });
+      signal.addEventListener('abort', () => watcher.disconnect());
+    }
   }
 
   /**

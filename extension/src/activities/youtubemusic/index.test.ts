@@ -5,6 +5,9 @@ type PresenceInstance = {
   setActivity: ReturnType<typeof vi.fn>;
   clearActivity: ReturnType<typeof vi.fn>;
   clearPresenceData: ReturnType<typeof vi.fn>;
+  triggerUpdate: ReturnType<typeof vi.fn>;
+  freshSignal: ReturnType<typeof vi.fn>;
+  watchSelector: ReturnType<typeof vi.fn>;
 };
 
 let capturedUpdateHandler: (() => void) | undefined;
@@ -23,6 +26,9 @@ vi.mock('../../presence/Presence', () => {
     setActivity = vi.fn();
     clearActivity = vi.fn();
     clearPresenceData = vi.fn();
+    triggerUpdate = vi.fn();
+    freshSignal = vi.fn(() => new AbortController().signal);
+    watchSelector = vi.fn();
   }
 
   return { Presence: MockPresence };
@@ -64,12 +70,13 @@ describe('YouTube Music activity', () => {
     setMediaSession();
   });
 
-  it('clears activity when no title can be resolved', async () => {
+  it('clears presence data (not the interval) when no title can be resolved', async () => {
     await loadModule();
 
     capturedUpdateHandler?.();
 
-    expect(presenceInstance.clearActivity).toHaveBeenCalledOnce();
+    expect(presenceInstance.clearPresenceData).toHaveBeenCalledOnce();
+    expect(presenceInstance.clearActivity).not.toHaveBeenCalled();
     expect(presenceInstance.setActivity).not.toHaveBeenCalled();
   });
 

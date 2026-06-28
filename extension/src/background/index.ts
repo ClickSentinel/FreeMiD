@@ -16,6 +16,7 @@ import {
   compareVersions,
   isHostSelfUpdateSupported,
   isUpdateAvailableForHost,
+  lookupArtworkUrl,
   MIN_SELF_UPDATE_HOST_VERSION,
   MIN_WINDOWS_SELF_UPDATE_HOST_VERSION,
   matchActivity,
@@ -94,7 +95,7 @@ let manualReconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
 let reconnectCooldownUntilMs = 0;
-let desktopActivityActive = false;
+let presenceHolder: string | null = null; // sourceId that currently holds the Discord presence lock
 const desktopArtCache = new Map<string, string | null>(); // "artist|title" → HTTPS URL or null
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
@@ -221,6 +222,11 @@ function resetHostConnection(error?: string): void {
   hostRuntimeArch = null;
   hostBinaryPath = null;
   lastError = error ?? null;
+  // Release the desktop presence lock on disconnect: the native host process
+  // is gone so no further DESKTOP_MEDIA events will arrive to release it
+  // voluntarily, and the lock would otherwise block browser activities until
+  // the watcher re-pushes state after reconnect (~24 s via keepalive alarm).
+  if (presenceHolder === 'tidal-desktop') presenceHolder = null;
 }
 
 function clearReconnectSettleTimer(): void {
@@ -456,32 +462,36 @@ function connectNativeHost(): void {
         );
         if (!hasTidalBrowserTab && track && track.state === 'playing') {
           const now = Math.floor(Date.now() / 1000);
-          // position_secs is continuously accurate from the native host
-          // (extrapolated via SMTC LastUpdatedTime), so startTimestamp is
-          // stable across polls and Discord's timer won't reset.
+          // Only set timestamps when both position and duration are available.
+          // Sending only `start` (no `end`) causes Discord to show a game-style
+          // counting-up timer instead of a music progress bar. The SMTC fires
+          // MediaPropertiesChanged before TimelinePropertiesChanged, so the first
+          // push may have position but not yet duration — skip timestamps then.
           const start =
-            track.position_secs != null
+            track.position_secs != null && track.duration_secs != null
               ? now - Math.floor(track.position_secs)
-              : now;
+              : undefined;
           const end =
-            track.duration_secs != null
+            start !== undefined && track.duration_secs != null
               ? start + Math.floor(track.duration_secs)
               : undefined;
 
           const artKey = `${track.artist}|${track.title}`;
           const artUrl = desktopArtCache.get(artKey) ?? null;
           if (!desktopArtCache.has(artKey)) {
-            void lookupArtworkUrl(track.artist, track.title).then((url) => {
+            void lookupArtworkUrl(
+              track.artist,
+              track.title,
+              track.album ?? undefined,
+            ).then((url) => {
               desktopArtCache.set(artKey, url);
-              // Trigger a fresh poll so the activity is re-applied with
-              // accurate position + the now-cached art URL.
-              if (desktopActivityActive && nativePort) {
+              // Re-poll to apply the now-cached art URL if still showing.
+              if (presenceHolder === 'tidal-desktop' && nativePort) {
                 sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
               }
             });
           }
 
-          desktopActivityActive = true;
           setActivity(
             {
               application_id: DISCORD_CLIENT_ID || undefined,
@@ -489,7 +499,7 @@ function connectNativeHost(): void {
               type: 2,
               details: track.title,
               state: track.artist ? `by ${track.artist}` : 'TIDAL',
-              timestamps: { start, end },
+              timestamps: start !== undefined ? { start, end } : undefined,
               assets: {
                 large_image: artUrl ?? 'tidal-logo-1024',
                 large_text: track.album || track.title,
@@ -497,13 +507,10 @@ function connectNativeHost(): void {
                 small_text: artUrl ? 'TIDAL' : undefined,
               },
             },
-            'tidal',
+            'tidal-desktop',
           );
-        } else if (desktopActivityActive && !hasTidalBrowserTab) {
-          desktopActivityActive = false;
-          clearActivity();
         } else {
-          desktopActivityActive = false;
+          releasePresence('tidal-desktop');
         }
       } else if (m.type === 'UPDATE_STATUS' && m.status) {
         clearUpdateRequestTimeout();
@@ -643,7 +650,13 @@ function reconnectCooldownRemainingMs(): number {
  */
 export function setActivity(activity: object, siteId?: string): void {
   if (paused) return;
-  if (siteId !== undefined && !enabledSites[siteId]) return;
+  // 'tidal-desktop' shares the 'tidal' site toggle.
+  const toggleKey = siteId === 'tidal-desktop' ? 'tidal' : siteId;
+  if (toggleKey !== undefined && !enabledSites[toggleKey]) return;
+  // Lock model: first playing source claims the lock; others are blocked until
+  // the holder voluntarily releases via releasePresence().
+  if (presenceHolder !== null && presenceHolder !== siteId) return;
+  if (siteId !== undefined) presenceHolder = siteId;
 
   const a = activity as {
     name?: string;
@@ -694,45 +707,17 @@ export function setActivity(activity: object, siteId?: string): void {
 }
 
 export function clearActivity(): void {
+  presenceHolder = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
 }
 
-// ── Desktop media helpers ──────────────────────────────────────────────────────
-
-async function lookupArtworkUrl(
-  artist: string,
-  title: string,
-): Promise<string | null> {
-  try {
-    const query = encodeURIComponent(`${artist} ${title}`);
-    const mbResp = await fetch(
-      `https://musicbrainz.org/ws/2/recording/?query=${query}&fmt=json&limit=5`,
-      {
-        headers: {
-          'User-Agent': `FreeMiD/${chrome.runtime.getManifest().version} (https://github.com/${GITHUB_REPO})`,
-        },
-      },
-    );
-    if (!mbResp.ok) return null;
-
-    const mbData = (await mbResp.json()) as {
-      recordings?: Array<{ releases?: Array<{ id: string }> }>;
-    };
-
-    const releases = mbData.recordings?.flatMap((r) => r.releases ?? []) ?? [];
-    for (const release of releases.slice(0, 3)) {
-      const caaResp = await fetch(
-        `https://coverartarchive.org/release/${release.id}/front-500`,
-        { method: 'HEAD' },
-      );
-      if (caaResp.ok) return caaResp.url;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
+// Release presence held by a specific source. No-op if another source holds it.
+function releasePresence(sourceId: string): void {
+  if (presenceHolder !== sourceId) return;
+  presenceHolder = null;
+  lastActivity = null;
+  sendToHost({ type: 'CLEAR_ACTIVITY' });
 }
 
 // ── Activity registry & content script injection ───────────────────────────────
@@ -760,11 +745,9 @@ async function handleTabNavigation(
   const forceInject = options?.forceInject === true;
   if (!forceInject && activeActivityTabs.get(tabId) === meta.id) return;
 
-  // If the browser tab is taking over an activity the desktop poller was
-  // managing, hand off cleanly so the desktop flag doesn't linger.
-  if (meta.id === 'tidal' && desktopActivityActive) {
-    desktopActivityActive = false;
-  }
+  // Tidal web always takes priority over Tidal desktop — release the desktop
+  // lock so the web content script can claim it.
+  if (meta.id === 'tidal') releasePresence('tidal-desktop');
 
   activeActivityTabs.set(tabId, meta.id);
 
@@ -823,7 +806,15 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (msg.type === 'FREEMID_CLEAR_ACTIVITY') {
-      clearActivity();
+      const siteId =
+        sender.tab?.id != null
+          ? activeActivityTabs.get(sender.tab.id)
+          : undefined;
+      if (siteId !== undefined) {
+        releasePresence(siteId);
+      } else {
+        clearActivity();
+      }
       return;
     }
 
@@ -845,8 +836,16 @@ chrome.runtime.onMessage.addListener(
       void chrome.storage.local.set({
         [STORAGE_KEYS.enabledSites]: enabledSites,
       });
-      if (!enabled && [...activeActivityTabs.values()].includes(siteId)) {
-        clearActivity();
+      if (!enabled) {
+        // Only clear when the disabled site actually holds the lock.
+        // Clearing unconditionally when a tab is merely injected would evict
+        // presence owned by a different site that currently holds the lock.
+        const holdsLock =
+          presenceHolder === siteId ||
+          (siteId === 'tidal' && presenceHolder === 'tidal-desktop');
+        if (holdsLock) {
+          clearActivity();
+        }
       }
       broadcastStatus();
       return;
@@ -996,16 +995,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     // Keep an existing host port healthy, but do not auto-spawn a new host.
     // Reconnect should happen on explicit demand (popup/status/activity/update).
     if (nativePort) sendToHost({ type: 'PING' });
-    // Poll Tidal desktop app on Windows when no browser tab has it active.
-    if (
-      nativePort &&
-      hostRuntimeOs === 'windows' &&
-      enabledSites.tidal &&
-      !paused &&
-      ![...activeActivityTabs.values()].includes('tidal')
-    ) {
-      sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
-    }
   }
   if (alarm.name === 'freemid-update-check') {
     void checkForUpdates();
@@ -1061,11 +1050,12 @@ function broadcastStatus(): void {
 }
 
 function clearTabActivity(tabId: number): void {
-  if (!activeActivityTabs.has(tabId)) return;
+  const siteId = activeActivityTabs.get(tabId);
+  if (!siteId) return;
   activeActivityTabs.delete(tabId);
-  if (activeActivityTabs.size === 0) {
-    clearActivity();
-  }
+  // Only release the lock if no other tab of the same site is still active.
+  const stillActive = [...activeActivityTabs.values()].includes(siteId);
+  if (!stillActive) releasePresence(siteId);
 }
 
 // ── Version & update check ────────────────────────────────────────────────────

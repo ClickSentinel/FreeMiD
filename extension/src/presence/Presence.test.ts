@@ -123,3 +123,37 @@ describe('Presence', () => {
     });
   });
 });
+
+describe('Presence.freshSignal', () => {
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).__freemid_events_abort;
+  });
+
+  it('returns a signal that is not yet aborted', () => {
+    const presence = new Presence({ clientId: 'client-123' });
+    const signal = presence.freshSignal();
+    expect(signal.aborted).toBe(false);
+  });
+
+  it('aborts the previous signal when called again', () => {
+    const presence = new Presence({ clientId: 'client-123' });
+    const first = presence.freshSignal();
+    presence.freshSignal();
+    expect(first.aborted).toBe(true);
+  });
+
+  it('the new signal returned by the second call is not aborted', () => {
+    const presence = new Presence({ clientId: 'client-123' });
+    presence.freshSignal();
+    const second = presence.freshSignal();
+    expect(second.aborted).toBe(false);
+  });
+
+  it('aborts a signal stored by a different Presence instance (shared globalThis key)', () => {
+    const first = new Presence({ clientId: 'client-123' });
+    const second = new Presence({ clientId: 'client-456' });
+    const signal = first.freshSignal();
+    second.freshSignal();
+    expect(signal.aborted).toBe(true);
+  });
+});

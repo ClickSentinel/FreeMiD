@@ -55,6 +55,19 @@ fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Cleanly shut down the SMTC watcher thread before exiting so that Windows'
+/// COM/WinRT DllMain cleanup does not block waiting for our sleeping thread.
+fn exit_cleanly(code: i32) -> ! {
+    #[cfg(windows)]
+    {
+        smtc::signal_shutdown();
+        // The watcher polls every 100 ms; 500 ms is well above worst-case exit
+        // latency while still far shorter than the previous 3 600 s sleep.
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    std::process::exit(code);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     // `--apply-update <staged> <target> [old-pid]`: accept the optional trailing
@@ -95,7 +108,7 @@ fn main() {
                 "[FreeMiD] idle timeout reached ({} ms); exiting",
                 HOST_IDLE_TIMEOUT_MS
             );
-            std::process::exit(0);
+            exit_cleanly(0);
         }
     });
 
@@ -110,12 +123,23 @@ fn main() {
         eprintln!("[FreeMiD] Discord IPC connected at startup");
     }
 
+    // Subscribe to Windows SMTC events so Tidal desktop state is pushed to the
+    // extension immediately on track change, play/pause, or seek — no polling.
+    #[cfg(windows)]
+    smtc::start_watcher(|track| {
+        write_message(&json!({
+            "type": "DESKTOP_MEDIA",
+            "app": "tidal",
+            "track": track,
+        }));
+    });
+
     loop {
         match read_message() {
             Ok(None) => {
                 // stdin closed — Chrome disconnected.
                 eprintln!("[FreeMiD] stdin EOF — exiting cleanly");
-                return;
+                exit_cleanly(0);
             }
             Ok(Some(msg)) => {
                 LAST_MESSAGE_MS.store(now_unix_ms(), Ordering::Relaxed);
@@ -125,7 +149,7 @@ fn main() {
             }
             Err(e) => {
                 eprintln!("[FreeMiD] read error: {} — exiting", e);
-                return;
+                exit_cleanly(0);
             }
         }
     }
