@@ -209,7 +209,7 @@ presence.on('UpdateData', () => {
 
   // duration is Infinity for live streams; guard against it to avoid sending
   // { start } with no { end }, which Discord shows as a counting-up game timer.
-  const hasProgress = playing && duration > 0 && isFinite(duration);
+  const hasProgress = playing && duration > 0 && Number.isFinite(duration);
   const startTimestamp = hasProgress ? nowSec - Math.floor(elapsed) : undefined;
   const endTimestamp =
     hasProgress && startTimestamp != null
