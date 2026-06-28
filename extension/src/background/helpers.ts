@@ -122,13 +122,20 @@ export async function lookupArtworkUrl(
           id: string;
           title?: string;
           status?: string;
-          'release-group'?: { id: string; 'primary-type'?: string };
+          'release-group'?: {
+            id: string;
+            'primary-type'?: string;
+            'secondary-types'?: string[];
+          };
         }>;
       }>;
     };
 
     // Collect Official releases from the top 3 recordings, deduplicated by
-    // release-group. Score: album-name match (3) > Album type (2) > other (1).
+    // release-group.
+    // Score: album-name match (4) > original Album (3) > Single (2) >
+    //        Compilation or other (1). Compilations share primary-type "Album"
+    //        in MusicBrainz so we must check secondary-types to distinguish them.
     const albumLower = album?.toLowerCase().trim();
     type Candidate = { releaseId: string; rgId?: string; score: number };
     const seen = new Set<string>();
@@ -140,7 +147,11 @@ export async function lookupArtworkUrl(
         const dedupeKey = rgId ?? rel.id;
         if (seen.has(dedupeKey)) continue;
         seen.add(dedupeKey);
-        const isAlbum = rel['release-group']?.['primary-type'] === 'Album';
+        const primaryType = rel['release-group']?.['primary-type'];
+        const secondaryTypes = rel['release-group']?.['secondary-types'] ?? [];
+        const isCompilation = secondaryTypes.includes('Compilation');
+        const isAlbum = primaryType === 'Album' && !isCompilation;
+        const isSingle = primaryType === 'Single';
         const nameMatch =
           !!albumLower &&
           !!rel.title &&
@@ -148,7 +159,9 @@ export async function lookupArtworkUrl(
         candidates.push({
           releaseId: rel.id,
           rgId,
-          score: nameMatch ? 3 : isAlbum ? 2 : 1,
+          // Exact album name match always wins. Original albums rank above
+          // singles; compilations rank lowest since they often carry wrong art.
+          score: nameMatch ? 4 : isAlbum ? 3 : isSingle ? 2 : 1,
         });
       }
     }
