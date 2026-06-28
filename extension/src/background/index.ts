@@ -183,6 +183,38 @@ function clearPendingReconnectSession(): void {
   void chrome.storage.session.remove(SESSION_KEYS.pendingReconnect);
 }
 
+function triggerHostUpdate(): { ok: boolean; error?: string } {
+  clearApplyVerification();
+  clearPendingReconnectSession();
+  updateStatus = { status: 'requested' };
+  broadcastStatus();
+  const ok = sendToHost({
+    type: 'UPDATE',
+    ...(DEV_UPDATE_LATEST_URL ? { latestUrl: DEV_UPDATE_LATEST_URL } : {}),
+    ...(DEV_UPDATE_RELEASES_BASE
+      ? { releasesBaseUrl: DEV_UPDATE_RELEASES_BASE }
+      : {}),
+  });
+  if (!ok) {
+    clearUpdateRequestTimeout();
+    const error = lastError ?? 'Failed to send update command';
+    updateStatus = { status: 'failed', error };
+    broadcastStatus();
+    return { ok: false, error };
+  }
+  armUpdateRequestTimeout();
+  return { ok: true };
+}
+
+function maybeAutoUpdate(): void {
+  if (!isUpdateAvailable()) return;
+  if (hostSelfUpdateSupported !== true) return;
+  if (presenceHolder !== null) return;
+  if (updateStatus !== null) return;
+  if (!nativePort) return;
+  triggerHostUpdate();
+}
+
 function startApplyVerification(
   targetVersion: string,
   deadlineMs = Date.now() + APPLY_VERIFY_TIMEOUT_MS,
@@ -797,6 +829,7 @@ function releasePresence(sourceId: string): void {
   presenceHolder = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
+  maybeAutoUpdate();
 }
 
 // ── Activity registry & content script injection ───────────────────────────────
@@ -1020,31 +1053,8 @@ chrome.runtime.onMessage.addListener(
         return true;
       }
 
-      clearApplyVerification();
-      clearPendingReconnectSession();
-      updateStatus = { status: 'requested' };
-      broadcastStatus();
-
-      const ok = sendToHost({
-        type: 'UPDATE',
-        ...(DEV_UPDATE_LATEST_URL ? { latestUrl: DEV_UPDATE_LATEST_URL } : {}),
-        ...(DEV_UPDATE_RELEASES_BASE
-          ? { releasesBaseUrl: DEV_UPDATE_RELEASES_BASE }
-          : {}),
-      });
-
-      if (!ok) {
-        clearUpdateRequestTimeout();
-        const error = lastError ?? 'Failed to send update command';
-        updateStatus = { status: 'failed', error };
-        broadcastStatus();
-        sendResponse({ ok: false, error });
-        return true;
-      }
-
-      armUpdateRequestTimeout();
-
-      sendResponse({ ok: true });
+      const result = triggerHostUpdate();
+      sendResponse(result);
       return true;
     }
 
@@ -1076,7 +1086,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (nativePort) sendToHost({ type: 'PING' });
   }
   if (alarm.name === 'freemid-update-check') {
-    void checkForUpdates();
+    void checkForUpdates().then(() => {
+      maybeAutoUpdate();
+    });
   }
   if (alarm.name === 'freemid-host-version-check') {
     // On non-Windows, if the user manually updated the native host binary
