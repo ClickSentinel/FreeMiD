@@ -100,7 +100,7 @@ export async function lookupArtworkUrl(
   album?: string,
 ): Promise<string | null> {
   try {
-    const esc = (s: string) => s.replace(/"/g, '\\"');
+    const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     // -video:true excludes music videos, which score equally high as audio
     // recordings but have wrong or no art in the Cover Art Archive.
     const query = encodeURIComponent(

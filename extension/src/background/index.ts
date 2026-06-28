@@ -222,6 +222,11 @@ function resetHostConnection(error?: string): void {
   hostRuntimeArch = null;
   hostBinaryPath = null;
   lastError = error ?? null;
+  // Release the desktop presence lock on disconnect: the native host process
+  // is gone so no further DESKTOP_MEDIA events will arrive to release it
+  // voluntarily, and the lock would otherwise block browser activities until
+  // the watcher re-pushes state after reconnect (~24 s via keepalive alarm).
+  if (presenceHolder === 'tidal-desktop') presenceHolder = null;
 }
 
 function clearReconnectSettleTimer(): void {

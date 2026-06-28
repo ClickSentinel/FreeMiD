@@ -316,4 +316,16 @@ describe('lookupArtworkUrl', () => {
     const mbUrl: string = (fetchFn.mock.calls as [string][])[0]![0];
     expect(decodeURIComponent(mbUrl)).toContain('-video:true');
   });
+
+  it('escapes backslashes in artist and title before encoding the Lucene query', async () => {
+    mockChrome();
+    const fetchFn = stubFetch((url) =>
+      url.includes('musicbrainz.org') ? mbOk([]) : caFail(),
+    );
+    await lookupArtworkUrl('AC\\DC', 'Back in Black');
+    const mbUrl: string = (fetchFn.mock.calls as [string][])[0]![0];
+    const decoded = decodeURIComponent(mbUrl);
+    // Backslash must be doubled so the Lucene parser sees a literal backslash.
+    expect(decoded).toContain('artist:"AC\\\\DC"');
+  });
 });
