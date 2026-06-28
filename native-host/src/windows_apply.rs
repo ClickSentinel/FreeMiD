@@ -26,6 +26,28 @@ pub(crate) fn append_updater_log(log_path: &Path, line: &str) {
     }
 }
 
+/// Copy `staged` to `target`, retrying up to `attempts` times with 100 ms gaps.
+/// On success the staged file is removed. Returns the last OS error on timeout.
+pub(crate) fn try_copy_with_retry(staged: &Path, target: &Path, attempts: u32) -> Result<(), String> {
+    let mut last_err = String::new();
+    for _ in 0..attempts {
+        match std::fs::copy(staged, target) {
+            Ok(_) => {
+                let _ = std::fs::remove_file(staged);
+                return Ok(());
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+    Err(format!(
+        "Timed out after {} attempts copying to {:?}: {}",
+        attempts, target, last_err
+    ))
+}
+
 /// Validates that `staged` and `target` are in the same directory and have the
 /// expected FreeMiD filenames before any copy or rename is attempted.
 pub(crate) fn validate_apply_paths(staged: &Path, target: &Path) -> Result<(), String> {

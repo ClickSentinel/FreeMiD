@@ -511,7 +511,9 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const STABLE_UPDATER_EXE_NAME: &str = "freemid-apply.exe";
 
 #[cfg(windows)]
-use crate::windows_apply::{append_updater_log, updater_log_path, validate_apply_paths};
+use crate::windows_apply::{
+    append_updater_log, try_copy_with_retry, updater_log_path, validate_apply_paths,
+};
 
 #[cfg(windows)]
 fn apply_update_windows(staged_path: &Path) -> Result<(), UpdateError> {
@@ -697,33 +699,16 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Upda
             )));
         }
 
-        let mut last_err: Option<String> = None;
-        for _ in 0..300 {
-            match std::fs::copy(&staged, &target) {
-                Ok(_) => {
-                    let _ = std::fs::remove_file(&staged);
-                    append_updater_log(&log, "run_apply_update: copy succeeded and staged removed");
-                    return Ok(());
-                }
-                Err(e) => {
-                    last_err = Some(e.to_string());
-                    std::thread::sleep(Duration::from_millis(100));
-                }
+        match try_copy_with_retry(&staged, &target, 300) {
+            Ok(()) => {
+                append_updater_log(&log, "run_apply_update: copy succeeded and staged removed");
+                Ok(())
+            }
+            Err(e) => {
+                append_updater_log(&log, &format!("run_apply_update: timed out, last_err={}", e));
+                Err(UpdateError::Apply(e))
             }
         }
-
-        append_updater_log(&log, &format!(
-            "run_apply_update: timed out, last_err={}",
-            last_err
-                .clone()
-                .unwrap_or_else(|| "unknown error".to_string())
-        ));
-
-        Err(UpdateError::Apply(format!(
-            "Timed out applying update to {:?}: {}",
-            target,
-            last_err.unwrap_or_else(|| "unknown error".to_string())
-        )))
     }
 }
 
