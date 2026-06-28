@@ -786,11 +786,19 @@ mod win {
         cmd
     }
 
+    /// Escape a string for embedding inside a double-quoted `cmd.exe` argument.
+    /// In cmd.exe, a literal `"` inside a double-quoted segment must be doubled.
+    fn escape_cmd_quoted_arg(s: &str) -> String {
+        s.replace('"', "\"\"")
+    }
+
     /// Build the `cmd.exe` command that finishes uninstall after this process
     /// exits: retry deleting the (self-locked) setup executable until it is gone,
     /// then remove the now-empty install directory. The `for /L` retry loop gives
     /// the user time to dismiss the completion dialog before the lock releases.
     fn deferred_cleanup_command(setup: &str, dir: &str) -> String {
+        let setup = escape_cmd_quoted_arg(setup);
+        let dir = escape_cmd_quoted_arg(dir);
         format!(
             "for /L %i in (1,1,30) do (del /f /q \"{setup}\" >nul 2>nul & if not exist \"{setup}\" (rmdir /q \"{dir}\" >nul 2>nul & exit /B 0) else (ping 127.0.0.1 -n 2 >nul))"
         )

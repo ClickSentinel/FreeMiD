@@ -516,47 +516,45 @@ fn apply_update_windows(data: &[u8]) -> Result<(), UpdateError> {
         }
     }
 
-    if stable_updater_path.exists() {
-        append_updater_log(&format!(
-            "apply_update_windows: attempting stable updater {:?}",
-            stable_updater_path
-        ));
-        match std::process::Command::new(&stable_updater_path)
-            .arg("--apply-update")
-            .arg(&staged_path)
-            .arg(&current_exe)
-            .arg(std::process::id().to_string())
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-        {
-            Ok(_) => {
-                append_updater_log("apply_update_windows: stable updater launch succeeded");
-                return Ok(());
-            }
-            Err(e) => {
-                append_updater_log(&format!(
-                    "apply_update_windows: stable updater launch failed: {} (raw_os_error={:?})",
-                    e,
-                    e.raw_os_error()
-                ));
-
-                if e.raw_os_error() == Some(740) {
-                    append_updater_log(
-                        "apply_update_windows: trying cmd fallback after stable updater failure",
-                    );
-                    let res = spawn_cmd_apply_update(&staged_path, &current_exe);
-                    if res.is_err() {
-                        let _ = std::fs::remove_file(&staged_path);
-                    }
-                    return res;
+    append_updater_log(&format!(
+        "apply_update_windows: attempting stable updater {:?}",
+        stable_updater_path
+    ));
+    match std::process::Command::new(&stable_updater_path)
+        .arg("--apply-update")
+        .arg(&staged_path)
+        .arg(&current_exe)
+        .arg(std::process::id().to_string())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+    {
+        Ok(_) => {
+            append_updater_log("apply_update_windows: stable updater launch succeeded");
+            return Ok(());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            append_updater_log(&format!(
+                "apply_update_windows: stable updater missing at {:?}; falling back to cmd apply",
+                stable_updater_path
+            ));
+        }
+        Err(e) => {
+            append_updater_log(&format!(
+                "apply_update_windows: stable updater launch failed: {} (raw_os_error={:?})",
+                e,
+                e.raw_os_error()
+            ));
+            if e.raw_os_error() == Some(740) {
+                append_updater_log(
+                    "apply_update_windows: trying cmd fallback after stable updater failure",
+                );
+                let res = spawn_cmd_apply_update(&staged_path, &current_exe);
+                if res.is_err() {
+                    let _ = std::fs::remove_file(&staged_path);
                 }
+                return res;
             }
         }
-    } else {
-        append_updater_log(&format!(
-            "apply_update_windows: stable updater missing at {:?}; falling back to cmd apply",
-            stable_updater_path
-        ));
     }
 
     append_updater_log("apply_update_windows: stable updater unavailable, using cmd fallback");
@@ -724,7 +722,15 @@ pub(crate) fn cleanup_staged_files() {
         let Ok(pid) = inner.parse::<u32>() else {
             continue;
         };
-        if !is_pid_alive(pid) {
+        // Require the file to be older than 10 minutes before deleting — guards
+        // against PID reuse causing a fresh staged file to be incorrectly removed.
+        let old_enough = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .and_then(|t| t.elapsed().map_err(|e| std::io::Error::other(e.to_string())))
+            .map(|age| age > Duration::from_secs(600))
+            .unwrap_or(false);
+        if !is_pid_alive(pid) && old_enough {
             let path = entry.path();
             match std::fs::remove_file(&path) {
                 Ok(()) => eprintln!("[FreeMiD] removed orphaned staged file: {:?}", path),

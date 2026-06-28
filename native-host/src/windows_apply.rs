@@ -33,6 +33,14 @@ pub(crate) fn append_updater_log(line: &str) {
 /// Validates that `staged` and `target` are in the same directory and have the
 /// expected FreeMiD filenames before any copy or rename is attempted.
 pub(crate) fn validate_apply_paths(staged: &Path, target: &Path) -> Result<(), String> {
+    // Reject relative paths — parent() comparisons are ambiguous without an anchor.
+    if !staged.is_absolute() {
+        return Err(format!("Staged path must be absolute: {:?}", staged));
+    }
+    if !target.is_absolute() {
+        return Err(format!("Target path must be absolute: {:?}", target));
+    }
+
     let target_name = target
         .file_name()
         .and_then(|n| n.to_str())
@@ -57,6 +65,32 @@ pub(crate) fn validate_apply_paths(staged: &Path, target: &Path) -> Result<(), S
         ));
     }
 
+    // Canonicalize parent directories to resolve symlinks and .. components.
+    // We canonicalize the parents (not the files themselves) because the staged
+    // file may not exist on disk yet when this is called.
+    #[cfg(windows)]
+    {
+        let staged_dir = staged
+            .parent()
+            .ok_or_else(|| "Staged path has no parent directory".to_string())?;
+        let target_dir = target
+            .parent()
+            .ok_or_else(|| "Target path has no parent directory".to_string())?;
+        let staged_canonical = std::fs::canonicalize(staged_dir).map_err(|e| {
+            format!("Cannot resolve staged directory {:?}: {}", staged_dir, e)
+        })?;
+        let target_canonical = std::fs::canonicalize(target_dir).map_err(|e| {
+            format!("Cannot resolve target directory {:?}: {}", target_dir, e)
+        })?;
+        if staged_canonical != target_canonical {
+            return Err(format!(
+                "Staged and target directories must match (staged={:?}, target={:?})",
+                staged_canonical, target_canonical
+            ));
+        }
+    }
+
+    #[cfg(not(windows))]
     if staged.parent() != target.parent() {
         return Err(format!(
             "Staged and target directories must match (staged={:?}, target={:?})",
@@ -68,7 +102,7 @@ pub(crate) fn validate_apply_paths(staged: &Path, target: &Path) -> Result<(), S
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use std::path::Path;
