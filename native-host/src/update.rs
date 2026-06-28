@@ -12,8 +12,8 @@
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::io::{BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 #[cfg(windows)]
@@ -215,14 +215,19 @@ fn do_update(overrides: &UpdateSourceOverrides, send: &impl Fn(Value)) -> Result
 
     let base_url = format!("{}/{}", releases_base_url, tag);
 
-    // ── Download and verify the binary ──────────────────────────────────────
-    let binary_bytes = download_bytes(&format!("{}/{}", base_url, artifact), &user_agent)?;
+    // ── Download, verify, and apply ─────────────────────────────────────────
+    // Stream directly to disk — no full binary in RAM.
+    let staged = staged_download_path()?;
+    let hex = download_to_staged(&format!("{}/{}", base_url, artifact), &staged, &user_agent)?;
+
     let checksums = download_string(&format!("{}/checksums.sha256", base_url), &user_agent)?;
 
-    verify_sha256(&binary_bytes, &checksums, artifact)?;
+    if let Err(e) = verify_checksum_hex(&hex, &checksums, artifact) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
 
-    // ── Atomically replace the running binary ────────────────────────────────
-    apply_update(&binary_bytes)?;
+    apply_staged(&staged)?;
 
     eprintln!("[FreeMiD] Successfully updated to {}", latest_version);
 
@@ -321,7 +326,55 @@ fn is_strict_semver(v: &str) -> bool {
     parts.len() == 3 && parts.iter().all(|p| p.parse::<u64>().is_ok())
 }
 
-fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, UpdateError> {
+/// Passthrough writer that accumulates a SHA-256 hash as data flows through.
+struct HashingWriter<W> {
+    inner: W,
+    hasher: Sha256,
+}
+
+impl<W: Write> HashingWriter<W> {
+    fn new(inner: W) -> Self {
+        Self { inner, hasher: Sha256::new() }
+    }
+    fn finish_hex(self) -> String {
+        hex::encode(self.hasher.finalize())
+    }
+}
+
+impl<W: Write> Write for HashingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Returns the path where the downloaded binary should be staged before apply.
+/// Sibling to the running executable so the rename stays on the same filesystem.
+fn staged_download_path() -> Result<PathBuf, UpdateError> {
+    let current_exe = std::env::current_exe().map_err(|e| {
+        UpdateError::Apply(format!("Cannot determine current binary path: {e}"))
+    })?;
+    let name = current_exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("freemid")
+        .to_owned();
+    let mut p = current_exe.clone();
+    #[cfg(windows)]
+    p.set_file_name(format!("{}.staged-{}.exe", name, std::process::id()));
+    #[cfg(not(windows))]
+    p.set_file_name(format!("{}.update-{}", name, std::process::id()));
+    Ok(p)
+}
+
+/// Stream download directly to `dest`, computing SHA-256 on the fly.
+/// Returns the hex digest. Peak memory is bounded by the I/O buffer size,
+/// not the artifact size.
+fn download_to_staged(url: &str, dest: &Path, user_agent: &str) -> Result<String, UpdateError> {
     const MAX_DOWNLOAD_BYTES: u64 = 100 * 1024 * 1024;
 
     let resp = http_agent()
@@ -343,20 +396,27 @@ fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, UpdateError> {
         }
     }
 
-    let mut buf = Vec::new();
-    resp.into_body()
-        .into_reader()
-        .take(MAX_DOWNLOAD_BYTES + 1)
-        .read_to_end(&mut buf)
-        .map_err(|e| UpdateError::Network(format!("Failed to read download body: {e}")))?;
+    let file = std::fs::File::create(dest)
+        .map_err(|e| UpdateError::Apply(format!("Cannot create staging file {:?}: {e}", dest)))?;
+    let mut hw = HashingWriter::new(BufWriter::new(file));
 
-    if buf.len() as u64 > MAX_DOWNLOAD_BYTES {
+    let written = std::io::copy(
+        &mut resp.into_body().into_reader().take(MAX_DOWNLOAD_BYTES + 1),
+        &mut hw,
+    )
+    .map_err(|e| UpdateError::Network(format!("Failed to write download body: {e}")))?;
+
+    hw.flush()
+        .map_err(|e| UpdateError::Apply(format!("Failed to flush staging file: {e}")))?;
+
+    if written > MAX_DOWNLOAD_BYTES {
+        let _ = std::fs::remove_file(dest);
         return Err(UpdateError::ResponseTooLarge(format!(
             "Download exceeded max size of {MAX_DOWNLOAD_BYTES} bytes"
         )));
     }
 
-    Ok(buf)
+    Ok(hw.finish_hex())
 }
 
 fn download_string(url: &str, user_agent: &str) -> Result<String, UpdateError> {
@@ -385,8 +445,9 @@ fn download_string(url: &str, user_agent: &str) -> Result<String, UpdateError> {
         .map_err(|e| UpdateError::Parse(format!("Checksums file is not valid UTF-8: {e}")))
 }
 
-fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), UpdateError> {
-    let expected = checksums
+/// Find the expected SHA-256 hex string for `artifact` in a `checksums.sha256` file.
+fn expected_checksum<'a>(checksums: &'a str, artifact: &str) -> Result<&'a str, UpdateError> {
+    checksums
         .lines()
         .find_map(|line| {
             let mut parts = line.split_whitespace();
@@ -394,36 +455,40 @@ fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), Upd
             let name = parts.next()?;
             // Strip leading './' or '*' that some shasum tools emit.
             let name = name.trim_start_matches("./").trim_start_matches('*');
-            if name == artifact {
-                Some(hash.to_ascii_lowercase())
-            } else {
-                None
-            }
+            if name == artifact { Some(hash) } else { None }
         })
         .ok_or_else(|| {
             UpdateError::ChecksumNotFound(format!(
                 "Checksum not found for '{artifact}' in checksums.sha256"
             ))
-        })?;
+        })
+}
 
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let actual = hex::encode(hasher.finalize());
-
+/// Compare a pre-computed hex digest against the checksums file.
+fn verify_checksum_hex(actual: &str, checksums: &str, artifact: &str) -> Result<(), UpdateError> {
+    let expected = expected_checksum(checksums, artifact)?.to_ascii_lowercase();
     if actual != expected {
         return Err(UpdateError::ChecksumMismatch(format!(
             "SHA-256 mismatch for '{artifact}'\n  expected: {expected}\n  actual:   {actual}"
         )));
     }
-
     eprintln!("[FreeMiD] Checksum verified ✓");
     Ok(())
 }
 
-fn apply_update(data: &[u8]) -> Result<(), UpdateError> {
+/// Verify SHA-256 of raw bytes against a checksums file (used in tests).
+#[cfg(test)]
+fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), UpdateError> {
+    let actual = hex::encode(Sha256::digest(data));
+    verify_checksum_hex(&actual, checksums, artifact)
+}
+
+/// Apply the already-staged binary: chmod + atomic rename (Unix) or
+/// launch the stable apply helper (Windows).
+fn apply_staged(staged: &Path) -> Result<(), UpdateError> {
     #[cfg(windows)]
     {
-        apply_update_windows(data)
+        apply_update_windows(staged)
     }
 
     #[cfg(not(windows))]
@@ -432,47 +497,24 @@ fn apply_update(data: &[u8]) -> Result<(), UpdateError> {
             UpdateError::Apply(format!("Cannot determine current binary path: {e}"))
         })?;
 
-        // Write to a sibling temp file on the same filesystem to allow atomic rename.
-        let tmp_path: PathBuf = {
-            let mut p = current_exe.clone();
-            let name = p
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("freemid")
-                .to_owned();
-            p.set_file_name(format!("{}.update-{}", name, std::process::id()));
-            p
-        };
-
-        // Write binary data.
-        {
-            let mut f = std::fs::File::create(&tmp_path).map_err(|e| {
-                UpdateError::Apply(format!("Cannot create temp file {:?}: {e}", tmp_path))
-            })?;
-            f.write_all(data)
-                .map_err(|e| UpdateError::Apply(format!("Failed to write temp file: {e}")))?;
-            f.flush()
-                .map_err(|e| UpdateError::Apply(format!("Failed to flush temp file: {e}")))?;
-        }
-
-        // Set executable bit on Unix.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| UpdateError::Apply(format!("Failed to chmod temp file: {e}")))?;
+            std::fs::set_permissions(staged, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| UpdateError::Apply(format!("Failed to chmod staged file: {e}")))?;
         }
 
-        // Atomic rename — on Linux/macOS this is safe even while the old binary
-        // is mapped into memory; the running process keeps the old inode.
-        std::fs::rename(&tmp_path, &current_exe).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp_path);
+        // Atomic rename — on Linux/macOS the running process keeps the old
+        // inode; the new binary takes effect on next launch.
+        std::fs::rename(staged, &current_exe).map_err(|e| {
+            let _ = std::fs::remove_file(staged);
             UpdateError::Apply(format!("Failed to replace binary {:?}: {e}", current_exe))
         })?;
 
         Ok(())
     }
 }
+
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -483,32 +525,11 @@ const STABLE_UPDATER_EXE_NAME: &str = "freemid-apply.exe";
 use crate::windows_apply::{append_updater_log, updater_log_path, validate_apply_paths};
 
 #[cfg(windows)]
-fn apply_update_windows(data: &[u8]) -> Result<(), UpdateError> {
+fn apply_update_windows(staged_path: &Path) -> Result<(), UpdateError> {
     append_updater_log("apply_update_windows: begin");
 
     let current_exe = std::env::current_exe()
         .map_err(|e| UpdateError::Apply(format!("Cannot determine current binary path: {e}")))?;
-
-    let staged_path: PathBuf = {
-        let mut p = current_exe.clone();
-        let name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("freemid.exe")
-            .to_owned();
-        p.set_file_name(format!("{}.staged-{}.exe", name, std::process::id()));
-        p
-    };
-
-    {
-        let mut f = std::fs::File::create(&staged_path).map_err(|e| {
-            UpdateError::Apply(format!("Cannot create staged file {:?}: {e}", staged_path))
-        })?;
-        f.write_all(data)
-            .map_err(|e| UpdateError::Apply(format!("Failed to write staged file: {e}")))?;
-        f.flush()
-            .map_err(|e| UpdateError::Apply(format!("Failed to flush staged file: {e}")))?;
-    }
 
     append_updater_log(&format!(
         "apply_update_windows: staged file at {:?}, target {:?}",

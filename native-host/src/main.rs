@@ -270,15 +270,16 @@ pub(crate) fn write_message(value: &Value) {
 }
 
 fn send_status(connected: bool, error: Option<&str>) {
+    let self_update = update::self_update_supported();
     let mut capabilities: Vec<&str> = Vec::new();
-    if update::self_update_supported() {
+    if self_update {
         capabilities.push("self-update");
     }
     let mut payload = json!({
         "type": "STATUS",
         "connected": connected,
         "version": env!("CARGO_PKG_VERSION"),
-        "selfUpdateSupported": update::self_update_supported(),
+        "selfUpdateSupported": self_update,
         "capabilities": capabilities,
         "runtimeOs": std::env::consts::OS,
         "runtimeArch": std::env::consts::ARCH,

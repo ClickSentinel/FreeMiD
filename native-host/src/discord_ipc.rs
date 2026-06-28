@@ -13,7 +13,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -36,10 +37,8 @@ pub const CLIENT_ID: &str = match option_env!("DISCORD_CLIENT_ID") {
 };
 
 fn nonce() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis().to_string())
-        .unwrap_or_else(|_| "0".to_string())
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed).to_string()
 }
 
 // ── Activity types ─────────────────────────────────────────────────────────────
