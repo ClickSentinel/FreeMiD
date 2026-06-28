@@ -156,10 +156,9 @@ export async function lookupArtworkUrl(
 
     // The release-group endpoint returns canonical front art for the whole album
     // group and succeeds more often than individual release lookups.
-    const triedRgs = new Set<string>();
+    // candidates is already deduplicated by rgId via the `seen` Set above.
     for (const c of candidates.slice(0, 5)) {
-      if (c.rgId && !triedRgs.has(c.rgId)) {
-        triedRgs.add(c.rgId);
+      if (c.rgId) {
         const resp = await fetch(
           `https://coverartarchive.org/release-group/${c.rgId}/front`,
           { method: 'HEAD' },

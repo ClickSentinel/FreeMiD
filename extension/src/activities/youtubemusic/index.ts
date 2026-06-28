@@ -226,16 +226,7 @@ presence.on('UpdateData', () => {
 });
 
 // ── Event-driven updates ─────────────────────────────────────────────────────
-// Abort listeners registered by any previous injection of this script.
-const EVENTS_KEY = '__freemid_events_abort';
-const prevController = (globalThis as Record<string, unknown>)[EVENTS_KEY] as
-  | AbortController
-  | undefined;
-prevController?.abort();
-const eventsController = new AbortController();
-(globalThis as Record<string, unknown>)[EVENTS_KEY] = eventsController;
-const { signal } = eventsController;
-
+const signal = presence.freshSignal();
 const trigger = () => presence.triggerUpdate();
 
 // Re-evaluate immediately on play/pause — critical for lock handoff speed.
@@ -243,27 +234,7 @@ document.addEventListener('play', trigger, { capture: true, signal });
 document.addEventListener('pause', trigger, { capture: true, signal });
 
 // Observe the player bar title for immediate track-change detection.
-function connectTitleObserver(el: Element): void {
-  const obs = new MutationObserver(trigger);
-  obs.observe(el, { characterData: true, childList: true, subtree: true });
-  signal.addEventListener('abort', () => obs.disconnect());
-}
-
-const titleEl = document.querySelector(
+presence.watchSelector(
   'ytmusic-player-bar .title.ytmusic-player-bar, ytmusic-player-bar yt-formatted-string.title',
+  signal,
 );
-if (titleEl) {
-  connectTitleObserver(titleEl);
-} else {
-  const watcher = new MutationObserver(() => {
-    const el = document.querySelector(
-      'ytmusic-player-bar .title.ytmusic-player-bar, ytmusic-player-bar yt-formatted-string.title',
-    );
-    if (el) {
-      watcher.disconnect();
-      connectTitleObserver(el);
-    }
-  });
-  watcher.observe(document.body, { childList: true, subtree: true });
-  signal.addEventListener('abort', () => watcher.disconnect());
-}

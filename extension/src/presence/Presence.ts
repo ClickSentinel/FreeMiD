@@ -160,6 +160,52 @@ export class Presence {
   }
 
   /**
+   * Abort any AbortController stored from a previous injection of this
+   * activity script, then return a fresh AbortSignal for the current one.
+   * Activity scripts pass this signal to addEventListener and MutationObserver
+   * cleanup handlers so they are removed automatically on re-injection.
+   */
+  freshSignal(): AbortSignal {
+    const KEY = '__freemid_events_abort';
+    const prev = (globalThis as Record<string, unknown>)[KEY] as
+      | AbortController
+      | undefined;
+    prev?.abort();
+    const controller = new AbortController();
+    (globalThis as Record<string, unknown>)[KEY] = controller;
+    return controller.signal;
+  }
+
+  /**
+   * Observe `selector` for DOM mutations and call triggerUpdate() when it
+   * changes. If the element is not yet in the DOM, a document.body watcher
+   * waits for it to appear. Both observers are tied to `signal` (obtained from
+   * freshSignal()) so they are disconnected when the activity is re-injected.
+   */
+  watchSelector(selector: string, signal: AbortSignal): void {
+    const connect = (el: Element): void => {
+      const obs = new MutationObserver(() => this.triggerUpdate());
+      obs.observe(el, { characterData: true, childList: true, subtree: true });
+      signal.addEventListener('abort', () => obs.disconnect());
+    };
+
+    const el = document.querySelector(selector);
+    if (el) {
+      connect(el);
+    } else {
+      const watcher = new MutationObserver(() => {
+        const found = document.querySelector(selector);
+        if (found) {
+          watcher.disconnect();
+          connect(found);
+        }
+      });
+      watcher.observe(document.body, { childList: true, subtree: true });
+      signal.addEventListener('abort', () => watcher.disconnect());
+    }
+  }
+
+  /**
    * Send a clear to Discord without stopping the update interval.
    * Use this inside UpdateData handlers to flush stale presence state
    * while keeping the tick running (unlike clearActivity which stops it).
