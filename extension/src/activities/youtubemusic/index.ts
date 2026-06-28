@@ -232,14 +232,18 @@ const signal = presence.freshSignal();
 const trigger = () => presence.triggerUpdate();
 
 // pause must fire immediately — critical for lock-release speed.
-// play is delayed: mediaSession.metadata lags the play event at track
-// transitions, so firing immediately would send the previous song's info.
-// The title MutationObserver below handles the actual metadata update.
+// play fires twice on track transitions: 300 ms catches the new song
+// title/artist once mediaSession.metadata has settled; 1000 ms catches
+// the player-bar time-info (current / duration) which lags further behind.
 document.addEventListener('pause', trigger, { capture: true, signal });
-document.addEventListener('play', () => setTimeout(trigger, 300), {
-  capture: true,
-  signal,
-});
+document.addEventListener(
+  'play',
+  () => {
+    setTimeout(trigger, 300);
+    setTimeout(trigger, 1000);
+  },
+  { capture: true, signal },
+);
 
 // Observe the player bar title for immediate track-change detection.
 presence.watchSelector(
