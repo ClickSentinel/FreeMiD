@@ -188,7 +188,8 @@ fn refresh_subscription(
 
     let props_token = session.MediaPropertiesChanged(&make_session_handler(on_update.clone()));
     let playback_token = session.PlaybackInfoChanged(&make_session_handler(on_update.clone()));
-    let timeline_token = session.TimelinePropertiesChanged(&make_session_handler(on_update.clone()));
+    let timeline_token =
+        session.TimelinePropertiesChanged(&make_session_handler(on_update.clone()));
 
     match (props_token, playback_token, timeline_token) {
         (Ok(p), Ok(pl), Ok(t)) => {

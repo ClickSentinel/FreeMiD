@@ -34,7 +34,12 @@ mod win {
         };
         let title_w: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
         let text_w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        let flags = MB_OK | if is_error { MB_ICONERROR } else { MB_ICONINFORMATION };
+        let flags = MB_OK
+            | if is_error {
+                MB_ICONERROR
+            } else {
+                MB_ICONINFORMATION
+            };
         // SAFETY: title_w and text_w are valid null-terminated UTF-16 strings; 0 is a valid null HWND.
         unsafe { MessageBoxW(0, text_w.as_ptr(), title_w.as_ptr(), flags) };
     }
@@ -606,7 +611,10 @@ mod win {
             }
         }
 
-        let mut reader = response.into_body().into_reader().take(MAX_DOWNLOAD_BYTES + 1);
+        let mut reader = response
+            .into_body()
+            .into_reader()
+            .take(MAX_DOWNLOAD_BYTES + 1);
         let mut file = File::create(destination)
             .map_err(|e| format!("Cannot create {}: {}", destination.display(), e))?;
 
@@ -630,7 +638,10 @@ mod win {
             .call()
             .map_err(|e| format!("Download failed from {}: {}", url, e))?;
 
-        let mut reader = response.into_body().into_reader().take(MAX_CHECKSUMS_BYTES + 1);
+        let mut reader = response
+            .into_body()
+            .into_reader()
+            .take(MAX_CHECKSUMS_BYTES + 1);
         let mut buf = Vec::new();
         reader
             .read_to_end(&mut buf)

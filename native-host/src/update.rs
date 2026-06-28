@@ -323,7 +323,10 @@ struct HashingWriter<W> {
 
 impl<W: Write> HashingWriter<W> {
     fn new(inner: W) -> Self {
-        Self { inner, hasher: Sha256::new() }
+        Self {
+            inner,
+            hasher: Sha256::new(),
+        }
     }
     fn finish_hex(self) -> String {
         hex::encode(self.hasher.finalize())
@@ -344,9 +347,8 @@ impl<W: Write> Write for HashingWriter<W> {
 /// Returns the path where the downloaded binary should be staged before apply.
 /// Sibling to the running executable so the rename stays on the same filesystem.
 fn staged_download_path() -> Result<PathBuf, UpdateError> {
-    let current_exe = std::env::current_exe().map_err(|e| {
-        UpdateError::Apply(format!("Cannot determine current binary path: {e}"))
-    })?;
+    let current_exe = std::env::current_exe()
+        .map_err(|e| UpdateError::Apply(format!("Cannot determine current binary path: {e}")))?;
     let name = current_exe
         .file_name()
         .and_then(|n| n.to_str())
@@ -444,7 +446,11 @@ fn expected_checksum<'a>(checksums: &'a str, artifact: &str) -> Result<&'a str, 
             let name = parts.next()?;
             // Strip leading './' or '*' that some shasum tools emit.
             let name = name.trim_start_matches("./").trim_start_matches('*');
-            if name == artifact { Some(hash) } else { None }
+            if name == artifact {
+                Some(hash)
+            } else {
+                None
+            }
         })
         .ok_or_else(|| {
             UpdateError::ChecksumNotFound(format!(
@@ -504,7 +510,6 @@ fn apply_staged(staged: &Path) -> Result<(), UpdateError> {
     }
 }
 
-
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(windows)]
@@ -523,10 +528,13 @@ fn apply_update_windows(staged_path: &Path) -> Result<(), UpdateError> {
     let current_exe = std::env::current_exe()
         .map_err(|e| UpdateError::Apply(format!("Cannot determine current binary path: {e}")))?;
 
-    append_updater_log(&log, &format!(
-        "apply_update_windows: staged file at {:?}, target {:?}",
-        staged_path, current_exe
-    ));
+    append_updater_log(
+        &log,
+        &format!(
+            "apply_update_windows: staged file at {:?}, target {:?}",
+            staged_path, current_exe
+        ),
+    );
 
     // Preferred path: launch a stable updater binary that is installed once.
     let stable_updater_path = current_exe
@@ -542,21 +550,30 @@ fn apply_update_windows(staged_path: &Path) -> Result<(), UpdateError> {
     // installs that lack it, instead of dropping to the brittle cmd fallback.
     if !stable_updater_path.exists() {
         match std::fs::copy(&current_exe, &stable_updater_path) {
-            Ok(_) => append_updater_log(&log, &format!(
-                "apply_update_windows: bootstrapped stable updater at {:?} from running binary",
-                stable_updater_path
-            )),
-            Err(e) => append_updater_log(&log, &format!(
-                "apply_update_windows: could not bootstrap stable updater at {:?}: {e}",
-                stable_updater_path
-            )),
+            Ok(_) => append_updater_log(
+                &log,
+                &format!(
+                    "apply_update_windows: bootstrapped stable updater at {:?} from running binary",
+                    stable_updater_path
+                ),
+            ),
+            Err(e) => append_updater_log(
+                &log,
+                &format!(
+                    "apply_update_windows: could not bootstrap stable updater at {:?}: {e}",
+                    stable_updater_path
+                ),
+            ),
         }
     }
 
-    append_updater_log(&log, &format!(
-        "apply_update_windows: attempting stable updater {:?}",
-        stable_updater_path
-    ));
+    append_updater_log(
+        &log,
+        &format!(
+            "apply_update_windows: attempting stable updater {:?}",
+            stable_updater_path
+        ),
+    );
     match std::process::Command::new(&stable_updater_path)
         .arg("--apply-update")
         .arg(&staged_path)
@@ -566,21 +583,30 @@ fn apply_update_windows(staged_path: &Path) -> Result<(), UpdateError> {
         .spawn()
     {
         Ok(_) => {
-            append_updater_log(&log, "apply_update_windows: stable updater launch succeeded");
+            append_updater_log(
+                &log,
+                "apply_update_windows: stable updater launch succeeded",
+            );
             return Ok(());
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            append_updater_log(&log, &format!(
+            append_updater_log(
+                &log,
+                &format!(
                 "apply_update_windows: stable updater missing at {:?}; falling back to cmd apply",
                 stable_updater_path
-            ));
+            ),
+            );
         }
         Err(e) => {
-            append_updater_log(&log, &format!(
-                "apply_update_windows: stable updater launch failed: {} (raw_os_error={:?})",
-                e,
-                e.raw_os_error()
-            ));
+            append_updater_log(
+                &log,
+                &format!(
+                    "apply_update_windows: stable updater launch failed: {} (raw_os_error={:?})",
+                    e,
+                    e.raw_os_error()
+                ),
+            );
             if e.raw_os_error() == Some(740) {
                 append_updater_log(
                     &log,
@@ -595,7 +621,10 @@ fn apply_update_windows(staged_path: &Path) -> Result<(), UpdateError> {
         }
     }
 
-    append_updater_log(&log, "apply_update_windows: stable updater unavailable, using cmd fallback");
+    append_updater_log(
+        &log,
+        "apply_update_windows: stable updater unavailable, using cmd fallback",
+    );
     let res = spawn_cmd_apply_update(&staged_path, &current_exe);
     if res.is_err() {
         let _ = std::fs::remove_file(&staged_path);
@@ -686,10 +715,13 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Upda
         validate_apply_paths(&staged, &target).map_err(UpdateError::Apply)?;
 
         let log = updater_log_path();
-        append_updater_log(&log, &format!(
-            "run_apply_update: started with staged={:?} target={:?}",
-            staged, target
-        ));
+        append_updater_log(
+            &log,
+            &format!(
+                "run_apply_update: started with staged={:?} target={:?}",
+                staged, target
+            ),
+        );
 
         if !staged.exists() {
             append_updater_log(&log, "run_apply_update: staged file missing");
@@ -705,7 +737,10 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Upda
                 Ok(())
             }
             Err(e) => {
-                append_updater_log(&log, &format!("run_apply_update: timed out, last_err={}", e));
+                append_updater_log(
+                    &log,
+                    &format!("run_apply_update: timed out, last_err={}", e),
+                );
                 Err(UpdateError::Apply(e))
             }
         }
@@ -749,7 +784,10 @@ pub(crate) fn cleanup_staged_files() {
         let old_enough = entry
             .metadata()
             .and_then(|m| m.modified())
-            .and_then(|t| t.elapsed().map_err(|e| std::io::Error::other(e.to_string())))
+            .and_then(|t| {
+                t.elapsed()
+                    .map_err(|e| std::io::Error::other(e.to_string()))
+            })
             .map(|age| age > Duration::from_secs(600))
             .unwrap_or(false);
         if !is_pid_alive(pid) && old_enough {

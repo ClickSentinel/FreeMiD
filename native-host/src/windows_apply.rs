@@ -28,7 +28,11 @@ pub(crate) fn append_updater_log(log_path: &Path, line: &str) {
 
 /// Copy `staged` to `target`, retrying up to `attempts` times with 100 ms gaps.
 /// On success the staged file is removed. Returns the last OS error on timeout.
-pub(crate) fn try_copy_with_retry(staged: &Path, target: &Path, attempts: u32) -> Result<(), String> {
+pub(crate) fn try_copy_with_retry(
+    staged: &Path,
+    target: &Path,
+    attempts: u32,
+) -> Result<(), String> {
     let mut last_err = String::new();
     for _ in 0..attempts {
         match std::fs::copy(staged, target) {
@@ -94,12 +98,10 @@ pub(crate) fn validate_apply_paths(staged: &Path, target: &Path) -> Result<(), S
         let target_dir = target
             .parent()
             .ok_or_else(|| "Target path has no parent directory".to_string())?;
-        let staged_canonical = std::fs::canonicalize(staged_dir).map_err(|e| {
-            format!("Cannot resolve staged directory {:?}: {}", staged_dir, e)
-        })?;
-        let target_canonical = std::fs::canonicalize(target_dir).map_err(|e| {
-            format!("Cannot resolve target directory {:?}: {}", target_dir, e)
-        })?;
+        let staged_canonical = std::fs::canonicalize(staged_dir)
+            .map_err(|e| format!("Cannot resolve staged directory {:?}: {}", staged_dir, e))?;
+        let target_canonical = std::fs::canonicalize(target_dir)
+            .map_err(|e| format!("Cannot resolve target directory {:?}: {}", target_dir, e))?;
         if staged_canonical != target_canonical {
             return Err(format!(
                 "Staged and target directories must match (staged={:?}, target={:?})",

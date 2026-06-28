@@ -4,7 +4,9 @@
 mod windows_apply;
 
 #[cfg(windows)]
-use windows_apply::{append_updater_log, try_copy_with_retry, updater_log_path, validate_apply_paths};
+use windows_apply::{
+    append_updater_log, try_copy_with_retry, updater_log_path, validate_apply_paths,
+};
 
 #[cfg(windows)]
 fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> {
@@ -16,10 +18,13 @@ fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> 
     validate_apply_paths(&staged, &target)?;
 
     let log = updater_log_path();
-    append_updater_log(&log, &format!(
-        "freemid-apply: started staged={:?} target={:?}",
-        staged, target
-    ));
+    append_updater_log(
+        &log,
+        &format!(
+            "freemid-apply: started staged={:?} target={:?}",
+            staged, target
+        ),
+    );
 
     if !staged.exists() {
         return Err(format!("Staged update file does not exist: {:?}", staged));
@@ -50,7 +55,10 @@ fn main() {
         }
 
         if let Err(e) = run_apply_update(&args[2], &args[3]) {
-            append_updater_log(&updater_log_path(), &format!("freemid-apply: failed: {}", e));
+            append_updater_log(
+                &updater_log_path(),
+                &format!("freemid-apply: failed: {}", e),
+            );
             eprintln!("[FreeMiD Updater] {}", e);
             std::process::exit(1);
         }
