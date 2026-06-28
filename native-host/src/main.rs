@@ -61,9 +61,10 @@ fn exit_cleanly(code: i32) -> ! {
     #[cfg(windows)]
     {
         smtc::signal_shutdown();
-        // The watcher polls every 100 ms; 500 ms is well above worst-case exit
-        // latency while still far shorter than the previous 3 600 s sleep.
-        std::thread::sleep(Duration::from_millis(500));
+        // Wait up to 600 ms for the watcher to leave the COM MTA. The watcher
+        // polls every 100 ms, so worst-case wait is ~100 ms; the budget is
+        // generous to handle scheduler jitter without blocking indefinitely.
+        smtc::wait_for_shutdown(Duration::from_millis(600));
     }
     std::process::exit(code);
 }

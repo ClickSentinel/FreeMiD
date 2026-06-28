@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::Duration;
 use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
 use windows::Media::Control::{
@@ -12,12 +12,28 @@ use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
 
 static COM_INIT: Once = Once::new();
 static WATCHER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static WATCHER_DONE: OnceLock<(Mutex<bool>, Condvar)> = OnceLock::new();
+
+fn watcher_done_pair() -> &'static (Mutex<bool>, Condvar) {
+    WATCHER_DONE.get_or_init(|| (Mutex::new(false), Condvar::new()))
+}
 
 /// Signal the SMTC watcher thread to exit. Call before `std::process::exit`
 /// so the thread leaves the COM MTA cleanly before ExitProcess runs DllMain
 /// cleanup — otherwise COM teardown waits for the sleeping thread indefinitely.
 pub fn signal_shutdown() {
     WATCHER_SHUTDOWN.store(true, Ordering::Release);
+}
+
+/// Block until the watcher thread confirms it has exited, or until `timeout`
+/// elapses. Returns true if the thread exited cleanly within the timeout.
+pub fn wait_for_shutdown(timeout: Duration) -> bool {
+    let (lock, cvar) = watcher_done_pair();
+    let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let result = cvar
+        .wait_timeout_while(guard, timeout, |done| !*done)
+        .unwrap_or_else(|e| e.into_inner());
+    *result.0
 }
 
 #[derive(Debug, Serialize)]
@@ -266,5 +282,11 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
         while !WATCHER_SHUTDOWN.load(Ordering::Acquire) {
             std::thread::sleep(Duration::from_millis(100));
         }
+
+        // Notify exit_cleanly that this thread has exited the COM MTA.
+        let (lock, cvar) = watcher_done_pair();
+        let mut done = lock.lock().unwrap_or_else(|e| e.into_inner());
+        *done = true;
+        cvar.notify_all();
     });
 }
