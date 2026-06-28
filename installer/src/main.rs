@@ -40,8 +40,8 @@ mod win {
             } else {
                 MB_ICONINFORMATION
             };
-        // SAFETY: title_w and text_w are valid null-terminated UTF-16 strings; 0 is a valid null HWND.
-        unsafe { MessageBoxW(0, text_w.as_ptr(), title_w.as_ptr(), flags) };
+        // SAFETY: title_w and text_w are valid null-terminated UTF-16 strings; null HWND is valid.
+        unsafe { MessageBoxW(std::ptr::null_mut(), text_w.as_ptr(), title_w.as_ptr(), flags) };
     }
 
     fn http_agent() -> &'static ureq::Agent {
@@ -711,7 +711,7 @@ mod win {
             hasher.update(&buffer[..read]);
         }
 
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
     }
 
     fn reg_set(key: &str, value: &str) -> Result<(), String> {
