@@ -4,6 +4,19 @@ import { GITHUB_REPO } from '../constants/github';
 export const MIN_SELF_UPDATE_HOST_VERSION = '0.4.0';
 export const MIN_WINDOWS_SELF_UPDATE_HOST_VERSION = '0.4.0';
 
+/**
+ * Parse a URL string, returning null instead of throwing on invalid input.
+ * Use this instead of bare `url.includes('hostname')` checks — compare
+ * `parsed.hostname` or `parsed.pathname` on the returned object instead.
+ */
+export function parseUrl(url: string): URL | null {
+  try {
+    return new URL(url);
+  } catch {
+    return null;
+  }
+}
+
 export function urlMatchesPattern(url: string, pattern: string): boolean {
   try {
     const parsed = new URL(url);
@@ -176,7 +189,8 @@ export async function lookupArtworkUrl(
           `https://coverartarchive.org/release-group/${c.rgId}/front`,
           { method: 'HEAD' },
         );
-        if (resp.ok) return resp.url;
+        if (resp.ok && parseUrl(resp.url)?.protocol === 'https:')
+          return resp.url;
       }
     }
 
@@ -189,7 +203,8 @@ export async function lookupArtworkUrl(
           `https://coverartarchive.org/release/${c.releaseId}/front-500`,
           { method: 'HEAD' },
         );
-        if (resp.ok) return resp.url;
+        if (resp.ok && parseUrl(resp.url)?.protocol === 'https:')
+          return resp.url;
       }
     }
 

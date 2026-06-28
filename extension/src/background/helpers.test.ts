@@ -7,6 +7,7 @@ import {
   isUpdateAvailableForHost,
   lookupArtworkUrl,
   matchActivity,
+  parseUrl,
   preferredUpdateVersion,
   urlMatchesPattern,
 } from './helpers';
@@ -83,6 +84,12 @@ describe('background helpers', () => {
     expect(isHostSelfUpdateSupported('0.4.0', '0.4.0', 'windows')).toBe(true);
     expect(isHostSelfUpdateSupported('0.4.1', '0.4.0', 'windows')).toBe(true);
   });
+
+  it('parseUrl returns a URL object for valid input and null for invalid', () => {
+    expect(parseUrl('https://example.com/path')?.hostname).toBe('example.com');
+    expect(parseUrl('not a url')).toBeNull();
+    expect(parseUrl('')).toBeNull();
+  });
 });
 
 // ── lookupArtworkUrl ──────────────────────────────────────────────────────────
@@ -108,14 +115,26 @@ function caFail(): Partial<Response> {
   return { ok: false, url: '' } as Partial<Response>;
 }
 
+/**
+ * Stubs globalThis.fetch with a handler that receives a pre-parsed URL object.
+ * Use `parsed.hostname` and `parsed.pathname` to route responses — never
+ * `rawUrl.includes('hostname')`, which CodeQL flags as incomplete sanitization.
+ */
 function stubFetch(
-  handler: (url: string) => Partial<Response>,
+  handler: (parsed: URL) => Partial<Response>,
 ): ReturnType<typeof vi.fn> {
   const fn = vi
     .fn()
-    .mockImplementation((url: string) => Promise.resolve(handler(url)));
+    .mockImplementation((rawUrl: string) =>
+      Promise.resolve(handler(new URL(rawUrl))),
+    );
   vi.stubGlobal('fetch', fn);
   return fn;
+}
+
+/** Extract the hostname from a raw URL string captured in mock.calls. */
+function hostnameOf(url: string): string {
+  return new URL(url).hostname;
 }
 
 describe('lookupArtworkUrl', () => {
@@ -146,13 +165,13 @@ describe('lookupArtworkUrl', () => {
   it('returns null when the recordings array is empty', async () => {
     mockChrome();
     const fetchFn = stubFetch((url) =>
-      url.includes('musicbrainz.org') ? mbOk([]) : caFail(),
+      url.hostname === 'musicbrainz.org' ? mbOk([]) : caFail(),
     );
     await expect(lookupArtworkUrl('Artist', 'Title')).resolves.toBeNull();
     // No Cover Art Archive requests should be made when there are no candidates.
     expect(
-      (fetchFn.mock.calls as [string][]).filter(([u]) =>
-        u.includes('coverartarchive.org'),
+      (fetchFn.mock.calls as [string][]).filter(
+        ([u]) => hostnameOf(u) === 'coverartarchive.org',
       ),
     ).toHaveLength(0);
   });
@@ -167,12 +186,12 @@ describe('lookupArtworkUrl', () => {
       },
     ];
     const fetchFn = stubFetch((url) =>
-      url.includes('musicbrainz.org') ? mbOk([{ releases }]) : caFail(),
+      url.hostname === 'musicbrainz.org' ? mbOk([{ releases }]) : caFail(),
     );
     await expect(lookupArtworkUrl('Artist', 'Title')).resolves.toBeNull();
     expect(
-      (fetchFn.mock.calls as [string][]).filter(([u]) =>
-        u.includes('coverartarchive.org'),
+      (fetchFn.mock.calls as [string][]).filter(
+        ([u]) => hostnameOf(u) === 'coverartarchive.org',
       ),
     ).toHaveLength(0);
   });
@@ -187,8 +206,8 @@ describe('lookupArtworkUrl', () => {
       },
     ];
     stubFetch((url) => {
-      if (url.includes('musicbrainz.org')) return mbOk([{ releases }]);
-      if (url.includes('release-group/rg-1'))
+      if (url.hostname === 'musicbrainz.org') return mbOk([{ releases }]);
+      if (url.pathname.includes('/release-group/rg-1'))
         return caOk('https://ia.example.com/art.jpg');
       return caFail();
     });
@@ -207,9 +226,9 @@ describe('lookupArtworkUrl', () => {
       },
     ];
     stubFetch((url) => {
-      if (url.includes('musicbrainz.org')) return mbOk([{ releases }]);
-      if (url.includes('release-group')) return caFail();
-      if (url.includes('release/rel-1'))
+      if (url.hostname === 'musicbrainz.org') return mbOk([{ releases }]);
+      if (url.pathname.startsWith('/release-group/')) return caFail();
+      if (url.pathname.includes('/release/rel-1'))
         return caOk('https://ia.example.com/rel.jpg');
       return caFail();
     });
@@ -228,7 +247,7 @@ describe('lookupArtworkUrl', () => {
       },
     ];
     stubFetch((url) =>
-      url.includes('musicbrainz.org') ? mbOk([{ releases }]) : caFail(),
+      url.hostname === 'musicbrainz.org' ? mbOk([{ releases }]) : caFail(),
     );
     await expect(lookupArtworkUrl('Artist', 'Title')).resolves.toBeNull();
   });
@@ -250,10 +269,10 @@ describe('lookupArtworkUrl', () => {
       },
     ];
     const fetchFn = stubFetch((url) => {
-      if (url.includes('musicbrainz.org')) return mbOk([{ releases }]);
-      if (url.includes('rg-match'))
+      if (url.hostname === 'musicbrainz.org') return mbOk([{ releases }]);
+      if (url.pathname.includes('/rg-match'))
         return caOk('https://ia.example.com/match.jpg');
-      if (url.includes('rg-other'))
+      if (url.pathname.includes('/rg-other'))
         return caOk('https://ia.example.com/other.jpg');
       return caFail();
     });
@@ -261,8 +280,8 @@ describe('lookupArtworkUrl', () => {
     const result = await lookupArtworkUrl('Artist', 'Title', 'My Album');
     expect(result).toBe('https://ia.example.com/match.jpg');
     // The first Cover Art Archive call must be for the name-matched release-group.
-    const caaCalls = (fetchFn.mock.calls as [string][]).filter(([u]) =>
-      u.includes('coverartarchive.org'),
+    const caaCalls = (fetchFn.mock.calls as [string][]).filter(
+      ([u]) => hostnameOf(u) === 'coverartarchive.org',
     );
     expect(caaCalls[0]?.[0]).toContain('rg-match');
   });
@@ -281,11 +300,11 @@ describe('lookupArtworkUrl', () => {
       { releases: [sharedRelease] },
     ];
     const fetchFn = stubFetch((url) =>
-      url.includes('musicbrainz.org') ? mbOk(recordings) : caFail(),
+      url.hostname === 'musicbrainz.org' ? mbOk(recordings) : caFail(),
     );
     await lookupArtworkUrl('Artist', 'Title');
-    const caaCalls = (fetchFn.mock.calls as [string][]).filter(([u]) =>
-      u.includes('coverartarchive.org'),
+    const caaCalls = (fetchFn.mock.calls as [string][]).filter(
+      ([u]) => hostnameOf(u) === 'coverartarchive.org',
     );
     // Only 1 release-group attempt + 1 release fallback (both for the single deduplicated candidate).
     expect(caaCalls).toHaveLength(2);
@@ -297,8 +316,8 @@ describe('lookupArtworkUrl', () => {
       { id: 'rel-no-rg', status: 'Official' }, // no release-group field
     ];
     stubFetch((url) => {
-      if (url.includes('musicbrainz.org')) return mbOk([{ releases }]);
-      if (url.includes('release/rel-no-rg'))
+      if (url.hostname === 'musicbrainz.org') return mbOk([{ releases }]);
+      if (url.pathname.includes('/release/rel-no-rg'))
         return caOk('https://ia.example.com/norg.jpg');
       return caFail();
     });
@@ -310,7 +329,7 @@ describe('lookupArtworkUrl', () => {
   it('includes -video:true in the MusicBrainz query to exclude music videos', async () => {
     mockChrome();
     const fetchFn = stubFetch((url) =>
-      url.includes('musicbrainz.org') ? mbOk([]) : caFail(),
+      url.hostname === 'musicbrainz.org' ? mbOk([]) : caFail(),
     );
     await lookupArtworkUrl('Artist', 'Title');
     const mbUrl: string = (fetchFn.mock.calls as [string][])[0]![0];
@@ -320,7 +339,7 @@ describe('lookupArtworkUrl', () => {
   it('escapes backslashes in artist and title before encoding the Lucene query', async () => {
     mockChrome();
     const fetchFn = stubFetch((url) =>
-      url.includes('musicbrainz.org') ? mbOk([]) : caFail(),
+      url.hostname === 'musicbrainz.org' ? mbOk([]) : caFail(),
     );
     await lookupArtworkUrl('AC\\DC', 'Back in Black');
     const mbUrl: string = (fetchFn.mock.calls as [string][])[0]![0];
