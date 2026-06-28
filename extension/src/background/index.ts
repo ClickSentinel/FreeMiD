@@ -65,6 +65,7 @@ let enabledSites: Record<string, boolean> = {
 };
 let hostVersion: string | null = null;
 let hostSelfUpdateSupported: boolean | null = null;
+let hostCapabilities: Set<string> = new Set();
 let hostRuntimeOs: string | null = null;
 let hostRuntimeArch: string | null = null;
 let hostBinaryPath: string | null = null;
@@ -226,6 +227,7 @@ function resetHostConnection(error?: string): void {
   hostConnected = false;
   discordConnected = false;
   hostSelfUpdateSupported = null;
+  hostCapabilities = new Set();
   hostRuntimeOs = null;
   hostRuntimeArch = null;
   hostBinaryPath = null;
@@ -383,6 +385,7 @@ function connectNativeHost(): void {
         error?: string;
         version?: string;
         selfUpdateSupported?: boolean;
+        capabilities?: string[];
         runtimeOs?: string;
         runtimeArch?: string;
         binaryPath?: string;
@@ -424,12 +427,17 @@ function connectNativeHost(): void {
             maybeFinalizeAppliedVersion();
           }
         }
-        if (typeof m.selfUpdateSupported === 'boolean') {
+        hostCapabilities = new Set(
+          Array.isArray(m.capabilities) ? m.capabilities : [],
+        );
+        // Derive from the capabilities set (new hosts) or the legacy scalar
+        // field (hosts that pre-date capabilities). Require explicit support to
+        // avoid false-positive update attempts that get stuck in 'requested'.
+        if (hostCapabilities.has('self-update')) {
+          hostSelfUpdateSupported = true;
+        } else if (typeof m.selfUpdateSupported === 'boolean') {
           hostSelfUpdateSupported = m.selfUpdateSupported;
         } else {
-          // Legacy hosts do not advertise capability. Require explicit support
-          // to avoid false-positive update attempts that can get stuck in
-          // "requested" forever.
           hostSelfUpdateSupported = false;
         }
         if (typeof m.runtimeOs === 'string') {
