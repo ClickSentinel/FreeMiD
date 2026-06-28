@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 #[cfg(windows)]
 use std::time::Duration;
 
@@ -26,6 +27,21 @@ static UPDATE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 const GITHUB_API_LATEST: &str =
     "https://api.github.com/repos/ClickSentinel/FreeMiD/releases/latest";
 const GITHUB_RELEASES_BASE: &str = "https://github.com/ClickSentinel/FreeMiD/releases/download";
+
+/// Shared HTTP agent — configured once with the OS trust store so TLS
+/// revocations are picked up without requiring a host binary update.
+fn http_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        let tls_config = ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+            .build();
+        ureq::Agent::config_builder()
+            .tls_config(tls_config)
+            .build()
+            .new_agent()
+    })
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct UpdateSourceOverrides {
@@ -152,15 +168,17 @@ fn do_update(overrides: &UpdateSourceOverrides, send: &impl Fn(Value)) -> Result
 
     // ── Fetch latest release metadata ────────────────────────────────────────
     let user_agent = format!("FreeMiD/{}", env!("CARGO_PKG_VERSION"));
-    let response = ureq::get(&latest_api_url)
-        .set("User-Agent", &user_agent)
-        .set("Accept", "application/vnd.github+json")
-        .set("X-GitHub-Api-Version", "2022-11-28")
+    let mut response = http_agent()
+        .get(&latest_api_url)
+        .header("User-Agent", &user_agent)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
         .call()
         .map_err(|e| UpdateError::Network(format!("GitHub API request failed: {e}")))?;
 
     let body = response
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .map_err(|e| UpdateError::Network(format!("Failed to read GitHub API response: {e}")))?;
 
     let data: Value = serde_json::from_str(&body)
@@ -306,14 +324,17 @@ fn is_strict_semver(v: &str) -> bool {
 fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, UpdateError> {
     const MAX_DOWNLOAD_BYTES: u64 = 100 * 1024 * 1024;
 
-    let resp = ureq::get(url)
-        .set("User-Agent", user_agent)
+    let resp = http_agent()
+        .get(url)
+        .header("User-Agent", user_agent)
         .call()
         .map_err(|e| UpdateError::Network(format!("Download failed ({url}): {e}")))?;
 
     if let Some(content_length) = resp
-        .header("Content-Length")
-        .and_then(|h| h.parse::<u64>().ok())
+        .headers()
+        .get("content-length")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
     {
         if content_length > MAX_DOWNLOAD_BYTES {
             return Err(UpdateError::ResponseTooLarge(format!(
@@ -323,7 +344,8 @@ fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, UpdateError> {
     }
 
     let mut buf = Vec::new();
-    resp.into_reader()
+    resp.into_body()
+        .into_reader()
         .take(MAX_DOWNLOAD_BYTES + 1)
         .read_to_end(&mut buf)
         .map_err(|e| UpdateError::Network(format!("Failed to read download body: {e}")))?;
@@ -340,13 +362,15 @@ fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, UpdateError> {
 fn download_string(url: &str, user_agent: &str) -> Result<String, UpdateError> {
     const MAX_CHECKSUMS_BYTES: u64 = 1024 * 1024; // 1 MiB
 
-    let resp = ureq::get(url)
-        .set("User-Agent", user_agent)
+    let resp = http_agent()
+        .get(url)
+        .header("User-Agent", user_agent)
         .call()
         .map_err(|e| UpdateError::Network(format!("Failed to fetch checksums ({url}): {e}")))?;
 
     let mut buf = Vec::new();
-    resp.into_reader()
+    resp.into_body()
+        .into_reader()
         .take(MAX_CHECKSUMS_BYTES + 1)
         .read_to_end(&mut buf)
         .map_err(|e| UpdateError::Network(format!("Failed to read checksums body: {e}")))?;

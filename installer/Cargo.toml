@@ -13,7 +13,7 @@ path = "src/main.rs"
 [target.'cfg(windows)'.dependencies]
 native-windows-gui = "1"
 sha2 = "0.10"
-ureq = "2"
+ureq = { version = "3", features = ["platform-verifier"] }
 
 [build-dependencies]
 embed-resource = "2"

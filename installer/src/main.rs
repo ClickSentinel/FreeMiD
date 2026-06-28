@@ -24,9 +24,23 @@ mod win {
     use std::os::windows::process::CommandExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::sync::OnceLock;
 
     use native_windows_gui as nwg;
     use sha2::{Digest, Sha256};
+
+    fn http_agent() -> &'static ureq::Agent {
+        static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+        AGENT.get_or_init(|| {
+            let tls_config = ureq::tls::TlsConfig::builder()
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build();
+            ureq::Agent::config_builder()
+                .tls_config(tls_config)
+                .build()
+                .new_agent()
+        })
+    }
 
     const GITHUB_REPO: &str = "ClickSentinel/FreeMiD";
     const ARTIFACT: &str = "freemid-windows-x86_64.exe";
@@ -564,13 +578,16 @@ mod win {
     const MAX_CHECKSUMS_BYTES: u64 = 1024 * 1024;
 
     fn download_file(url: &str, destination: &PathBuf) -> Result<(), String> {
-        let response = ureq::get(url)
+        let response = http_agent()
+            .get(url)
             .call()
             .map_err(|e| format!("Download failed from {}: {}", url, e))?;
 
         if let Some(content_length) = response
-            .header("Content-Length")
-            .and_then(|h| h.parse::<u64>().ok())
+            .headers()
+            .get("content-length")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
         {
             if content_length > MAX_DOWNLOAD_BYTES {
                 return Err(format!(
@@ -580,7 +597,7 @@ mod win {
             }
         }
 
-        let mut reader = response.into_reader().take(MAX_DOWNLOAD_BYTES + 1);
+        let mut reader = response.into_body().into_reader().take(MAX_DOWNLOAD_BYTES + 1);
         let mut file = File::create(destination)
             .map_err(|e| format!("Cannot create {}: {}", destination.display(), e))?;
 
@@ -599,11 +616,12 @@ mod win {
     }
 
     fn download_text(url: &str) -> Result<String, String> {
-        let response = ureq::get(url)
+        let response = http_agent()
+            .get(url)
             .call()
             .map_err(|e| format!("Download failed from {}: {}", url, e))?;
 
-        let mut reader = response.into_reader().take(MAX_CHECKSUMS_BYTES + 1);
+        let mut reader = response.into_body().into_reader().take(MAX_CHECKSUMS_BYTES + 1);
         let mut buf = Vec::new();
         reader
             .read_to_end(&mut buf)
