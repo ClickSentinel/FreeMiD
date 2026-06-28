@@ -35,14 +35,15 @@ This data is not sent to FreeMiD-operated servers.
 
 ### Sent to external services
 
-When the **Tidal desktop app** is running on Windows and no Tidal browser tab is open, FreeMiD reads the current track from the Windows System Media Transport Controls (SMTC) and sends the following data to external services to resolve album artwork:
+When Tidal is active (either the browser tab or the Windows desktop app), FreeMiD sends the following data to external services to resolve album artwork:
 
 | Data | Sent to | Purpose |
 | --- | --- | --- |
-| Artist name, track title | MusicBrainz API (`musicbrainz.org`) | Identify the album release associated with the track |
-| Release group or release ID (returned by MusicBrainz) | Cover Art Archive (`coverartarchive.org`) | Resolve the album art URL via an HTTP HEAD request |
+| Artist name, track title | iTunes Search API (`itunes.apple.com`) | Identify the correct album release and retrieve a direct artwork URL |
+| Artist name, track title (fallback only) | MusicBrainz API (`musicbrainz.org`) | Identify the album release when the track is not found in the iTunes catalog |
+| Release group or release ID (returned by MusicBrainz, fallback only) | Cover Art Archive (`coverartarchive.org`) | Resolve the album art URL via an HTTP HEAD request |
 
-No account identifiers, IP-attributable tokens, or personally identifiable information beyond the artist name and track title are included in these requests. Resolved art URLs are cached in memory for the current session and are not persisted to disk. This artwork lookup only runs on Windows when Tidal desktop is active; it does not occur when using Tidal via a browser tab.
+No account identifiers, IP-attributable tokens, or personally identifiable information beyond the artist name and track title are included in these requests. Resolved art URLs are cached in memory for the current session and are not persisted to disk.
 
 ---
 
@@ -78,12 +79,13 @@ Tidal desktop app
   └─ Windows SMTC API (System Media Transport Controls)
        └─ FreeMiD native host binary (event-driven, no polling)
             └─ Chrome native messaging pipe → Background service worker
-                 ├─ MusicBrainz API  (artist + title → release ID)
-                 │    └─ Cover Art Archive  (release ID → art URL, HEAD only)
+                 ├─ iTunes Search API  (artist + title → art URL, primary)
+                 ├─ MusicBrainz API  (artist + title → release ID, fallback)
+                 │    └─ Cover Art Archive  (release ID → art URL, HEAD only, fallback)
                  └─ Chrome native messaging pipe → native host → Discord IPC socket
 ```
 
-FreeMiD does not send your activity metadata to FreeMiD-operated servers. Outbound network requests that may occur include GitHub release/version checks and downloads, MusicBrainz and Cover Art Archive requests for Tidal desktop artwork (Windows only), and Discord network traffic handled by the Discord desktop app.
+FreeMiD does not send your activity metadata to FreeMiD-operated servers. Outbound network requests that may occur include GitHub release/version checks and downloads, iTunes Search API / MusicBrainz / Cover Art Archive requests for Tidal artwork, and Discord network traffic handled by the Discord desktop app.
 
 ---
 
@@ -112,8 +114,9 @@ FreeMiD's source code is hosted on **GitHub**. GitHub may collect data when you 
 
 When the Tidal desktop feature is active (Windows only, no Tidal browser tab open), FreeMiD contacts two additional services to resolve album artwork:
 
-- **MusicBrainz** (`musicbrainz.org`), operated by the MetaBrainz Foundation — receives the artist name and track title as a search query. Refer to the [MetaBrainz Privacy Policy](https://metabrainz.org/privacy) for details.
-- **Cover Art Archive** (`coverartarchive.org`), operated by the Internet Archive — receives an HTTP HEAD request for a release ID returned by MusicBrainz; no track metadata is included. Refer to the [Internet Archive Privacy Policy](https://archive.org/about/terms.php) for details.
+- **iTunes Search API** (`itunes.apple.com`), operated by Apple Inc. — receives the artist name and track title as a search query to resolve album artwork. Refer to the [Apple Privacy Policy](https://www.apple.com/legal/privacy/) for details.
+- **MusicBrainz** (`musicbrainz.org`), operated by the MetaBrainz Foundation — receives the artist name and track title as a search query (fallback when iTunes returns no suitable result). Refer to the [MetaBrainz Privacy Policy](https://metabrainz.org/privacy) for details.
+- **Cover Art Archive** (`coverartarchive.org`), operated by the Internet Archive — receives an HTTP HEAD request for a release ID returned by MusicBrainz; no track metadata is included (fallback only). Refer to the [Internet Archive Privacy Policy](https://archive.org/about/terms.php) for details.
 
 ---
 
