@@ -237,11 +237,10 @@ const trigger = () => presence.triggerUpdate();
 // scheduleTrigger cancels any pending timers from a previous play event so
 // rapid song skips never result in overlapping / interleaved callbacks.
 document.addEventListener('pause', trigger, { capture: true, signal });
-document.addEventListener(
-  'play',
-  () => presence.scheduleTrigger(300, 1000),
-  { capture: true, signal },
-);
+document.addEventListener('play', () => presence.scheduleTrigger(300, 1000), {
+  capture: true,
+  signal,
+});
 
 // Observe the player bar title for immediate track-change detection.
 presence.watchSelector(
