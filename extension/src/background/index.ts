@@ -913,6 +913,36 @@ chrome.runtime.onMessage.addListener(
         sender.tab?.id != null
           ? activeActivityTabs.get(sender.tab.id)
           : undefined;
+
+      // Tidal's web player shows compilation or playlist art for tracks that
+      // appear on compilations. Override with a MusicBrainz/CAA lookup so
+      // Discord shows the original album art.
+      if (siteId === 'tidal') {
+        const d = msg.data as Record<string, unknown>;
+        const artist = typeof d.name === 'string' ? d.name : undefined;
+        const title = typeof d.details === 'string' ? d.details : undefined;
+        const assets =
+          d.assets !== null && typeof d.assets === 'object'
+            ? (d.assets as Record<string, unknown>)
+            : undefined;
+        const largeText =
+          typeof assets?.large_text === 'string' ? assets.large_text : undefined;
+        const album = largeText !== title ? largeText : undefined;
+
+        if (artist && title) {
+          const artKey = `${artist}|${title}`;
+          if (desktopArtCache.has(artKey)) {
+            const cachedUrl = desktopArtCache.get(artKey);
+            if (cachedUrl && assets) assets.large_image = cachedUrl;
+          } else {
+            desktopArtCache.set(artKey, null);
+            void lookupArtworkUrl(artist, title, album).then((url) => {
+              desktopArtCache.set(artKey, url);
+            });
+          }
+        }
+      }
+
       setActivity(msg.data as object, siteId);
       return;
     }
