@@ -11,9 +11,9 @@ name = "freemid-setup"
 path = "src/main.rs"
 
 [target.'cfg(windows)'.dependencies]
-native-windows-gui = "1"
-sha2 = "0.10"
-ureq = "2"
+sha2 = "0.11"
+ureq = { version = "3", features = ["platform-verifier"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
-embed-resource = "2"
+embed-resource = "3"

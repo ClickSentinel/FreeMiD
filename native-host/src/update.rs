@@ -12,9 +12,10 @@
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::io::{BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 #[cfg(windows)]
 use std::time::Duration;
 
@@ -27,6 +28,21 @@ const GITHUB_API_LATEST: &str =
     "https://api.github.com/repos/ClickSentinel/FreeMiD/releases/latest";
 const GITHUB_RELEASES_BASE: &str = "https://github.com/ClickSentinel/FreeMiD/releases/download";
 
+/// Shared HTTP agent — configured once with the OS trust store so TLS
+/// revocations are picked up without requiring a host binary update.
+fn http_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        let tls_config = ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+            .build();
+        ureq::Agent::config_builder()
+            .tls_config(tls_config)
+            .build()
+            .new_agent()
+    })
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct UpdateSourceOverrides {
     pub latest_url: Option<String>,
@@ -36,45 +52,34 @@ pub struct UpdateSourceOverrides {
 /// Typed error for the update flow.
 ///
 /// Each variant maps to a distinct failure category so callers can distinguish
-/// a network failure from a checksum mismatch. `Display` preserves the original
-/// human-readable messages that the extension shows in the popup.
-#[derive(Debug)]
+/// a network failure from a checksum mismatch.
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum UpdateError {
     /// Self-update is not available on this platform.
+    #[error("{0}")]
     UnsupportedPlatform(String),
     /// An update source URL failed validation.
+    #[error("{0}")]
     InvalidSource(String),
     /// A network request failed or the response body could not be read.
+    #[error("{0}")]
     Network(String),
     /// A downloaded response body exceeded the configured size limit.
+    #[error("{0}")]
     ResponseTooLarge(String),
     /// A response body could not be parsed (JSON, UTF-8, or semver).
+    #[error("{0}")]
     Parse(String),
     /// The artifact name was not found in the checksums file.
+    #[error("{0}")]
     ChecksumNotFound(String),
     /// The downloaded binary's SHA-256 hash did not match the expected value.
+    #[error("{0}")]
     ChecksumMismatch(String),
     /// Failed to write, rename, or spawn the applied binary on disk.
+    #[error("{0}")]
     Apply(String),
 }
-
-impl std::fmt::Display for UpdateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let msg = match self {
-            Self::UnsupportedPlatform(s)
-            | Self::InvalidSource(s)
-            | Self::Network(s)
-            | Self::ResponseTooLarge(s)
-            | Self::Parse(s)
-            | Self::ChecksumNotFound(s)
-            | Self::ChecksumMismatch(s)
-            | Self::Apply(s) => s,
-        };
-        f.write_str(msg)
-    }
-}
-
-impl std::error::Error for UpdateError {}
 
 /// Platform-specific artifact filename, or `None` if self-update is unsupported.
 fn artifact_name() -> Option<&'static str> {
@@ -152,15 +157,17 @@ fn do_update(overrides: &UpdateSourceOverrides, send: &impl Fn(Value)) -> Result
 
     // ── Fetch latest release metadata ────────────────────────────────────────
     let user_agent = format!("FreeMiD/{}", env!("CARGO_PKG_VERSION"));
-    let response = ureq::get(&latest_api_url)
-        .set("User-Agent", &user_agent)
-        .set("Accept", "application/vnd.github+json")
-        .set("X-GitHub-Api-Version", "2022-11-28")
+    let mut response = http_agent()
+        .get(&latest_api_url)
+        .header("User-Agent", &user_agent)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
         .call()
         .map_err(|e| UpdateError::Network(format!("GitHub API request failed: {e}")))?;
 
     let body = response
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .map_err(|e| UpdateError::Network(format!("Failed to read GitHub API response: {e}")))?;
 
     let data: Value = serde_json::from_str(&body)
@@ -197,14 +204,19 @@ fn do_update(overrides: &UpdateSourceOverrides, send: &impl Fn(Value)) -> Result
 
     let base_url = format!("{}/{}", releases_base_url, tag);
 
-    // ── Download and verify the binary ──────────────────────────────────────
-    let binary_bytes = download_bytes(&format!("{}/{}", base_url, artifact), &user_agent)?;
+    // ── Download, verify, and apply ─────────────────────────────────────────
+    // Stream directly to disk — no full binary in RAM.
+    let staged = staged_download_path()?;
+    let hex = download_to_staged(&format!("{}/{}", base_url, artifact), &staged, &user_agent)?;
+
     let checksums = download_string(&format!("{}/checksums.sha256", base_url), &user_agent)?;
 
-    verify_sha256(&binary_bytes, &checksums, artifact)?;
+    if let Err(e) = verify_checksum_hex(&hex, &checksums, artifact) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
 
-    // ── Atomically replace the running binary ────────────────────────────────
-    apply_update(&binary_bytes)?;
+    apply_staged(&staged)?;
 
     eprintln!("[FreeMiD] Successfully updated to {}", latest_version);
 
@@ -303,17 +315,70 @@ fn is_strict_semver(v: &str) -> bool {
     parts.len() == 3 && parts.iter().all(|p| p.parse::<u64>().is_ok())
 }
 
-fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, UpdateError> {
+/// Passthrough writer that accumulates a SHA-256 hash as data flows through.
+struct HashingWriter<W> {
+    inner: W,
+    hasher: Sha256,
+}
+
+impl<W: Write> HashingWriter<W> {
+    fn new(inner: W) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+        }
+    }
+    fn finish_hex(self) -> String {
+        hex::encode(self.hasher.finalize())
+    }
+}
+
+impl<W: Write> Write for HashingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Returns the path where the downloaded binary should be staged before apply.
+/// Sibling to the running executable so the rename stays on the same filesystem.
+fn staged_download_path() -> Result<PathBuf, UpdateError> {
+    let current_exe = std::env::current_exe()
+        .map_err(|e| UpdateError::Apply(format!("Cannot determine current binary path: {e}")))?;
+    let name = current_exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("freemid")
+        .to_owned();
+    let mut p = current_exe.clone();
+    #[cfg(windows)]
+    p.set_file_name(format!("{}.staged-{}.exe", name, std::process::id()));
+    #[cfg(not(windows))]
+    p.set_file_name(format!("{}.update-{}", name, std::process::id()));
+    Ok(p)
+}
+
+/// Stream download directly to `dest`, computing SHA-256 on the fly.
+/// Returns the hex digest. Peak memory is bounded by the I/O buffer size,
+/// not the artifact size.
+fn download_to_staged(url: &str, dest: &Path, user_agent: &str) -> Result<String, UpdateError> {
     const MAX_DOWNLOAD_BYTES: u64 = 100 * 1024 * 1024;
 
-    let resp = ureq::get(url)
-        .set("User-Agent", user_agent)
+    let resp = http_agent()
+        .get(url)
+        .header("User-Agent", user_agent)
         .call()
         .map_err(|e| UpdateError::Network(format!("Download failed ({url}): {e}")))?;
 
     if let Some(content_length) = resp
-        .header("Content-Length")
-        .and_then(|h| h.parse::<u64>().ok())
+        .headers()
+        .get("content-length")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
     {
         if content_length > MAX_DOWNLOAD_BYTES {
             return Err(UpdateError::ResponseTooLarge(format!(
@@ -322,31 +387,41 @@ fn download_bytes(url: &str, user_agent: &str) -> Result<Vec<u8>, UpdateError> {
         }
     }
 
-    let mut buf = Vec::new();
-    resp.into_reader()
-        .take(MAX_DOWNLOAD_BYTES + 1)
-        .read_to_end(&mut buf)
-        .map_err(|e| UpdateError::Network(format!("Failed to read download body: {e}")))?;
+    let file = std::fs::File::create(dest)
+        .map_err(|e| UpdateError::Apply(format!("Cannot create staging file {:?}: {e}", dest)))?;
+    let mut hw = HashingWriter::new(BufWriter::new(file));
 
-    if buf.len() as u64 > MAX_DOWNLOAD_BYTES {
+    let written = std::io::copy(
+        &mut resp.into_body().into_reader().take(MAX_DOWNLOAD_BYTES + 1),
+        &mut hw,
+    )
+    .map_err(|e| UpdateError::Network(format!("Failed to write download body: {e}")))?;
+
+    hw.flush()
+        .map_err(|e| UpdateError::Apply(format!("Failed to flush staging file: {e}")))?;
+
+    if written > MAX_DOWNLOAD_BYTES {
+        let _ = std::fs::remove_file(dest);
         return Err(UpdateError::ResponseTooLarge(format!(
             "Download exceeded max size of {MAX_DOWNLOAD_BYTES} bytes"
         )));
     }
 
-    Ok(buf)
+    Ok(hw.finish_hex())
 }
 
 fn download_string(url: &str, user_agent: &str) -> Result<String, UpdateError> {
     const MAX_CHECKSUMS_BYTES: u64 = 1024 * 1024; // 1 MiB
 
-    let resp = ureq::get(url)
-        .set("User-Agent", user_agent)
+    let resp = http_agent()
+        .get(url)
+        .header("User-Agent", user_agent)
         .call()
         .map_err(|e| UpdateError::Network(format!("Failed to fetch checksums ({url}): {e}")))?;
 
     let mut buf = Vec::new();
-    resp.into_reader()
+    resp.into_body()
+        .into_reader()
         .take(MAX_CHECKSUMS_BYTES + 1)
         .read_to_end(&mut buf)
         .map_err(|e| UpdateError::Network(format!("Failed to read checksums body: {e}")))?;
@@ -361,8 +436,9 @@ fn download_string(url: &str, user_agent: &str) -> Result<String, UpdateError> {
         .map_err(|e| UpdateError::Parse(format!("Checksums file is not valid UTF-8: {e}")))
 }
 
-fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), UpdateError> {
-    let expected = checksums
+/// Find the expected SHA-256 hex string for `artifact` in a `checksums.sha256` file.
+fn expected_checksum<'a>(checksums: &'a str, artifact: &str) -> Result<&'a str, UpdateError> {
+    checksums
         .lines()
         .find_map(|line| {
             let mut parts = line.split_whitespace();
@@ -371,7 +447,7 @@ fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), Upd
             // Strip leading './' or '*' that some shasum tools emit.
             let name = name.trim_start_matches("./").trim_start_matches('*');
             if name == artifact {
-                Some(hash.to_ascii_lowercase())
+                Some(hash)
             } else {
                 None
             }
@@ -380,26 +456,34 @@ fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), Upd
             UpdateError::ChecksumNotFound(format!(
                 "Checksum not found for '{artifact}' in checksums.sha256"
             ))
-        })?;
+        })
+}
 
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let actual = hex::encode(hasher.finalize());
-
+/// Compare a pre-computed hex digest against the checksums file.
+fn verify_checksum_hex(actual: &str, checksums: &str, artifact: &str) -> Result<(), UpdateError> {
+    let expected = expected_checksum(checksums, artifact)?.to_ascii_lowercase();
     if actual != expected {
         return Err(UpdateError::ChecksumMismatch(format!(
             "SHA-256 mismatch for '{artifact}'\n  expected: {expected}\n  actual:   {actual}"
         )));
     }
-
     eprintln!("[FreeMiD] Checksum verified ✓");
     Ok(())
 }
 
-fn apply_update(data: &[u8]) -> Result<(), UpdateError> {
+/// Verify SHA-256 of raw bytes against a checksums file (used in tests).
+#[cfg(test)]
+fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), UpdateError> {
+    let actual = hex::encode(Sha256::digest(data));
+    verify_checksum_hex(&actual, checksums, artifact)
+}
+
+/// Apply the already-staged binary: chmod + atomic rename (Unix) or
+/// launch the stable apply helper (Windows).
+fn apply_staged(staged: &Path) -> Result<(), UpdateError> {
     #[cfg(windows)]
     {
-        apply_update_windows(data)
+        apply_update_windows(staged)
     }
 
     #[cfg(not(windows))]
@@ -408,41 +492,17 @@ fn apply_update(data: &[u8]) -> Result<(), UpdateError> {
             UpdateError::Apply(format!("Cannot determine current binary path: {e}"))
         })?;
 
-        // Write to a sibling temp file on the same filesystem to allow atomic rename.
-        let tmp_path: PathBuf = {
-            let mut p = current_exe.clone();
-            let name = p
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("freemid")
-                .to_owned();
-            p.set_file_name(format!("{}.update-{}", name, std::process::id()));
-            p
-        };
-
-        // Write binary data.
-        {
-            let mut f = std::fs::File::create(&tmp_path).map_err(|e| {
-                UpdateError::Apply(format!("Cannot create temp file {:?}: {e}", tmp_path))
-            })?;
-            f.write_all(data)
-                .map_err(|e| UpdateError::Apply(format!("Failed to write temp file: {e}")))?;
-            f.flush()
-                .map_err(|e| UpdateError::Apply(format!("Failed to flush temp file: {e}")))?;
-        }
-
-        // Set executable bit on Unix.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| UpdateError::Apply(format!("Failed to chmod temp file: {e}")))?;
+            std::fs::set_permissions(staged, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| UpdateError::Apply(format!("Failed to chmod staged file: {e}")))?;
         }
 
-        // Atomic rename — on Linux/macOS this is safe even while the old binary
-        // is mapped into memory; the running process keeps the old inode.
-        std::fs::rename(&tmp_path, &current_exe).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp_path);
+        // Atomic rename — on Linux/macOS the running process keeps the old
+        // inode; the new binary takes effect on next launch.
+        std::fs::rename(staged, &current_exe).map_err(|e| {
+            let _ = std::fs::remove_file(staged);
             UpdateError::Apply(format!("Failed to replace binary {:?}: {e}", current_exe))
         })?;
 
@@ -456,40 +516,25 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const STABLE_UPDATER_EXE_NAME: &str = "freemid-apply.exe";
 
 #[cfg(windows)]
-use crate::windows_apply::{append_updater_log, updater_log_path, validate_apply_paths};
+use crate::windows_apply::{
+    append_updater_log, try_copy_with_retry, updater_log_path, validate_apply_paths,
+};
 
 #[cfg(windows)]
-fn apply_update_windows(data: &[u8]) -> Result<(), UpdateError> {
-    append_updater_log("apply_update_windows: begin");
+fn apply_update_windows(staged_path: &Path) -> Result<(), UpdateError> {
+    let log = updater_log_path();
+    append_updater_log(&log, "apply_update_windows: begin");
 
     let current_exe = std::env::current_exe()
         .map_err(|e| UpdateError::Apply(format!("Cannot determine current binary path: {e}")))?;
 
-    let staged_path: PathBuf = {
-        let mut p = current_exe.clone();
-        let name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("freemid.exe")
-            .to_owned();
-        p.set_file_name(format!("{}.staged-{}.exe", name, std::process::id()));
-        p
-    };
-
-    {
-        let mut f = std::fs::File::create(&staged_path).map_err(|e| {
-            UpdateError::Apply(format!("Cannot create staged file {:?}: {e}", staged_path))
-        })?;
-        f.write_all(data)
-            .map_err(|e| UpdateError::Apply(format!("Failed to write staged file: {e}")))?;
-        f.flush()
-            .map_err(|e| UpdateError::Apply(format!("Failed to flush staged file: {e}")))?;
-    }
-
-    append_updater_log(&format!(
-        "apply_update_windows: staged file at {:?}, target {:?}",
-        staged_path, current_exe
-    ));
+    append_updater_log(
+        &log,
+        &format!(
+            "apply_update_windows: staged file at {:?}, target {:?}",
+            staged_path, current_exe
+        ),
+    );
 
     // Preferred path: launch a stable updater binary that is installed once.
     let stable_updater_path = current_exe
@@ -505,61 +550,81 @@ fn apply_update_windows(data: &[u8]) -> Result<(), UpdateError> {
     // installs that lack it, instead of dropping to the brittle cmd fallback.
     if !stable_updater_path.exists() {
         match std::fs::copy(&current_exe, &stable_updater_path) {
-            Ok(_) => append_updater_log(&format!(
-                "apply_update_windows: bootstrapped stable updater at {:?} from running binary",
-                stable_updater_path
-            )),
-            Err(e) => append_updater_log(&format!(
-                "apply_update_windows: could not bootstrap stable updater at {:?}: {e}",
-                stable_updater_path
-            )),
+            Ok(_) => append_updater_log(
+                &log,
+                &format!(
+                    "apply_update_windows: bootstrapped stable updater at {:?} from running binary",
+                    stable_updater_path
+                ),
+            ),
+            Err(e) => append_updater_log(
+                &log,
+                &format!(
+                    "apply_update_windows: could not bootstrap stable updater at {:?}: {e}",
+                    stable_updater_path
+                ),
+            ),
         }
     }
 
-    if stable_updater_path.exists() {
-        append_updater_log(&format!(
+    append_updater_log(
+        &log,
+        &format!(
             "apply_update_windows: attempting stable updater {:?}",
             stable_updater_path
-        ));
-        match std::process::Command::new(&stable_updater_path)
-            .arg("--apply-update")
-            .arg(&staged_path)
-            .arg(&current_exe)
-            .arg(std::process::id().to_string())
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-        {
-            Ok(_) => {
-                append_updater_log("apply_update_windows: stable updater launch succeeded");
-                return Ok(());
-            }
-            Err(e) => {
-                append_updater_log(&format!(
+        ),
+    );
+    match std::process::Command::new(&stable_updater_path)
+        .arg("--apply-update")
+        .arg(&staged_path)
+        .arg(&current_exe)
+        .arg(std::process::id().to_string())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+    {
+        Ok(_) => {
+            append_updater_log(
+                &log,
+                "apply_update_windows: stable updater launch succeeded",
+            );
+            return Ok(());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            append_updater_log(
+                &log,
+                &format!(
+                "apply_update_windows: stable updater missing at {:?}; falling back to cmd apply",
+                stable_updater_path
+            ),
+            );
+        }
+        Err(e) => {
+            append_updater_log(
+                &log,
+                &format!(
                     "apply_update_windows: stable updater launch failed: {} (raw_os_error={:?})",
                     e,
                     e.raw_os_error()
-                ));
-
-                if e.raw_os_error() == Some(740) {
-                    append_updater_log(
-                        "apply_update_windows: trying cmd fallback after stable updater failure",
-                    );
-                    let res = spawn_cmd_apply_update(&staged_path, &current_exe);
-                    if res.is_err() {
-                        let _ = std::fs::remove_file(&staged_path);
-                    }
-                    return res;
+                ),
+            );
+            if e.raw_os_error() == Some(740) {
+                append_updater_log(
+                    &log,
+                    "apply_update_windows: trying cmd fallback after stable updater failure",
+                );
+                let res = spawn_cmd_apply_update(&staged_path, &current_exe);
+                if res.is_err() {
+                    let _ = std::fs::remove_file(&staged_path);
                 }
+                return res;
             }
         }
-    } else {
-        append_updater_log(&format!(
-            "apply_update_windows: stable updater missing at {:?}; falling back to cmd apply",
-            stable_updater_path
-        ));
     }
 
-    append_updater_log("apply_update_windows: stable updater unavailable, using cmd fallback");
+    append_updater_log(
+        &log,
+        "apply_update_windows: stable updater unavailable, using cmd fallback",
+    );
     let res = spawn_cmd_apply_update(&staged_path, &current_exe);
     if res.is_err() {
         let _ = std::fs::remove_file(&staged_path);
@@ -596,7 +661,8 @@ fn spawn_cmd_apply_update(
 ) -> Result<(), UpdateError> {
     let staged = escape_cmd_set_value(staged_path);
     let target = escape_cmd_set_value(target_path);
-    let log_path = escape_cmd_set_value(&updater_log_path());
+    let raw_log_path = updater_log_path();
+    let log_path = escape_cmd_set_value(&raw_log_path);
 
     // `ping -n 2` rather than `timeout`: the host's stdin is the Chrome
     // native-messaging pipe, which cmd inherits, and `timeout` aborts
@@ -611,10 +677,13 @@ fn spawn_cmd_apply_update(
         log_path,
     );
 
-    append_updater_log(&format!(
-        "spawn_cmd_apply_update: launching cmd fallback for staged={:?} target={:?}",
-        staged_path, target_path
-    ));
+    append_updater_log(
+        &raw_log_path,
+        &format!(
+            "spawn_cmd_apply_update: launching cmd fallback for staged={:?} target={:?}",
+            staged_path, target_path
+        ),
+    );
 
     let cmd_exe = system32_tool("cmd");
     let mut builder = std::process::Command::new(&cmd_exe);
@@ -649,46 +718,36 @@ pub fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), Upda
 
         validate_apply_paths(&staged, &target).map_err(UpdateError::Apply)?;
 
-        append_updater_log(&format!(
-            "run_apply_update: started with staged={:?} target={:?}",
-            staged, target
-        ));
+        let log = updater_log_path();
+        append_updater_log(
+            &log,
+            &format!(
+                "run_apply_update: started with staged={:?} target={:?}",
+                staged, target
+            ),
+        );
 
         if !staged.exists() {
-            append_updater_log("run_apply_update: staged file missing");
+            append_updater_log(&log, "run_apply_update: staged file missing");
             return Err(UpdateError::Apply(format!(
                 "Staged update file does not exist: {:?}",
                 staged
             )));
         }
 
-        let mut last_err: Option<String> = None;
-        for _ in 0..300 {
-            match std::fs::copy(&staged, &target) {
-                Ok(_) => {
-                    let _ = std::fs::remove_file(&staged);
-                    append_updater_log("run_apply_update: copy succeeded and staged removed");
-                    return Ok(());
-                }
-                Err(e) => {
-                    last_err = Some(e.to_string());
-                    std::thread::sleep(Duration::from_millis(100));
-                }
+        match try_copy_with_retry(&staged, &target, 300) {
+            Ok(()) => {
+                append_updater_log(&log, "run_apply_update: copy succeeded and staged removed");
+                Ok(())
+            }
+            Err(e) => {
+                append_updater_log(
+                    &log,
+                    &format!("run_apply_update: timed out, last_err={}", e),
+                );
+                Err(UpdateError::Apply(e))
             }
         }
-
-        append_updater_log(&format!(
-            "run_apply_update: timed out, last_err={}",
-            last_err
-                .clone()
-                .unwrap_or_else(|| "unknown error".to_string())
-        ));
-
-        Err(UpdateError::Apply(format!(
-            "Timed out applying update to {:?}: {}",
-            target,
-            last_err.unwrap_or_else(|| "unknown error".to_string())
-        )))
     }
 }
 
@@ -724,7 +783,18 @@ pub(crate) fn cleanup_staged_files() {
         let Ok(pid) = inner.parse::<u32>() else {
             continue;
         };
-        if !is_pid_alive(pid) {
+        // Require the file to be older than 10 minutes before deleting — guards
+        // against PID reuse causing a fresh staged file to be incorrectly removed.
+        let old_enough = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .and_then(|t| {
+                t.elapsed()
+                    .map_err(|e| std::io::Error::other(e.to_string()))
+            })
+            .map(|age| age > Duration::from_secs(600))
+            .unwrap_or(false);
+        if !is_pid_alive(pid) && old_enough {
             let path = entry.path();
             match std::fs::remove_file(&path) {
                 Ok(()) => eprintln!("[FreeMiD] removed orphaned staged file: {:?}", path),

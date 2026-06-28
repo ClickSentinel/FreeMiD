@@ -1,23 +1,40 @@
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::Duration;
 use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
-    GlobalSystemMediaTransportControlsSessionPlaybackStatus,
+    GlobalSystemMediaTransportControlsSessionPlaybackStatus, MediaPropertiesChangedEventArgs,
+    PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs,
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
 
 static COM_INIT: Once = Once::new();
 static WATCHER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static WATCHER_DONE: OnceLock<(Mutex<bool>, Condvar)> = OnceLock::new();
+
+fn watcher_done_pair() -> &'static (Mutex<bool>, Condvar) {
+    WATCHER_DONE.get_or_init(|| (Mutex::new(false), Condvar::new()))
+}
 
 /// Signal the SMTC watcher thread to exit. Call before `std::process::exit`
 /// so the thread leaves the COM MTA cleanly before ExitProcess runs DllMain
 /// cleanup — otherwise COM teardown waits for the sleeping thread indefinitely.
 pub fn signal_shutdown() {
     WATCHER_SHUTDOWN.store(true, Ordering::Release);
+}
+
+/// Block until the watcher thread confirms it has exited, or until `timeout`
+/// elapses. Returns true if the thread exited cleanly within the timeout.
+pub fn wait_for_shutdown(timeout: Duration) -> bool {
+    let (lock, cvar) = watcher_done_pair();
+    let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let result = cvar
+        .wait_timeout_while(guard, timeout, |done| !*done)
+        .unwrap_or_else(|e| e.into_inner());
+    *result.0
 }
 
 #[derive(Debug, Serialize)]
@@ -64,7 +81,7 @@ fn find_tidal_session(
     })
 }
 
-fn ticks_to_secs(ticks: i64) -> f64 {
+fn ticks_to_secs(ticks: u64) -> f64 {
     ticks as f64 / 10_000_000.0
 }
 
@@ -108,16 +125,16 @@ fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Op
             let ft = unsafe { GetSystemTimeAsFileTime() };
             let now_ticks = ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64;
             let elapsed_ticks = now_ticks.saturating_sub(updated.UniversalTime as u64);
-            let secs = ticks_to_secs(pos.Duration) + ticks_to_secs(elapsed_ticks as i64);
+            let secs = ticks_to_secs(pos.Duration.max(0) as u64) + ticks_to_secs(elapsed_ticks);
             Some(secs.max(0.0))
         }
-        (Some(pos), _) => Some(ticks_to_secs(pos.Duration).max(0.0)),
+        (Some(pos), _) => Some(ticks_to_secs(pos.Duration.max(0) as u64).max(0.0)),
         _ => None,
     };
 
     let duration_secs = match (timeline.EndTime().ok(), timeline.StartTime().ok()) {
         (Some(end), Some(start)) => {
-            let dur = ticks_to_secs(end.Duration - start.Duration);
+            let dur = ticks_to_secs(end.Duration.saturating_sub(start.Duration).max(0) as u64);
             if dur > 0.0 {
                 Some(dur)
             } else {
@@ -135,6 +152,19 @@ fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Op
         position_secs,
         duration_secs,
     })
+}
+
+fn make_session_handler<TArgs: windows::core::RuntimeType + 'static>(
+    f: Arc<OnUpdateFn>,
+) -> TypedEventHandler<GlobalSystemMediaTransportControlsSession, TArgs> {
+    TypedEventHandler::new(
+        move |sender: &Option<GlobalSystemMediaTransportControlsSession>, _| {
+            if let Some(s) = sender {
+                f(track_from_session(s));
+            }
+            Ok(())
+        },
+    )
 }
 
 /// (Re)subscribe to the current Tidal SMTC session, or unsubscribe if Tidal
@@ -157,35 +187,15 @@ fn refresh_subscription(
 
     on_update(track_from_session(&session));
 
-    let props_token = session.MediaPropertiesChanged(&TypedEventHandler::new({
-        let f = on_update.clone();
-        move |sender: &Option<GlobalSystemMediaTransportControlsSession>, _| {
-            if let Some(s) = sender {
-                f(track_from_session(s));
-            }
-            Ok(())
-        }
-    }));
-
-    let playback_token = session.PlaybackInfoChanged(&TypedEventHandler::new({
-        let f = on_update.clone();
-        move |sender: &Option<GlobalSystemMediaTransportControlsSession>, _| {
-            if let Some(s) = sender {
-                f(track_from_session(s));
-            }
-            Ok(())
-        }
-    }));
-
-    let timeline_token = session.TimelinePropertiesChanged(&TypedEventHandler::new({
-        let f = on_update.clone();
-        move |sender: &Option<GlobalSystemMediaTransportControlsSession>, _| {
-            if let Some(s) = sender {
-                f(track_from_session(s));
-            }
-            Ok(())
-        }
-    }));
+    let props_token = session.MediaPropertiesChanged(&make_session_handler::<
+        MediaPropertiesChangedEventArgs,
+    >(on_update.clone()));
+    let playback_token = session.PlaybackInfoChanged(&make_session_handler::<
+        PlaybackInfoChangedEventArgs,
+    >(on_update.clone()));
+    let timeline_token = session.TimelinePropertiesChanged(&make_session_handler::<
+        TimelinePropertiesChangedEventArgs,
+    >(on_update.clone()));
 
     match (props_token, playback_token, timeline_token) {
         (Ok(p), Ok(pl), Ok(t)) => {
@@ -279,5 +289,11 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
         while !WATCHER_SHUTDOWN.load(Ordering::Acquire) {
             std::thread::sleep(Duration::from_millis(100));
         }
+
+        // Notify exit_cleanly that this thread has exited the COM MTA.
+        let (lock, cvar) = watcher_done_pair();
+        let mut done = lock.lock().unwrap_or_else(|e| e.into_inner());
+        *done = true;
+        cvar.notify_all();
     });
 }

@@ -114,7 +114,7 @@ YouTube / YouTube Music / TIDAL tab
 
 **Why a native host?** Discord's IPC protocol uses a local Unix socket (`$XDG_RUNTIME_DIR/discord-ipc-0` on Linux, `$TMPDIR/discord-ipc-0` on macOS). Browsers cannot open Unix sockets directly, so a small native binary bridges the gap. Chrome spawns it on demand and kills it when Chrome closes — you never have to manage it yourself.
 
-> **Metadata sources:** YouTube Music primarily uses `navigator.mediaSession`; TIDAL web relies on stable player DOM selectors for title/artist/timestamps; TIDAL desktop (Windows) uses the Windows System Media Transport Controls (SMTC). No external API calls are made for track metadata (title, artist, timestamps) — those come directly from the page. Album art is looked up via MusicBrainz and Cover Art Archive.
+> **Metadata sources:** YouTube Music primarily uses `navigator.mediaSession`; TIDAL web relies on stable player DOM selectors for title/artist/timestamps; TIDAL desktop (Windows) uses the Windows System Media Transport Controls (SMTC). No external API calls are made for track metadata (title, artist, timestamps) — those come directly from the page. Album art is looked up via the iTunes Search API (primary) with MusicBrainz and Cover Art Archive as a fallback.
 
 ### Native host lifecycle (Chrome)
 

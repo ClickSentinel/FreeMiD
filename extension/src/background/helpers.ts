@@ -112,20 +112,59 @@ export async function lookupArtworkUrl(
   title: string,
   album?: string,
 ): Promise<string | null> {
+  const ua = `FreeMiD/${chrome.runtime.getManifest().version} (https://github.com/${GITHUB_REPO})`;
+  const al = artist.toLowerCase();
+  const tl = title.toLowerCase();
+
+  // ── iTunes Search API ──────────────────────────────────────────────────────
+  // More reliable than MusicBrainz for mainstream music: returns the correct
+  // album without needing an album name. iTunes only sets collectionArtistName
+  // for Various Artists compilations; its absence means the result is an
+  // artist-specific release (album or single).
+  try {
+    const itunesResp = await fetch(
+      `https://itunes.apple.com/search?term=${encodeURIComponent(`${artist} ${title}`)}&entity=song&limit=10&media=music`,
+      { headers: { 'User-Agent': ua } },
+    );
+    if (itunesResp.ok) {
+      const itunesData = (await itunesResp.json()) as {
+        results?: Array<{
+          artistName?: string;
+          trackName?: string;
+          collectionArtistName?: string;
+          artworkUrl100?: string;
+        }>;
+      };
+      for (const r of itunesData.results ?? []) {
+        if (!r.artworkUrl100) continue;
+        const ra = r.artistName?.toLowerCase() ?? '';
+        const rt = r.trackName?.toLowerCase() ?? '';
+        if (!ra.includes(al) && !al.includes(ra)) continue;
+        if (!rt.includes(tl) && !tl.includes(rt)) continue;
+        if (r.collectionArtistName) continue; // Various Artists compilation
+        return r.artworkUrl100.replace('/100x100bb.', '/600x600bb.');
+      }
+    }
+  } catch {
+    // fall through to MusicBrainz
+  }
+
+  // ── MusicBrainz + Cover Art Archive ───────────────────────────────────────
+  // Fallback for tracks not in the iTunes catalog. When the album name is
+  // known, include it as a release filter to bypass the compilation recordings
+  // that otherwise dominate MusicBrainz ranking for popular tracks.
   try {
     const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    // -video:true excludes music videos, which score equally high as audio
-    // recordings but have wrong or no art in the Cover Art Archive.
-    const query = encodeURIComponent(
-      `artist:"${esc(artist)}" AND recording:"${esc(title)}" AND -video:true`,
-    );
+    const queryParts = [
+      `artist:"${esc(artist)}"`,
+      `recording:"${esc(title)}"`,
+      `-video:true`,
+    ];
+    if (album) queryParts.push(`release:"${esc(album)}"`);
+    const query = encodeURIComponent(queryParts.join(' AND '));
     const mbResp = await fetch(
-      `https://musicbrainz.org/ws/2/recording/?query=${query}&fmt=json&limit=5`,
-      {
-        headers: {
-          'User-Agent': `FreeMiD/${chrome.runtime.getManifest().version} (https://github.com/${GITHUB_REPO})`,
-        },
-      },
+      `https://musicbrainz.org/ws/2/recording/?query=${query}&fmt=json&limit=10`,
+      { headers: { 'User-Agent': ua } },
     );
     if (!mbResp.ok) return null;
 
@@ -144,16 +183,11 @@ export async function lookupArtworkUrl(
       }>;
     };
 
-    // Collect Official releases from the top 3 recordings, deduplicated by
-    // release-group.
-    // Score: album-name match (4) > original Album (3) > Single (2) >
-    //        Compilation or other (1). Compilations share primary-type "Album"
-    //        in MusicBrainz so we must check secondary-types to distinguish them.
     const albumLower = album?.toLowerCase().trim();
     type Candidate = { releaseId: string; rgId?: string; score: number };
     const seen = new Set<string>();
     const candidates: Candidate[] = [];
-    for (const rec of (mbData.recordings ?? []).slice(0, 3)) {
+    for (const rec of (mbData.recordings ?? []).slice(0, 5)) {
       for (const rel of rec.releases ?? []) {
         if (rel.status !== 'Official') continue;
         const rgId = rel['release-group']?.id;
@@ -162,8 +196,7 @@ export async function lookupArtworkUrl(
         seen.add(dedupeKey);
         const primaryType = rel['release-group']?.['primary-type'];
         const secondaryTypes = rel['release-group']?.['secondary-types'] ?? [];
-        const isCompilation = secondaryTypes.includes('Compilation');
-        const isAlbum = primaryType === 'Album' && !isCompilation;
+        const isAlbum = primaryType === 'Album' && secondaryTypes.length === 0;
         const isSingle = primaryType === 'Single';
         const nameMatch =
           !!albumLower &&
@@ -172,18 +205,16 @@ export async function lookupArtworkUrl(
         candidates.push({
           releaseId: rel.id,
           rgId,
-          // Exact album name match always wins. Original albums rank above
-          // singles; compilations rank lowest since they often carry wrong art.
           score: nameMatch ? 4 : isAlbum ? 3 : isSingle ? 2 : 1,
         });
       }
     }
     candidates.sort((a, b) => b.score - a.score);
 
-    // The release-group endpoint returns canonical front art for the whole album
-    // group and succeeds more often than individual release lookups.
-    // candidates is already deduplicated by rgId via the `seen` Set above.
-    for (const c of candidates.slice(0, 5)) {
+    const minScore = candidates.some((c) => c.score >= 2) ? 2 : 1;
+    const ranked = candidates.filter((c) => c.score >= minScore);
+
+    for (const c of ranked.slice(0, 10)) {
       if (c.rgId) {
         const resp = await fetch(
           `https://coverartarchive.org/release-group/${c.rgId}/front`,
@@ -194,9 +225,8 @@ export async function lookupArtworkUrl(
       }
     }
 
-    // Fall back to individual release IDs.
     const triedRels = new Set<string>();
-    for (const c of candidates.slice(0, 5)) {
+    for (const c of ranked.slice(0, 10)) {
       if (!triedRels.has(c.releaseId)) {
         triedRels.add(c.releaseId);
         const resp = await fetch(

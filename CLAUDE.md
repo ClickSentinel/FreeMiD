@@ -16,14 +16,23 @@ The extension cannot open Unix sockets directly, so the native host is what actu
 ```text
 Cargo.toml              # workspace root (members: native-host, installer)
 native-host/            # Rust binary: freemid + freemid-apply (Windows updater helper)
+  src/
+    main.rs             # Entry point, message loop, native messaging framing
+    discord_ipc.rs      # Discord local IPC (Unix socket / Windows named pipe)
+    update.rs           # Self-update logic (download, SHA-256 verify, atomic replace)
+    smtc.rs             # Windows SMTC watcher — pushes desktop media info via GET_DESKTOP_MEDIA
+    windows_apply.rs    # freemid-apply helper for Windows binary replacement
 installer/              # Rust binary: freemid-setup.exe (Windows GUI installer)
 extension/              # Chrome MV3 extension (TypeScript + Vite)
   src/
-    background/index.ts # Service worker: manages native port, tab injection, update flow
-    presence/Presence.ts# API class used by all activities
-    activities/         # One subdirectory per supported site (youtube, youtubemusic, tidal)
-    constants/          # Shared asset keys, storage keys, GitHub repo reference
-    utils/              # parseClock and other small helpers
+    background/index.ts  # Service worker: manages native port, tab injection, update flow
+    background/helpers.ts# Artwork lookup (iTunes → MusicBrainz/CAA fallback), URL/version utils
+    presence/Presence.ts # API class used by all activities; PresenceData supports largeImageUrl/smallImageUrl for URL-based art
+    activities/          # One subdirectory per supported site (youtube, youtubemusic, tidal)
+    constants/           # presenceAssets.ts (Discord asset keys), storageKeys.ts, github.ts
+    popup/index.ts       # Extension popup UI (status, per-site toggles, update/reconnect)
+    popup/helpers.ts     # Popup-only helpers (artistFromActivity, fallbackLogoPath, urlLike)
+    utils/               # parseClock and other small helpers
 install/                # install.sh / install.ps1 / uninstall scripts
 scripts/                # build-activities.mjs, local-update-e2e.sh, sync-version.sh
 docs/                   # Architecture docs and release checklists
@@ -96,6 +105,10 @@ CI also checks that the default extension ID in `install/install.sh`, `install/i
 - Extension → host: `{ type: "PING" }`, `{ type: "SET_ACTIVITY", activity: {...} }`, `{ type: "CLEAR_ACTIVITY" }`, `{ type: "UPDATE", latestUrl?, releasesBaseUrl? }`
 - Host → extension: `{ type: "STATUS", connected: bool, version, capabilities: string[], selfUpdateSupported, runtimeOs, runtimeArch, binaryPath, error? }`, `{ type: "UPDATE_STATUS", status, version?, error? }`
 
+**Artwork resolution:** When an activity sets `largeImageUrl` or `smallImageUrl` on a `PresenceData` object, the background calls `lookupArtworkUrl(artist, title, album?)` from `background/helpers.ts`. It first queries the **iTunes Search API** (returns 600×600 art, most reliable for mainstream tracks). On miss or failure it falls back to **MusicBrainz + Cover Art Archive** (queries recordings, ranks by album name match → Album → Single, then hits `coverartarchive.org`). The resolved URL is passed straight to Discord as the image URL.
+
+**SMTC (Windows desktop media):** On Windows, `smtc.rs` runs a background watcher thread that subscribes to the Windows System Media Transport Controls API. The Tidal desktop activity (`activities/tidal/index.ts`) sends a `GET_DESKTOP_MEDIA` message to the background → native host reads the current SMTC session and replies with artist/title/album/position data. This lets the Tidal activity work with the native Windows app even when the Chrome tab is not focused or the web player is not active.
+
 **Activity injection:** The background service worker listens to `chrome.tabs.onUpdated` and `chrome.tabs.onActivated`. When a tab navigates to a URL matching an entry in `extension/src/activities/registry.ts`, the background injects the corresponding `dist/activities/<id>/index.js` via `chrome.scripting.executeScript`. Each activity is a self-contained IIFE bundle (not code-split with the rest of the extension) — this is why activities are built separately via `scripts/build-activities.mjs` rather than through the main Vite rollup entry points.
 
 **Native host lifecycle:** Chrome spawns the host on first `connectNative()` and kills it when the extension disconnects or Chrome closes. The host has a 45 s idle timeout (resets on each message) as a safety backstop. On Windows, a single-instance named mutex (`Local\FreeMiD.NativeHost`) prevents duplicate host processes during reconnect races.
@@ -133,3 +146,153 @@ These are undocumented dev/debug flags not exposed in normal usage:
 | `FREEMID_ALLOW_TMP_IPC=1` | On Linux, also search `$TMPDIR`, `$TMP`, `$TEMP`, and `/tmp` for the Discord IPC socket. Disabled by default because `/tmp` is world-writable (TOCTOU risk). Useful when Discord writes its socket to `/tmp` rather than `$XDG_RUNTIME_DIR`. |
 | `FREEMID_UPDATE_LATEST_URL` | Override the GitHub API URL used to fetch the latest release metadata. |
 | `FREEMID_UPDATE_RELEASES_BASE` | Override the base URL used to download release artifacts. |
+
+<!-- rtk-instructions v2 -->
+## RTK (Rust Token Killer) - Token-Optimized Commands
+
+## Golden Rule
+
+**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. This means RTK is always safe to use.
+
+**Important**: Even in command chains with `&&`, use `rtk`:
+
+```bash
+# ❌ Wrong
+git add . && git commit -m "msg" && git push
+
+# ✅ Correct
+rtk git add . && rtk git commit -m "msg" && rtk git push
+```
+
+## RTK Commands by Workflow
+
+### Build & Compile (80-90% savings)
+
+```bash
+rtk cargo build         # Cargo build output
+rtk cargo check         # Cargo check output
+rtk cargo clippy        # Clippy warnings grouped by file (80%)
+rtk tsc                 # TypeScript errors grouped by file/code (83%)
+rtk lint                # ESLint/Biome violations grouped (84%)
+rtk prettier --check    # Files needing format only (70%)
+rtk next build          # Next.js build with route metrics (87%)
+```
+
+### Test (60-99% savings)
+
+```bash
+rtk cargo test          # Cargo test failures only (90%)
+rtk go test             # Go test failures only (90%)
+rtk jest                # Jest failures only (99.5%)
+rtk vitest              # Vitest failures only (99.5%)
+rtk playwright test     # Playwright failures only (94%)
+rtk pytest              # Python test failures only (90%)
+rtk rake test           # Ruby test failures only (90%)
+rtk rspec               # RSpec test failures only (60%)
+rtk test <cmd>          # Generic test wrapper - failures only
+```
+
+### Git (59-80% savings)
+
+```bash
+rtk git status          # Compact status
+rtk git log             # Compact log (works with all git flags)
+rtk git diff            # Compact diff (80%)
+rtk git show            # Compact show (80%)
+rtk git add             # Ultra-compact confirmations (59%)
+rtk git commit          # Ultra-compact confirmations (59%)
+rtk git push            # Ultra-compact confirmations
+rtk git pull            # Ultra-compact confirmations
+rtk git branch          # Compact branch list
+rtk git fetch           # Compact fetch
+rtk git stash           # Compact stash
+rtk git worktree        # Compact worktree
+```
+
+Note: Git passthrough works for ALL subcommands, even those not explicitly listed.
+
+### GitHub (26-87% savings)
+
+```bash
+rtk gh pr view <num>    # Compact PR view (87%)
+rtk gh pr checks        # Compact PR checks (79%)
+rtk gh run list         # Compact workflow runs (82%)
+rtk gh issue list       # Compact issue list (80%)
+rtk gh api              # Compact API responses (26%)
+```
+
+### JavaScript/TypeScript Tooling (70-90% savings)
+
+```bash
+rtk pnpm list           # Compact dependency tree (70%)
+rtk pnpm outdated       # Compact outdated packages (80%)
+rtk pnpm install        # Compact install output (90%)
+rtk npm run <script>    # Compact npm script output
+rtk npx <cmd>           # Compact npx command output
+rtk prisma              # Prisma without ASCII art (88%)
+```
+
+### Files & Search (60-75% savings)
+
+```bash
+rtk ls <path>           # Tree format, compact (65%)
+rtk read <file>         # Code reading with filtering (60%)
+rtk grep <pattern>      # Search grouped by file (75%). Format flags (-c, -l, -L, -o, -Z) run raw.
+rtk find <pattern>      # Find grouped by directory (70%)
+```
+
+### Analysis & Debug (70-90% savings)
+
+```bash
+rtk err <cmd>           # Filter errors only from any command
+rtk log <file>          # Deduplicated logs with counts
+rtk json <file>         # JSON structure without values
+rtk deps                # Dependency overview
+rtk env                 # Environment variables compact
+rtk summary <cmd>       # Smart summary of command output
+rtk diff                # Ultra-compact diffs
+```
+
+### Infrastructure (85% savings)
+
+```bash
+rtk docker ps           # Compact container list
+rtk docker images       # Compact image list
+rtk docker logs <c>     # Deduplicated logs
+rtk kubectl get         # Compact resource list
+rtk kubectl logs        # Deduplicated pod logs
+```
+
+### Network (65-70% savings)
+
+```bash
+rtk curl <url>          # Compact HTTP responses (70%)
+rtk wget <url>          # Compact download output (65%)
+```
+
+### Meta Commands
+
+```bash
+rtk gain                # View token savings statistics
+rtk gain --history      # View command history with savings
+rtk discover            # Analyze Claude Code sessions for missed RTK usage
+rtk proxy <cmd>         # Run command without filtering (for debugging)
+rtk init                # Add RTK instructions to CLAUDE.md
+rtk init --global       # Add RTK to ~/.claude/CLAUDE.md
+```
+
+## Token Savings Overview
+
+| Category | Commands | Typical Savings |
+| ---------- | ---------- | ----------------- |
+| Tests | vitest, playwright, cargo test | 90-99% |
+| Build | next, tsc, lint, prettier | 70-87% |
+| Git | status, log, diff, add, commit | 59-80% |
+| GitHub | gh pr, gh run, gh issue | 26-87% |
+| Package Managers | pnpm, npm, npx | 70-90% |
+| Files | ls, read, grep, find | 60-75% |
+| Infrastructure | docker, kubectl | 85% |
+| Network | curl, wget | 65-70% |
+
+Overall average: **60-90% token reduction** on common development operations.
+<!-- /rtk-instructions -->

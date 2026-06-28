@@ -24,9 +24,45 @@ mod win {
     use std::os::windows::process::CommandExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::sync::OnceLock;
 
-    use native_windows_gui as nwg;
     use sha2::{Digest, Sha256};
+
+    fn message_box(title: &str, text: &str, is_error: bool) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            MessageBoxW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
+        };
+        let title_w: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        let text_w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let flags = MB_OK
+            | if is_error {
+                MB_ICONERROR
+            } else {
+                MB_ICONINFORMATION
+            };
+        // SAFETY: title_w and text_w are valid null-terminated UTF-16 strings; null HWND is valid.
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text_w.as_ptr(),
+                title_w.as_ptr(),
+                flags,
+            )
+        };
+    }
+
+    fn http_agent() -> &'static ureq::Agent {
+        static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+        AGENT.get_or_init(|| {
+            let tls_config = ureq::tls::TlsConfig::builder()
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build();
+            ureq::Agent::config_builder()
+                .tls_config(tls_config)
+                .build()
+                .new_agent()
+        })
+    }
 
     const GITHUB_REPO: &str = "ClickSentinel/FreeMiD";
     const ARTIFACT: &str = "freemid-windows-x86_64.exe";
@@ -157,20 +193,18 @@ mod win {
             return;
         }
 
-        let _ = nwg::init();
-        let _ = nwg::Font::set_global_family("Segoe UI");
-
         match result {
             Ok(()) => {
-                nwg::simple_message("FreeMiD Setup", "FreeMiD native host uninstalled.");
+                message_box("FreeMiD Setup", "FreeMiD native host uninstalled.", false);
             }
             Err(e) => {
-                nwg::simple_message(
+                message_box(
                     "FreeMiD Setup - Error",
                     &format!(
                         "Uninstall failed. Close any running FreeMiD process and try again.\n\nDetails:\n{}",
                         e
                     ),
+                    true,
                 );
                 std::process::exit(1);
             }
@@ -207,28 +241,27 @@ mod win {
     }
 
     fn run_gui(extension_id: String) -> Result<(), String> {
-        nwg::init().map_err(|e| format!("Failed to initialize GUI: {}", e))?;
-        nwg::Font::set_global_family("Segoe UI")
-            .map_err(|e| format!("Failed to set UI font: {}", e))?;
         append_setup_log(&format!("FreeMiD Setup v{} starting", VERSION));
         let result = run_install(&extension_id, |_| {});
         match result {
             Ok(()) => {
                 append_setup_log("Installation complete.");
-                nwg::simple_message(
+                message_box(
                     "FreeMiD Setup",
                     "Installation complete. Check the FreeMiD browser extension and reload it if needed.",
+                    false,
                 );
                 Ok(())
             }
             Err(e) => {
                 append_setup_log(&format!("Installation failed: {}", e));
-                nwg::simple_message(
+                message_box(
                     "FreeMiD Setup - Error",
                     &format!(
                         "Install failed. Check your internet connection and verify you can access GitHub Releases.\n\nDetails:\n{}",
                         e
                     ),
+                    true,
                 );
                 Err(e)
             }
@@ -542,20 +575,22 @@ mod win {
     }
 
     fn build_urls(tag: &str) -> (String, String, String) {
-        let base = if tag == "latest" {
+        let dir = if tag == "latest" {
             format!(
-                "https://github.com/{}/releases/latest/download/{}",
-                GITHUB_REPO, ARTIFACT
+                "https://github.com/{}/releases/latest/download",
+                GITHUB_REPO
             )
         } else {
             format!(
-                "https://github.com/{}/releases/download/{}/{}",
-                GITHUB_REPO, tag, ARTIFACT
+                "https://github.com/{}/releases/download/{}",
+                GITHUB_REPO, tag
             )
         };
-        let checksums = base.replace(ARTIFACT, "checksums.sha256");
-        let apply = base.replace(ARTIFACT, APPLY_ARTIFACT);
-        (base, checksums, apply)
+        (
+            format!("{}/{}", dir, ARTIFACT),
+            format!("{}/checksums.sha256", dir),
+            format!("{}/{}", dir, APPLY_ARTIFACT),
+        )
     }
 
     // Mirror the native host's update caps so a compromised or misbehaving
@@ -564,13 +599,16 @@ mod win {
     const MAX_CHECKSUMS_BYTES: u64 = 1024 * 1024;
 
     fn download_file(url: &str, destination: &PathBuf) -> Result<(), String> {
-        let response = ureq::get(url)
+        let response = http_agent()
+            .get(url)
             .call()
             .map_err(|e| format!("Download failed from {}: {}", url, e))?;
 
         if let Some(content_length) = response
-            .header("Content-Length")
-            .and_then(|h| h.parse::<u64>().ok())
+            .headers()
+            .get("content-length")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
         {
             if content_length > MAX_DOWNLOAD_BYTES {
                 return Err(format!(
@@ -580,7 +618,10 @@ mod win {
             }
         }
 
-        let mut reader = response.into_reader().take(MAX_DOWNLOAD_BYTES + 1);
+        let mut reader = response
+            .into_body()
+            .into_reader()
+            .take(MAX_DOWNLOAD_BYTES + 1);
         let mut file = File::create(destination)
             .map_err(|e| format!("Cannot create {}: {}", destination.display(), e))?;
 
@@ -599,11 +640,15 @@ mod win {
     }
 
     fn download_text(url: &str) -> Result<String, String> {
-        let response = ureq::get(url)
+        let response = http_agent()
+            .get(url)
             .call()
             .map_err(|e| format!("Download failed from {}: {}", url, e))?;
 
-        let mut reader = response.into_reader().take(MAX_CHECKSUMS_BYTES + 1);
+        let mut reader = response
+            .into_body()
+            .into_reader()
+            .take(MAX_CHECKSUMS_BYTES + 1);
         let mut buf = Vec::new();
         reader
             .read_to_end(&mut buf)
@@ -673,7 +718,11 @@ mod win {
             hasher.update(&buffer[..read]);
         }
 
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect())
     }
 
     fn reg_set(key: &str, value: &str) -> Result<(), String> {
@@ -786,11 +835,19 @@ mod win {
         cmd
     }
 
+    /// Escape a string for embedding inside a double-quoted `cmd.exe` argument.
+    /// In cmd.exe, a literal `"` inside a double-quoted segment must be doubled.
+    fn escape_cmd_quoted_arg(s: &str) -> String {
+        s.replace('"', "\"\"")
+    }
+
     /// Build the `cmd.exe` command that finishes uninstall after this process
     /// exits: retry deleting the (self-locked) setup executable until it is gone,
     /// then remove the now-empty install directory. The `for /L` retry loop gives
     /// the user time to dismiss the completion dialog before the lock releases.
     fn deferred_cleanup_command(setup: &str, dir: &str) -> String {
+        let setup = escape_cmd_quoted_arg(setup);
+        let dir = escape_cmd_quoted_arg(dir);
         format!(
             "for /L %i in (1,1,30) do (del /f /q \"{setup}\" >nul 2>nul & if not exist \"{setup}\" (rmdir /q \"{dir}\" >nul 2>nul & exit /B 0) else (ping 127.0.0.1 -n 2 >nul))"
         )
