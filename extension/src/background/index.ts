@@ -926,7 +926,9 @@ chrome.runtime.onMessage.addListener(
             ? (d.assets as Record<string, unknown>)
             : undefined;
         const largeText =
-          typeof assets?.large_text === 'string' ? assets.large_text : undefined;
+          typeof assets?.large_text === 'string'
+            ? assets.large_text
+            : undefined;
         const album = largeText !== title ? largeText : undefined;
 
         if (artist && title) {

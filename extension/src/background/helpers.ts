@@ -142,7 +142,7 @@ export async function lookupArtworkUrl(
         if (!ra.includes(al) && !al.includes(ra)) continue;
         if (!rt.includes(tl) && !tl.includes(rt)) continue;
         if (r.collectionArtistName) continue; // Various Artists compilation
-        return r.artworkUrl100;
+        return r.artworkUrl100.replace('/100x100bb.', '/600x600bb.');
       }
     }
   } catch {
