@@ -16,14 +16,23 @@ The extension cannot open Unix sockets directly, so the native host is what actu
 ```text
 Cargo.toml              # workspace root (members: native-host, installer)
 native-host/            # Rust binary: freemid + freemid-apply (Windows updater helper)
+  src/
+    main.rs             # Entry point, message loop, native messaging framing
+    discord_ipc.rs      # Discord local IPC (Unix socket / Windows named pipe)
+    update.rs           # Self-update logic (download, SHA-256 verify, atomic replace)
+    smtc.rs             # Windows SMTC watcher — pushes desktop media info via GET_DESKTOP_MEDIA
+    windows_apply.rs    # freemid-apply helper for Windows binary replacement
 installer/              # Rust binary: freemid-setup.exe (Windows GUI installer)
 extension/              # Chrome MV3 extension (TypeScript + Vite)
   src/
-    background/index.ts # Service worker: manages native port, tab injection, update flow
-    presence/Presence.ts# API class used by all activities
-    activities/         # One subdirectory per supported site (youtube, youtubemusic, tidal)
-    constants/          # Shared asset keys, storage keys, GitHub repo reference
-    utils/              # parseClock and other small helpers
+    background/index.ts  # Service worker: manages native port, tab injection, update flow
+    background/helpers.ts# Artwork lookup (iTunes → MusicBrainz/CAA fallback), URL/version utils
+    presence/Presence.ts # API class used by all activities; PresenceData supports largeImageUrl/smallImageUrl for URL-based art
+    activities/          # One subdirectory per supported site (youtube, youtubemusic, tidal)
+    constants/           # presenceAssets.ts (Discord asset keys), storageKeys.ts, github.ts
+    popup/index.ts       # Extension popup UI (status, per-site toggles, update/reconnect)
+    popup/helpers.ts     # Popup-only helpers (artistFromActivity, fallbackLogoPath, urlLike)
+    utils/               # parseClock and other small helpers
 install/                # install.sh / install.ps1 / uninstall scripts
 scripts/                # build-activities.mjs, local-update-e2e.sh, sync-version.sh
 docs/                   # Architecture docs and release checklists
@@ -95,6 +104,10 @@ CI also checks that the default extension ID in `install/install.sh`, `install/i
 - Chrome native messaging framing: `u32 LE length | UTF-8 JSON`
 - Extension → host: `{ type: "PING" }`, `{ type: "SET_ACTIVITY", activity: {...} }`, `{ type: "CLEAR_ACTIVITY" }`, `{ type: "UPDATE", latestUrl?, releasesBaseUrl? }`
 - Host → extension: `{ type: "STATUS", connected: bool, version, capabilities: string[], selfUpdateSupported, runtimeOs, runtimeArch, binaryPath, error? }`, `{ type: "UPDATE_STATUS", status, version?, error? }`
+
+**Artwork resolution:** When an activity sets `largeImageUrl` or `smallImageUrl` on a `PresenceData` object, the background calls `lookupArtworkUrl(artist, title, album?)` from `background/helpers.ts`. It first queries the **iTunes Search API** (returns 600×600 art, most reliable for mainstream tracks). On miss or failure it falls back to **MusicBrainz + Cover Art Archive** (queries recordings, ranks by album name match → Album → Single, then hits `coverartarchive.org`). The resolved URL is passed straight to Discord as the image URL.
+
+**SMTC (Windows desktop media):** On Windows, `smtc.rs` runs a background watcher thread that subscribes to the Windows System Media Transport Controls API. The Tidal desktop activity (`activities/tidal/index.ts`) sends a `GET_DESKTOP_MEDIA` message to the background → native host reads the current SMTC session and replies with artist/title/album/position data. This lets the Tidal activity work with the native Windows app even when the Chrome tab is not focused or the web player is not active.
 
 **Activity injection:** The background service worker listens to `chrome.tabs.onUpdated` and `chrome.tabs.onActivated`. When a tab navigates to a URL matching an entry in `extension/src/activities/registry.ts`, the background injects the corresponding `dist/activities/<id>/index.js` via `chrome.scripting.executeScript`. Each activity is a self-contained IIFE bundle (not code-split with the rest of the extension) — this is why activities are built separately via `scripts/build-activities.mjs` rather than through the main Vite rollup entry points.
 
