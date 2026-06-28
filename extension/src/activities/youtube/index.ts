@@ -237,11 +237,19 @@ presence.on('UpdateData', () => {
 const signal = presence.freshSignal();
 const trigger = () => presence.triggerUpdate();
 
-// Re-evaluate immediately on play/pause — critical for lock handoff speed.
-document.addEventListener('play', trigger, { capture: true, signal });
+// pause must fire immediately — critical for lock-release speed.
+// play is delayed: mediaSession / page title lags the play event at video
+// transitions; the title MutationObserver below handles the metadata update.
+// loadedmetadata fires once the video element has loaded, by which point the
+// URL has changed — safe to read immediately.
 document.addEventListener('pause', trigger, { capture: true, signal });
-// loadedmetadata fires when a new video starts loading (SPA navigation).
 document.addEventListener('loadedmetadata', trigger, { capture: true, signal });
+// scheduleTrigger cancels any pending timers from a previous play event so
+// rapid video switches don't leave overlapping callbacks with stale metadata.
+document.addEventListener('play', () => presence.scheduleTrigger(300), {
+  capture: true,
+  signal,
+});
 
 // Observe the video title heading for SPA navigation (title updates before loadedmetadata).
 presence.watchSelector(

@@ -96,6 +96,14 @@ let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
 let reconnectCooldownUntilMs = 0;
 let presenceHolder: string | null = null; // sourceId that currently holds the Discord presence lock
+let lastSentActivityJson: string | null = null; // last payload sent to Discord; skip if identical
+// Discord rate-limits SET_ACTIVITY to ~5 per 20 s. We enforce a 5 s minimum
+// between sends (4/20 s) to stay safely below it. Rapid song skips schedule a
+// trailing flush so the final settled song always reaches Discord.
+const DISCORD_MIN_INTERVAL_MS = 5_000;
+let lastActivitySentAt = 0;
+let pendingActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingActivityPayload: object | null = null;
 const desktopArtCache = new Map<string, string | null>(); // "artist|title" → HTTPS URL or null
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
@@ -644,6 +652,20 @@ function reconnectCooldownRemainingMs(): number {
 
 // ── Activity helpers ──────────────────────────────────────────────────────────
 
+function flushPendingActivity(): void {
+  pendingActivityFlushTimer = null;
+  const activity = pendingActivityPayload;
+  pendingActivityPayload = null;
+  if (activity === null) return;
+
+  const activityJson = JSON.stringify(activity);
+  if (activityJson === lastSentActivityJson) return;
+
+  lastActivitySentAt = Date.now();
+  lastSentActivityJson = activityJson;
+  sendToHost({ type: 'SET_ACTIVITY', activity });
+}
+
 /**
  * Send Discord Rich Presence activity via the native host.
  * Pass siteId to enforce per-site enable/disable and pause state.
@@ -703,10 +725,58 @@ export function setActivity(activity: object, siteId?: string): void {
         firstButtonLabel: a.buttons?.[0]?.label,
       }
     : null;
+
+  // Dedup: skip if nothing has changed since the last send.
+  // If a flush is pending with a different payload and we just returned to the
+  // previously-sent state (A→B→A), cancel that flush — it would send stale data.
+  const activityJson = JSON.stringify(activity);
+  if (activityJson === lastSentActivityJson) {
+    if (pendingActivityFlushTimer !== null) {
+      clearTimeout(pendingActivityFlushTimer);
+      pendingActivityFlushTimer = null;
+      pendingActivityPayload = null;
+    }
+    return;
+  }
+
+  // Throttle: enforce DISCORD_MIN_INTERVAL_MS between Discord IPC calls.
+  // If a pending flush already exists, replace its payload with this newer one
+  // (the timer keeps running — it fires at the originally scheduled time).
+  const elapsed = Date.now() - lastActivitySentAt;
+  if (elapsed < DISCORD_MIN_INTERVAL_MS) {
+    pendingActivityPayload = activity;
+    if (pendingActivityFlushTimer === null) {
+      pendingActivityFlushTimer = setTimeout(
+        flushPendingActivity,
+        DISCORD_MIN_INTERVAL_MS - elapsed,
+      );
+    }
+    return;
+  }
+
+  // Enough time has passed — send immediately.
+  if (pendingActivityFlushTimer !== null) {
+    clearTimeout(pendingActivityFlushTimer);
+    pendingActivityFlushTimer = null;
+    pendingActivityPayload = null;
+  }
+  lastActivitySentAt = Date.now();
+  lastSentActivityJson = activityJson;
   sendToHost({ type: 'SET_ACTIVITY', activity });
 }
 
+function cancelPendingActivityFlush(): void {
+  if (pendingActivityFlushTimer !== null) {
+    clearTimeout(pendingActivityFlushTimer);
+    pendingActivityFlushTimer = null;
+  }
+  pendingActivityPayload = null;
+  lastSentActivityJson = null;
+  lastActivitySentAt = 0;
+}
+
 export function clearActivity(): void {
+  cancelPendingActivityFlush();
   presenceHolder = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
@@ -715,6 +785,7 @@ export function clearActivity(): void {
 // Release presence held by a specific source. No-op if another source holds it.
 function releasePresence(sourceId: string): void {
   if (presenceHolder !== sourceId) return;
+  cancelPendingActivityFlush();
   presenceHolder = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });

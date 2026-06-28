@@ -160,9 +160,17 @@ presence.on('UpdateData', () => {
 const signal = presence.freshSignal();
 const trigger = () => presence.triggerUpdate();
 
-// Re-evaluate immediately on play/pause — critical for lock handoff speed.
-document.addEventListener('play', trigger, { capture: true, signal });
+// pause must fire immediately — critical for lock-release speed.
+// play is delayed: mediaSession.metadata lags the play event at track
+// transitions, so firing immediately would send the previous song's info.
+// The footer-title MutationObserver below handles the actual metadata update.
 document.addEventListener('pause', trigger, { capture: true, signal });
+// scheduleTrigger cancels any pending timers from a previous play event so
+// rapid song skips don't leave overlapping callbacks with stale metadata.
+document.addEventListener('play', () => presence.scheduleTrigger(300), {
+  capture: true,
+  signal,
+});
 
 // Observe the footer track title for immediate track-change detection.
 presence.watchSelector('[data-test="footer-track-title"]', signal);

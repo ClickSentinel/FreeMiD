@@ -6,15 +6,15 @@ import { isUnsupportedPlatformUpdateError } from './helpers';
  * FreeMiD — Popup
  */
 
-const dot = document.getElementById('dot')!;
-const label = document.getElementById('status-label')!;
-const sub = document.getElementById('status-sub')!;
-const helpHost = document.getElementById('help-host')!;
-const helpDiscord = document.getElementById('help-discord')!;
+const dot = document.getElementById('dot') as HTMLElement;
+const label = document.getElementById('status-label') as HTMLElement;
+const sub = document.getElementById('status-sub') as HTMLElement;
+const helpHost = document.getElementById('help-host') as HTMLElement;
+const helpDiscord = document.getElementById('help-discord') as HTMLElement;
 const btnInstallHost = document.getElementById(
   'btn-install-host',
 ) as HTMLButtonElement | null;
-const pageInfo = document.getElementById('page-info')!;
+const pageInfo = document.getElementById('page-info') as HTMLElement;
 
 const activityPanel = document.getElementById(
   'activity-panel',
@@ -767,17 +767,16 @@ function render(status: Status | null): void {
       }
     }
 
-    const hasTimeline =
+    if (
       typeof act.startTimestamp === 'number' &&
       typeof act.endTimestamp === 'number' &&
-      act.endTimestamp > act.startTimestamp;
-
-    if (hasTimeline) {
+      act.endTimestamp > act.startTimestamp
+    ) {
       const key = `${act.startTimestamp}:${act.endTimestamp}`;
       if (timelineKey !== key) {
         timelineKey = key;
-        timelineStartSec = act.startTimestamp!;
-        timelineEndSec = act.endTimestamp!;
+        timelineStartSec = act.startTimestamp;
+        timelineEndSec = act.endTimestamp;
       }
       if (elapsedBar) elapsedBar.classList.remove('hidden');
       startTimelineTick();

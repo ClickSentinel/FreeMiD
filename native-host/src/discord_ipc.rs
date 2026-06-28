@@ -367,7 +367,17 @@ impl DiscordIpc {
     fn drain_ack(&mut self) {
         loop {
             match self.recv_frame() {
-                Ok((OPCODE_FRAME, _)) => break,
+                Ok((OPCODE_FRAME, ref resp)) => {
+                    if resp["evt"] == "ERROR" {
+                        let code = resp["data"]["code"].as_i64().unwrap_or(-1);
+                        let msg = resp["data"]["message"].as_str().unwrap_or("unknown");
+                        eprintln!(
+                            "[FreeMiD/discord] IPC error in ack (code {}): {}",
+                            code, msg
+                        );
+                    }
+                    break;
+                }
                 Ok((OPCODE_PING, payload)) => {
                     let _ = self.send_frame(OPCODE_PONG, &payload);
                 }
