@@ -187,9 +187,15 @@ fn refresh_subscription(
 
     on_update(track_from_session(&session));
 
-    let props_token = session.MediaPropertiesChanged(&make_session_handler::<MediaPropertiesChangedEventArgs>(on_update.clone()));
-    let playback_token = session.PlaybackInfoChanged(&make_session_handler::<PlaybackInfoChangedEventArgs>(on_update.clone()));
-    let timeline_token = session.TimelinePropertiesChanged(&make_session_handler::<TimelinePropertiesChangedEventArgs>(on_update.clone()));
+    let props_token = session.MediaPropertiesChanged(&make_session_handler::<
+        MediaPropertiesChangedEventArgs,
+    >(on_update.clone()));
+    let playback_token = session.PlaybackInfoChanged(&make_session_handler::<
+        PlaybackInfoChangedEventArgs,
+    >(on_update.clone()));
+    let timeline_token = session.TimelinePropertiesChanged(&make_session_handler::<
+        TimelinePropertiesChangedEventArgs,
+    >(on_update.clone()));
 
     match (props_token, playback_token, timeline_token) {
         (Ok(p), Ok(pl), Ok(t)) => {

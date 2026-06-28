@@ -677,10 +677,13 @@ fn spawn_cmd_apply_update(
         log_path,
     );
 
-    append_updater_log(&raw_log_path, &format!(
-        "spawn_cmd_apply_update: launching cmd fallback for staged={:?} target={:?}",
-        staged_path, target_path
-    ));
+    append_updater_log(
+        &raw_log_path,
+        &format!(
+            "spawn_cmd_apply_update: launching cmd fallback for staged={:?} target={:?}",
+            staged_path, target_path
+        ),
+    );
 
     let cmd_exe = system32_tool("cmd");
     let mut builder = std::process::Command::new(&cmd_exe);
