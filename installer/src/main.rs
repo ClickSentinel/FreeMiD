@@ -563,20 +563,22 @@ mod win {
     }
 
     fn build_urls(tag: &str) -> (String, String, String) {
-        let base = if tag == "latest" {
+        let dir = if tag == "latest" {
             format!(
-                "https://github.com/{}/releases/latest/download/{}",
-                GITHUB_REPO, ARTIFACT
+                "https://github.com/{}/releases/latest/download",
+                GITHUB_REPO
             )
         } else {
             format!(
-                "https://github.com/{}/releases/download/{}/{}",
-                GITHUB_REPO, tag, ARTIFACT
+                "https://github.com/{}/releases/download/{}",
+                GITHUB_REPO, tag
             )
         };
-        let checksums = base.replace(ARTIFACT, "checksums.sha256");
-        let apply = base.replace(ARTIFACT, APPLY_ARTIFACT);
-        (base, checksums, apply)
+        (
+            format!("{}/{}", dir, ARTIFACT),
+            format!("{}/checksums.sha256", dir),
+            format!("{}/{}", dir, APPLY_ARTIFACT),
+        )
     }
 
     // Mirror the native host's update caps so a compromised or misbehaving
