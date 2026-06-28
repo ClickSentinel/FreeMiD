@@ -6,7 +6,7 @@ mod windows_apply;
 #[cfg(windows)]
 use std::time::Duration;
 #[cfg(windows)]
-use windows_apply::{append_updater_log, validate_apply_paths};
+use windows_apply::{append_updater_log, updater_log_path, validate_apply_paths};
 
 #[cfg(windows)]
 fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> {
@@ -17,7 +17,8 @@ fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> 
 
     validate_apply_paths(&staged, &target)?;
 
-    append_updater_log(&format!(
+    let log = updater_log_path();
+    append_updater_log(&log, &format!(
         "freemid-apply: started staged={:?} target={:?}",
         staged, target
     ));
@@ -31,7 +32,7 @@ fn run_apply_update(staged_path: &str, target_path: &str) -> Result<(), String> 
         match std::fs::copy(&staged, &target) {
             Ok(_) => {
                 let _ = std::fs::remove_file(&staged);
-                append_updater_log("freemid-apply: copy succeeded and staged removed");
+                append_updater_log(&log, "freemid-apply: copy succeeded and staged removed");
                 return Ok(());
             }
             Err(e) => {
@@ -64,7 +65,7 @@ fn main() {
         }
 
         if let Err(e) = run_apply_update(&args[2], &args[3]) {
-            append_updater_log(&format!("freemid-apply: failed: {}", e));
+            append_updater_log(&updater_log_path(), &format!("freemid-apply: failed: {}", e));
             eprintln!("[FreeMiD Updater] {}", e);
             std::process::exit(1);
         }

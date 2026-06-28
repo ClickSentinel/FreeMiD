@@ -7,24 +7,20 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn updater_log_path() -> PathBuf {
-    let mut path = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let mut p = PathBuf::from(local_app_data);
-        p.push("FreeMiD");
-        let _ = std::fs::create_dir_all(&p);
-        p
+    let dir = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        PathBuf::from(local_app_data).join("FreeMiD")
     } else {
         PathBuf::from(".")
     };
-    path.push("updater.log");
-    path
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("updater.log")
 }
 
-pub(crate) fn append_updater_log(line: &str) {
-    let path = updater_log_path();
+pub(crate) fn append_updater_log(log_path: &Path, line: &str) {
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
+        .open(log_path)
     {
         let _ = writeln!(f, "{}", line);
     }
