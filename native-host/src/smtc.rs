@@ -137,6 +137,19 @@ fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Op
     })
 }
 
+fn make_session_handler(
+    f: Arc<OnUpdateFn>,
+) -> TypedEventHandler<GlobalSystemMediaTransportControlsSession, windows::core::IInspectable> {
+    TypedEventHandler::new(
+        move |sender: &Option<GlobalSystemMediaTransportControlsSession>, _| {
+            if let Some(s) = sender {
+                f(track_from_session(s));
+            }
+            Ok(())
+        },
+    )
+}
+
 /// (Re)subscribe to the current Tidal SMTC session, or unsubscribe if Tidal
 /// is no longer running. Pushes the current state immediately via `on_update`.
 fn refresh_subscription(
@@ -157,35 +170,9 @@ fn refresh_subscription(
 
     on_update(track_from_session(&session));
 
-    let props_token = session.MediaPropertiesChanged(&TypedEventHandler::new({
-        let f = on_update.clone();
-        move |sender: &Option<GlobalSystemMediaTransportControlsSession>, _| {
-            if let Some(s) = sender {
-                f(track_from_session(s));
-            }
-            Ok(())
-        }
-    }));
-
-    let playback_token = session.PlaybackInfoChanged(&TypedEventHandler::new({
-        let f = on_update.clone();
-        move |sender: &Option<GlobalSystemMediaTransportControlsSession>, _| {
-            if let Some(s) = sender {
-                f(track_from_session(s));
-            }
-            Ok(())
-        }
-    }));
-
-    let timeline_token = session.TimelinePropertiesChanged(&TypedEventHandler::new({
-        let f = on_update.clone();
-        move |sender: &Option<GlobalSystemMediaTransportControlsSession>, _| {
-            if let Some(s) = sender {
-                f(track_from_session(s));
-            }
-            Ok(())
-        }
-    }));
+    let props_token = session.MediaPropertiesChanged(&make_session_handler(on_update.clone()));
+    let playback_token = session.PlaybackInfoChanged(&make_session_handler(on_update.clone()));
+    let timeline_token = session.TimelinePropertiesChanged(&make_session_handler(on_update.clone()));
 
     match (props_token, playback_token, timeline_token) {
         (Ok(p), Ok(pl), Ok(t)) => {
