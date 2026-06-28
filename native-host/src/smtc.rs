@@ -196,7 +196,19 @@ fn refresh_subscription(
                 timeline_token: t,
             });
         }
-        _ => {
+        // On partial failure, explicitly revoke any handlers that did register.
+        // EventRegistrationToken does not revoke on drop, so leaking a token
+        // would leave an orphaned handler that fires on every subsequent event.
+        (p, pl, t) => {
+            if let Ok(tok) = p {
+                let _ = session.RemoveMediaPropertiesChanged(tok);
+            }
+            if let Ok(tok) = pl {
+                let _ = session.RemovePlaybackInfoChanged(tok);
+            }
+            if let Ok(tok) = t {
+                let _ = session.RemoveTimelinePropertiesChanged(tok);
+            }
             eprintln!("[FreeMiD/smtc] failed to subscribe to session events");
         }
     }

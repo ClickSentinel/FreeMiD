@@ -70,12 +70,13 @@ describe('YouTube Music activity', () => {
     setMediaSession();
   });
 
-  it('clears activity when no title can be resolved', async () => {
+  it('clears presence data (not the interval) when no title can be resolved', async () => {
     await loadModule();
 
     capturedUpdateHandler?.();
 
-    expect(presenceInstance.clearActivity).toHaveBeenCalledOnce();
+    expect(presenceInstance.clearPresenceData).toHaveBeenCalledOnce();
+    expect(presenceInstance.clearActivity).not.toHaveBeenCalled();
     expect(presenceInstance.setActivity).not.toHaveBeenCalled();
   });
 

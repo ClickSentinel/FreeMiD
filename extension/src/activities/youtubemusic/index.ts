@@ -128,7 +128,9 @@ presence.on('UpdateData', () => {
   }
 
   if (!title) {
-    presence.clearActivity();
+    // clearPresenceData (not clearActivity) keeps the interval and event
+    // listeners active so presence can recover when a title appears.
+    presence.clearPresenceData();
     return;
   }
 

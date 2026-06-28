@@ -837,10 +837,13 @@ chrome.runtime.onMessage.addListener(
         [STORAGE_KEYS.enabledSites]: enabledSites,
       });
       if (!enabled) {
+        // Only clear when the disabled site actually holds the lock.
+        // Clearing unconditionally when a tab is merely injected would evict
+        // presence owned by a different site that currently holds the lock.
         const holdsLock =
           presenceHolder === siteId ||
           (siteId === 'tidal' && presenceHolder === 'tidal-desktop');
-        if (holdsLock || [...activeActivityTabs.values()].includes(siteId)) {
+        if (holdsLock) {
           clearActivity();
         }
       }
