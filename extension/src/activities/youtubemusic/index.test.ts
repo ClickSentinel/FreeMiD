@@ -6,6 +6,7 @@ type PresenceInstance = {
   clearActivity: ReturnType<typeof vi.fn>;
   clearPresenceData: ReturnType<typeof vi.fn>;
   triggerUpdate: ReturnType<typeof vi.fn>;
+  scheduleTrigger: ReturnType<typeof vi.fn>;
   freshSignal: ReturnType<typeof vi.fn>;
   watchSelector: ReturnType<typeof vi.fn>;
 };
@@ -27,6 +28,7 @@ vi.mock('../../presence/Presence', () => {
     clearActivity = vi.fn();
     clearPresenceData = vi.fn();
     triggerUpdate = vi.fn();
+    scheduleTrigger = vi.fn();
     freshSignal = vi.fn(() => new AbortController().signal);
     watchSelector = vi.fn();
   }

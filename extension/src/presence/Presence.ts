@@ -49,6 +49,7 @@ export class Presence {
   private readonly updateIntervalMs: number;
   private intervalId?: ReturnType<typeof setInterval>;
   private scheduledCallback: (() => void) | undefined;
+  private pendingTriggerTimers: ReturnType<typeof setTimeout>[] = [];
 
   constructor({ clientId, updateInterval = 10 }: PresenceConfig) {
     this.clientId = clientId;
@@ -160,12 +161,28 @@ export class Presence {
   }
 
   /**
+   * Schedule triggerUpdate() calls after each of the given delays (ms),
+   * cancelling any previously scheduled calls first. Use this on `play` events
+   * instead of raw setTimeout so that rapid song skips don't leave overlapping
+   * timer chains that fire with stale or inconsistent DOM state.
+   */
+  scheduleTrigger(...delays: number[]): void {
+    for (const t of this.pendingTriggerTimers) clearTimeout(t);
+    this.pendingTriggerTimers = delays.map((d) =>
+      setTimeout(() => this.triggerUpdate(), d),
+    );
+  }
+
+  /**
    * Abort any AbortController stored from a previous injection of this
    * activity script, then return a fresh AbortSignal for the current one.
    * Activity scripts pass this signal to addEventListener and MutationObserver
    * cleanup handlers so they are removed automatically on re-injection.
    */
   freshSignal(): AbortSignal {
+    for (const t of this.pendingTriggerTimers) clearTimeout(t);
+    this.pendingTriggerTimers = [];
+
     const KEY = '__freemid_events_abort';
     const prev = (globalThis as Record<string, unknown>)[KEY] as
       | AbortController

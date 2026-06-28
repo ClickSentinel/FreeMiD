@@ -244,7 +244,9 @@ const trigger = () => presence.triggerUpdate();
 // URL has changed — safe to read immediately.
 document.addEventListener('pause', trigger, { capture: true, signal });
 document.addEventListener('loadedmetadata', trigger, { capture: true, signal });
-document.addEventListener('play', () => setTimeout(trigger, 300), {
+// scheduleTrigger cancels any pending timers from a previous play event so
+// rapid video switches don't leave overlapping callbacks with stale metadata.
+document.addEventListener('play', () => presence.scheduleTrigger(300), {
   capture: true,
   signal,
 });

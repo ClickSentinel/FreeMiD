@@ -165,7 +165,9 @@ const trigger = () => presence.triggerUpdate();
 // transitions, so firing immediately would send the previous song's info.
 // The footer-title MutationObserver below handles the actual metadata update.
 document.addEventListener('pause', trigger, { capture: true, signal });
-document.addEventListener('play', () => setTimeout(trigger, 300), {
+// scheduleTrigger cancels any pending timers from a previous play event so
+// rapid song skips don't leave overlapping callbacks with stale metadata.
+document.addEventListener('play', () => presence.scheduleTrigger(300), {
   capture: true,
   signal,
 });

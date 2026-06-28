@@ -232,16 +232,14 @@ const signal = presence.freshSignal();
 const trigger = () => presence.triggerUpdate();
 
 // pause must fire immediately — critical for lock-release speed.
-// play fires twice on track transitions: 300 ms catches the new song
-// title/artist once mediaSession.metadata has settled; 1000 ms catches
-// the player-bar time-info (current / duration) which lags further behind.
+// play schedules two triggers: 300 ms for mediaSession.metadata to settle
+// (song title / artist), 1000 ms for the player-bar time-info (duration).
+// scheduleTrigger cancels any pending timers from a previous play event so
+// rapid song skips never result in overlapping / interleaved callbacks.
 document.addEventListener('pause', trigger, { capture: true, signal });
 document.addEventListener(
   'play',
-  () => {
-    setTimeout(trigger, 300);
-    setTimeout(trigger, 1000);
-  },
+  () => presence.scheduleTrigger(300, 1000),
   { capture: true, signal },
 );
 

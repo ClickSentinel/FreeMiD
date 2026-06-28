@@ -124,6 +124,94 @@ describe('Presence', () => {
   });
 });
 
+describe('Presence.scheduleTrigger', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete (globalThis as Record<string, unknown>).chrome;
+    delete (globalThis as Record<string, unknown>).__freemid_presence_interval;
+    delete (globalThis as Record<string, unknown>).__freemid_events_abort;
+  });
+
+  it('fires triggerUpdate after the given delay', () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    mockChrome(sendMessage);
+
+    const presence = new Presence({ clientId: 'test', updateInterval: 60 });
+    const callback = vi.fn();
+    presence.on('UpdateData', callback);
+    callback.mockClear();
+
+    presence.scheduleTrigger(200);
+    expect(callback).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(200);
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires once per delay when called with multiple delays', () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    mockChrome(sendMessage);
+
+    const presence = new Presence({ clientId: 'test', updateInterval: 60 });
+    const callback = vi.fn();
+    presence.on('UpdateData', callback);
+    callback.mockClear();
+
+    presence.scheduleTrigger(300, 1000);
+    vi.advanceTimersByTime(300);
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(700);
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels pending timers when called again before they fire', () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    mockChrome(sendMessage);
+
+    const presence = new Presence({ clientId: 'test', updateInterval: 60 });
+    const callback = vi.fn();
+    presence.on('UpdateData', callback);
+    callback.mockClear();
+
+    // First play event — timers at 300 ms and 1000 ms
+    presence.scheduleTrigger(300, 1000);
+
+    // Second play event at 100 ms — should cancel the first pair
+    vi.advanceTimersByTime(100);
+    presence.scheduleTrigger(300, 1000);
+
+    // Advance to 400 ms (100 + 300): only the second 300 ms timer fires
+    vi.advanceTimersByTime(300);
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    // Advance to 1100 ms (100 + 1000): only the second 1000 ms timer fires
+    vi.advanceTimersByTime(700);
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
+  it('freshSignal cancels any pending scheduleTrigger timers', () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    mockChrome(sendMessage);
+
+    const presence = new Presence({ clientId: 'test', updateInterval: 60 });
+    const callback = vi.fn();
+    presence.on('UpdateData', callback);
+    callback.mockClear();
+
+    presence.scheduleTrigger(300);
+    // Re-injection: freshSignal should cancel the pending timer
+    presence.freshSignal();
+
+    vi.advanceTimersByTime(500);
+    expect(callback).not.toHaveBeenCalled();
+  });
+});
+
 describe('Presence.freshSignal', () => {
   afterEach(() => {
     delete (globalThis as Record<string, unknown>).__freemid_events_abort;
