@@ -661,7 +661,8 @@ fn spawn_cmd_apply_update(
 ) -> Result<(), UpdateError> {
     let staged = escape_cmd_set_value(staged_path);
     let target = escape_cmd_set_value(target_path);
-    let log_path = escape_cmd_set_value(&updater_log_path());
+    let raw_log_path = updater_log_path();
+    let log_path = escape_cmd_set_value(&raw_log_path);
 
     // `ping -n 2` rather than `timeout`: the host's stdin is the Chrome
     // native-messaging pipe, which cmd inherits, and `timeout` aborts
@@ -676,7 +677,7 @@ fn spawn_cmd_apply_update(
         log_path,
     );
 
-    append_updater_log(&format!(
+    append_updater_log(&raw_log_path, &format!(
         "spawn_cmd_apply_update: launching cmd fallback for staged={:?} target={:?}",
         staged_path, target_path
     ));

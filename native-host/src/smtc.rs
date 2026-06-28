@@ -5,7 +5,8 @@ use std::time::Duration;
 use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
-    GlobalSystemMediaTransportControlsSessionPlaybackStatus,
+    GlobalSystemMediaTransportControlsSessionPlaybackStatus, MediaPropertiesChangedEventArgs,
+    PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs,
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
@@ -153,9 +154,9 @@ fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Op
     })
 }
 
-fn make_session_handler(
+fn make_session_handler<TArgs: windows::core::RuntimeType + 'static>(
     f: Arc<OnUpdateFn>,
-) -> TypedEventHandler<GlobalSystemMediaTransportControlsSession, windows::core::IInspectable> {
+) -> TypedEventHandler<GlobalSystemMediaTransportControlsSession, TArgs> {
     TypedEventHandler::new(
         move |sender: &Option<GlobalSystemMediaTransportControlsSession>, _| {
             if let Some(s) = sender {
@@ -186,10 +187,9 @@ fn refresh_subscription(
 
     on_update(track_from_session(&session));
 
-    let props_token = session.MediaPropertiesChanged(&make_session_handler(on_update.clone()));
-    let playback_token = session.PlaybackInfoChanged(&make_session_handler(on_update.clone()));
-    let timeline_token =
-        session.TimelinePropertiesChanged(&make_session_handler(on_update.clone()));
+    let props_token = session.MediaPropertiesChanged(&make_session_handler::<MediaPropertiesChangedEventArgs>(on_update.clone()));
+    let playback_token = session.PlaybackInfoChanged(&make_session_handler::<PlaybackInfoChangedEventArgs>(on_update.clone()));
+    let timeline_token = session.TimelinePropertiesChanged(&make_session_handler::<TimelinePropertiesChangedEventArgs>(on_update.clone()));
 
     match (props_token, playback_token, timeline_token) {
         (Ok(p), Ok(pl), Ok(t)) => {
