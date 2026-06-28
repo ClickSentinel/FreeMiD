@@ -52,45 +52,34 @@ pub struct UpdateSourceOverrides {
 /// Typed error for the update flow.
 ///
 /// Each variant maps to a distinct failure category so callers can distinguish
-/// a network failure from a checksum mismatch. `Display` preserves the original
-/// human-readable messages that the extension shows in the popup.
-#[derive(Debug)]
+/// a network failure from a checksum mismatch.
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum UpdateError {
     /// Self-update is not available on this platform.
+    #[error("{0}")]
     UnsupportedPlatform(String),
     /// An update source URL failed validation.
+    #[error("{0}")]
     InvalidSource(String),
     /// A network request failed or the response body could not be read.
+    #[error("{0}")]
     Network(String),
     /// A downloaded response body exceeded the configured size limit.
+    #[error("{0}")]
     ResponseTooLarge(String),
     /// A response body could not be parsed (JSON, UTF-8, or semver).
+    #[error("{0}")]
     Parse(String),
     /// The artifact name was not found in the checksums file.
+    #[error("{0}")]
     ChecksumNotFound(String),
     /// The downloaded binary's SHA-256 hash did not match the expected value.
+    #[error("{0}")]
     ChecksumMismatch(String),
     /// Failed to write, rename, or spawn the applied binary on disk.
+    #[error("{0}")]
     Apply(String),
 }
-
-impl std::fmt::Display for UpdateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let msg = match self {
-            Self::UnsupportedPlatform(s)
-            | Self::InvalidSource(s)
-            | Self::Network(s)
-            | Self::ResponseTooLarge(s)
-            | Self::Parse(s)
-            | Self::ChecksumNotFound(s)
-            | Self::ChecksumMismatch(s)
-            | Self::Apply(s) => s,
-        };
-        f.write_str(msg)
-    }
-}
-
-impl std::error::Error for UpdateError {}
 
 /// Platform-specific artifact filename, or `None` if self-update is unsupported.
 fn artifact_name() -> Option<&'static str> {
