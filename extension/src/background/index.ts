@@ -930,7 +930,10 @@ chrome.runtime.onMessage.addListener(
         const album = largeText !== title ? largeText : undefined;
 
         if (artist && title) {
-          const artKey = `${artist}|${title}`;
+          // Include album in the key so a bad album name (playlist name) on
+          // the first tick doesn't permanently poison the cache for the same
+          // track once the correct album name arrives via mediaSession.
+          const artKey = `${artist}|${title}|${album ?? ''}`;
           if (desktopArtCache.has(artKey)) {
             const cachedUrl = desktopArtCache.get(artKey);
             if (cachedUrl && assets) assets.large_image = cachedUrl;

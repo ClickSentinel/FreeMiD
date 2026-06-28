@@ -77,6 +77,13 @@ presence.on('UpdateData', () => {
   const collection = text(
     '[data-test="footer-player"] a[href*="/playlist/"], [data-test="footer-player"] a[href*="/album/"]',
   );
+  // Prefer the album from the Media Session API — it reflects the actual
+  // album regardless of playlist context. The DOM link picks up playlist
+  // names when playing from a queue, which breaks the MusicBrainz lookup.
+  const albumName =
+    navigator.mediaSession?.metadata?.album ||
+    text('[data-test="footer-player"] a[href*="/album/"]') ||
+    undefined;
 
   if (!title) {
     presence.clearPresenceData();
@@ -146,7 +153,7 @@ presence.on('UpdateData', () => {
     startTimestamp: timestamps?.start,
     endTimestamp: timestamps?.end,
     largeImageKey: artUrl,
-    largeImageText: collection || title,
+    largeImageText: albumName || collection || title,
     largeImageUrl: trackUrl,
     smallImageKey: PRESENCE_ASSET_KEYS.tidalLogo,
     smallImageText: 'TIDAL',
