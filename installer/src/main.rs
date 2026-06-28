@@ -26,8 +26,18 @@ mod win {
     use std::process::Command;
     use std::sync::OnceLock;
 
-    use native_windows_gui as nwg;
     use sha2::{Digest, Sha256};
+
+    fn message_box(title: &str, text: &str, is_error: bool) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            MessageBoxW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
+        };
+        let title_w: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        let text_w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let flags = MB_OK | if is_error { MB_ICONERROR } else { MB_ICONINFORMATION };
+        // SAFETY: title_w and text_w are valid null-terminated UTF-16 strings; 0 is a valid null HWND.
+        unsafe { MessageBoxW(0, text_w.as_ptr(), title_w.as_ptr(), flags) };
+    }
 
     fn http_agent() -> &'static ureq::Agent {
         static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
@@ -171,20 +181,18 @@ mod win {
             return;
         }
 
-        let _ = nwg::init();
-        let _ = nwg::Font::set_global_family("Segoe UI");
-
         match result {
             Ok(()) => {
-                nwg::simple_message("FreeMiD Setup", "FreeMiD native host uninstalled.");
+                message_box("FreeMiD Setup", "FreeMiD native host uninstalled.", false);
             }
             Err(e) => {
-                nwg::simple_message(
+                message_box(
                     "FreeMiD Setup - Error",
                     &format!(
                         "Uninstall failed. Close any running FreeMiD process and try again.\n\nDetails:\n{}",
                         e
                     ),
+                    true,
                 );
                 std::process::exit(1);
             }
@@ -221,28 +229,27 @@ mod win {
     }
 
     fn run_gui(extension_id: String) -> Result<(), String> {
-        nwg::init().map_err(|e| format!("Failed to initialize GUI: {}", e))?;
-        nwg::Font::set_global_family("Segoe UI")
-            .map_err(|e| format!("Failed to set UI font: {}", e))?;
         append_setup_log(&format!("FreeMiD Setup v{} starting", VERSION));
         let result = run_install(&extension_id, |_| {});
         match result {
             Ok(()) => {
                 append_setup_log("Installation complete.");
-                nwg::simple_message(
+                message_box(
                     "FreeMiD Setup",
                     "Installation complete. Check the FreeMiD browser extension and reload it if needed.",
+                    false,
                 );
                 Ok(())
             }
             Err(e) => {
                 append_setup_log(&format!("Installation failed: {}", e));
-                nwg::simple_message(
+                message_box(
                     "FreeMiD Setup - Error",
                     &format!(
                         "Install failed. Check your internet connection and verify you can access GitHub Releases.\n\nDetails:\n{}",
                         e
                     ),
+                    true,
                 );
                 Err(e)
             }
