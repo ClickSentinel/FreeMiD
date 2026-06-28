@@ -64,7 +64,7 @@ fn find_tidal_session(
     })
 }
 
-fn ticks_to_secs(ticks: i64) -> f64 {
+fn ticks_to_secs(ticks: u64) -> f64 {
     ticks as f64 / 10_000_000.0
 }
 
@@ -108,16 +108,16 @@ fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Op
             let ft = unsafe { GetSystemTimeAsFileTime() };
             let now_ticks = ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64;
             let elapsed_ticks = now_ticks.saturating_sub(updated.UniversalTime as u64);
-            let secs = ticks_to_secs(pos.Duration) + ticks_to_secs(elapsed_ticks as i64);
+            let secs = ticks_to_secs(pos.Duration.max(0) as u64) + ticks_to_secs(elapsed_ticks);
             Some(secs.max(0.0))
         }
-        (Some(pos), _) => Some(ticks_to_secs(pos.Duration).max(0.0)),
+        (Some(pos), _) => Some(ticks_to_secs(pos.Duration.max(0) as u64).max(0.0)),
         _ => None,
     };
 
     let duration_secs = match (timeline.EndTime().ok(), timeline.StartTime().ok()) {
         (Some(end), Some(start)) => {
-            let dur = ticks_to_secs(end.Duration - start.Duration);
+            let dur = ticks_to_secs(end.Duration.saturating_sub(start.Duration).max(0) as u64);
             if dur > 0.0 {
                 Some(dur)
             } else {

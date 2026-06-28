@@ -427,6 +427,8 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
             }));
             Ok(())
         }
+        #[cfg(not(windows))]
+        "GET_DESKTOP_MEDIA" => Err("GET_DESKTOP_MEDIA is not supported on this platform".to_string()),
         other => Err(format!("unknown message type: {}", other)),
     }
 }
