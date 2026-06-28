@@ -114,11 +114,18 @@ export async function lookupArtworkUrl(
 ): Promise<string | null> {
   try {
     const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    // When the album name is known, include it as a release filter so MB
+    // returns the recording on that specific release rather than the
+    // compilation recordings that otherwise dominate the ranking.
     // -video:true excludes music videos, which score equally high as audio
     // recordings but have wrong or no art in the Cover Art Archive.
-    const query = encodeURIComponent(
-      `artist:"${esc(artist)}" AND recording:"${esc(title)}" AND -video:true`,
-    );
+    const queryParts = [
+      `artist:"${esc(artist)}"`,
+      `recording:"${esc(title)}"`,
+      `-video:true`,
+    ];
+    if (album) queryParts.push(`release:"${esc(album)}"`);
+    const query = encodeURIComponent(queryParts.join(' AND '));
     const mbResp = await fetch(
       `https://musicbrainz.org/ws/2/recording/?query=${query}&fmt=json&limit=10`,
       {
