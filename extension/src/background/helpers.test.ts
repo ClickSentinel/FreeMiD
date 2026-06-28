@@ -332,7 +332,10 @@ describe('lookupArtworkUrl', () => {
       url.hostname === 'musicbrainz.org' ? mbOk([]) : caFail(),
     );
     await lookupArtworkUrl('Artist', 'Title');
-    const mbUrl: string = (fetchFn.mock.calls as [string][])[0]![0];
+    const mbUrl =
+      (fetchFn.mock.calls as [string][]).find(
+        ([u]) => hostnameOf(u) === 'musicbrainz.org',
+      )?.[0] ?? '';
     expect(decodeURIComponent(mbUrl)).toContain('-video:true');
   });
 
@@ -342,7 +345,10 @@ describe('lookupArtworkUrl', () => {
       url.hostname === 'musicbrainz.org' ? mbOk([]) : caFail(),
     );
     await lookupArtworkUrl('AC\\DC', 'Back in Black');
-    const mbUrl: string = (fetchFn.mock.calls as [string][])[0]![0];
+    const mbUrl =
+      (fetchFn.mock.calls as [string][]).find(
+        ([u]) => hostnameOf(u) === 'musicbrainz.org',
+      )?.[0] ?? '';
     const decoded = decodeURIComponent(mbUrl);
     // Backslash must be doubled so the Lucene parser sees a literal backslash.
     expect(decoded).toContain('artist:"AC\\\\DC"');
