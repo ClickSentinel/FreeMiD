@@ -197,6 +197,18 @@ jobs:
             }
           done
 
+      - name: Sign artifacts
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -q minisign
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/freemid.sec
+          for f in freemid-linux-x86_64 freemid-macos-arm64 freemid-macos-x86_64 freemid-windows-x86_64.exe; do
+            printf '\n' | minisign -S -s /tmp/freemid.sec -m "$f" -x "$f.minisig"
+          done
+          rm -f /tmp/freemid.sec
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -206,9 +218,13 @@ jobs:
           files=(
             freemid-extension.zip
             freemid-linux-x86_64
+            freemid-linux-x86_64.minisig
             freemid-macos-arm64
+            freemid-macos-arm64.minisig
             freemid-macos-x86_64
+            freemid-macos-x86_64.minisig
             freemid-windows-x86_64.exe
+            freemid-windows-x86_64.exe.minisig
             freemid-setup.exe
             freemid-apply-windows-x86_64.exe
             checksums.sha256
