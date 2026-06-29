@@ -88,9 +88,7 @@ pub(crate) enum UpdateError {
 ///
 /// Verification succeeds if the signature was produced by any key in this list.
 /// Add the new key here before retiring the old one when rotating.
-const TRUSTED_KEYS: &[&str] = &[
-    "RWRFjV2Q5UtunU61kMdRS0ViRXVmpxdOjI5zjTUbiJ/oS8OG+jCFb8De",
-];
+const TRUSTED_KEYS: &[&str] = &["RWRFjV2Q5UtunU61kMdRS0ViRXVmpxdOjI5zjTUbiJ/oS8OG+jCFb8De"];
 
 /// Platform-specific artifact filename, or `None` if self-update is unsupported.
 fn artifact_name() -> Option<&'static str> {
@@ -221,10 +219,7 @@ fn do_update(overrides: &UpdateSourceOverrides, send: &impl Fn(Value)) -> Result
     let hex = download_to_staged(&format!("{}/{}", base_url, artifact), &staged, &user_agent)?;
 
     let checksums = download_string(&format!("{}/checksums.sha256", base_url), &user_agent)?;
-    let sig_text = download_string(
-        &format!("{}/{}.minisig", base_url, artifact),
-        &user_agent,
-    )?;
+    let sig_text = download_string(&format!("{}/{}.minisig", base_url, artifact), &user_agent)?;
 
     if let Err(e) = verify_minisig(&staged, &sig_text) {
         let _ = std::fs::remove_file(&staged);
@@ -510,9 +505,8 @@ fn verify_minisig(staged: &Path, sig_text: &str) -> Result<(), UpdateError> {
         UpdateError::SignatureInvalid(format!("Cannot read staged file for verification: {e}"))
     })?;
 
-    let sig = Signature::decode(sig_text).map_err(|e| {
-        UpdateError::SignatureInvalid(format!("Cannot parse minisig: {e}"))
-    })?;
+    let sig = Signature::decode(sig_text)
+        .map_err(|e| UpdateError::SignatureInvalid(format!("Cannot parse minisig: {e}")))?;
 
     for &key_b64 in TRUSTED_KEYS {
         let pk = PublicKey::from_base64(key_b64).map_err(|e| {
