@@ -499,6 +499,14 @@ fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), Upd
 /// rotation, add the new key to `TRUSTED_KEYS` before retiring the old one so
 /// binaries from both key generations can verify the transition release.
 fn verify_minisig(staged: &Path, sig_text: &str) -> Result<(), UpdateError> {
+    verify_minisig_with_keys(staged, sig_text, TRUSTED_KEYS)
+}
+
+fn verify_minisig_with_keys(
+    staged: &Path,
+    sig_text: &str,
+    keys: &[&str],
+) -> Result<(), UpdateError> {
     use minisign_verify::{PublicKey, Signature};
 
     let data = std::fs::read(staged).map_err(|e| {
@@ -508,7 +516,7 @@ fn verify_minisig(staged: &Path, sig_text: &str) -> Result<(), UpdateError> {
     let sig = Signature::decode(sig_text)
         .map_err(|e| UpdateError::SignatureInvalid(format!("Cannot parse minisig: {e}")))?;
 
-    for &key_b64 in TRUSTED_KEYS {
+    for &key_b64 in keys {
         let pk = PublicKey::from_base64(key_b64).map_err(|e| {
             UpdateError::SignatureInvalid(format!("Invalid trusted public key: {e}"))
         })?;
@@ -1062,5 +1070,46 @@ mod tests {
             validate_update_source_url("not-a-url", "test"),
             Err(UpdateError::InvalidSource(_))
         ));
+    }
+
+    // Test vectors: test keypair generated with rsign2, payload is a fixed byte string.
+    // These are NOT the production keys — only used to exercise verify_minisig_with_keys.
+    const TEST_KEY: &str = "RWTly3sJNp1Mq0ClQYEKXKYPCL2xEMn9a5tr5uivNXdHacrK3GQEALai";
+    const TEST_SIG: &str = "untrusted comment: signature from rsign secret key\n\
+        RUTly3sJNp1Mq4/7Pvop4vhOzxc7XhSfSkfHAlNkuMSOrd6Cbhm2+h4L/p4yrZXGh6qGsUdc6/UUvccydXtI2D5XdN8hmvnRyAI=\n\
+        trusted comment: timestamp:1782730616\tfile:test-payload.bin\tprehashed\n\
+        jaFNYod7cXQmDdkFEEKAlKM4NSdnRKObBpBFlyWVbPF4QUp7mBHjStp8LE9QU5rP5GNV+vFIOlf3frzuSN9vAQ==\n";
+    const TEST_PAYLOAD: &[u8] = b"freemid test payload";
+
+    #[test]
+    fn minisig_accepts_valid_signature() {
+        let path = std::env::temp_dir().join("freemid-minisig-test-valid");
+        std::fs::write(&path, TEST_PAYLOAD).unwrap();
+        verify_minisig_with_keys(&path, TEST_SIG, &[TEST_KEY]).unwrap();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn minisig_rejects_wrong_key() {
+        // Production key — valid format but did not sign this payload.
+        const WRONG_KEY: &str = "RWRFjV2Q5UtunU61kMdRS0ViRXVmpxdOjI5zjTUbiJ/oS8OG+jCFb8De";
+        let path = std::env::temp_dir().join("freemid-minisig-test-wrongkey");
+        std::fs::write(&path, TEST_PAYLOAD).unwrap();
+        assert!(matches!(
+            verify_minisig_with_keys(&path, TEST_SIG, &[WRONG_KEY]),
+            Err(UpdateError::SignatureInvalid(_))
+        ));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn minisig_rejects_tampered_payload() {
+        let path = std::env::temp_dir().join("freemid-minisig-test-tampered");
+        std::fs::write(&path, b"tampered payload").unwrap();
+        assert!(matches!(
+            verify_minisig_with_keys(&path, TEST_SIG, &[TEST_KEY]),
+            Err(UpdateError::SignatureInvalid(_))
+        ));
+        let _ = std::fs::remove_file(&path);
     }
 }
