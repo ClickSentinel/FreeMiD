@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::Duration;
+use windows::core::EventRegistrationToken;
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
@@ -86,18 +87,7 @@ fn ticks_to_secs(ticks: u64) -> f64 {
 }
 
 fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Option<DesktopTrack> {
-    let props = {
-        use windows_future::AsyncStatus;
-        let op = session.TryGetMediaPropertiesAsync().ok()?;
-        loop {
-            let status = op.Status().ok()?;
-            if status == AsyncStatus::Started {
-                std::thread::yield_now();
-            } else {
-                break op.GetResults().ok()?;
-            }
-        }
-    };
+    let props = session.TryGetMediaPropertiesAsync().ok()?.wait().ok()?;
 
     let title = props.Title().ok()?.to_string();
     if title.is_empty() {
@@ -271,16 +261,8 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
 
         let manager = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-            .and_then(|op| {
-                use windows_future::AsyncStatus;
-                loop {
-                    match op.Status() {
-                        Ok(s) if s == AsyncStatus::Started => std::thread::yield_now(),
-                        Ok(_) => return op.GetResults(),
-                        Err(e) => return Err(e),
-                    }
-                }
-            }) {
+            .and_then(|op| op.wait())
+        {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("[FreeMiD/smtc] watcher: manager init failed: {e}");
