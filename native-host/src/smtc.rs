@@ -2,7 +2,6 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::Duration;
-use windows_core::EventRegistrationToken;
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
@@ -11,6 +10,7 @@ use windows::Media::Control::{
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
+use windows_core::EventRegistrationToken;
 
 static COM_INIT: Once = Once::new();
 static WATCHER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -277,8 +277,7 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
                         Err(e) => return Err(e),
                     }
                 }
-            })
-        {
+            }) {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("[FreeMiD/smtc] watcher: manager init failed: {e}");
