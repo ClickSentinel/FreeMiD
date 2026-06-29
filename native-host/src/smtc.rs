@@ -2,7 +2,8 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::Duration;
-use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
+use windows::core::EventRegistrationToken;
+use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus, MediaPropertiesChangedEventArgs,
@@ -86,7 +87,7 @@ fn ticks_to_secs(ticks: u64) -> f64 {
 }
 
 fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Option<DesktopTrack> {
-    let props = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
+    let props = session.TryGetMediaPropertiesAsync().ok()?.wait().ok()?;
 
     let title = props.Title().ok()?.to_string();
     if title.is_empty() {
@@ -158,8 +159,8 @@ fn make_session_handler<TArgs: windows::core::RuntimeType + 'static>(
     f: Arc<OnUpdateFn>,
 ) -> TypedEventHandler<GlobalSystemMediaTransportControlsSession, TArgs> {
     TypedEventHandler::new(
-        move |sender: &Option<GlobalSystemMediaTransportControlsSession>, _| {
-            if let Some(s) = sender {
+        move |sender: windows::core::Ref<GlobalSystemMediaTransportControlsSession>, _| {
+            if let Some(s) = sender.as_ref() {
                 f(track_from_session(s));
             }
             Ok(())
@@ -252,7 +253,7 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
 
         let manager = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-            .and_then(|op| op.get())
+            .and_then(|op| op.wait())
         {
             Ok(m) => m,
             Err(e) => {
@@ -266,8 +267,8 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
         let active2 = active.clone();
         let on_update2 = on_update.clone();
         if let Err(e) = manager.SessionsChanged(&TypedEventHandler::new(
-            move |mgr: &Option<GlobalSystemMediaTransportControlsSessionManager>, _| {
-                if let Some(m) = mgr {
+            move |mgr: windows::core::Ref<GlobalSystemMediaTransportControlsSessionManager>, _| {
+                if let Some(m) = mgr.as_ref() {
                     refresh_subscription(m, &active2, &on_update2);
                 }
                 Ok(())
