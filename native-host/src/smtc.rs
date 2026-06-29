@@ -10,7 +10,6 @@ use windows::Media::Control::{
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
-use windows_core::EventRegistrationToken;
 
 static COM_INIT: Once = Once::new();
 static WATCHER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -55,9 +54,9 @@ type OnUpdateFn = dyn Fn(Option<DesktopTrack>) + Send + Sync + 'static;
 
 struct ActiveSession {
     session: GlobalSystemMediaTransportControlsSession,
-    props_token: EventRegistrationToken,
-    playback_token: EventRegistrationToken,
-    timeline_token: EventRegistrationToken,
+    props_token: i64,
+    playback_token: i64,
+    timeline_token: i64,
 }
 
 impl Drop for ActiveSession {
@@ -88,12 +87,14 @@ fn ticks_to_secs(ticks: u64) -> f64 {
 
 fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Option<DesktopTrack> {
     let props = {
-        use windows::Foundation::AsyncStatus;
+        use windows_future::AsyncStatus;
         let op = session.TryGetMediaPropertiesAsync().ok()?;
         loop {
-            match op.Status().ok()? {
-                AsyncStatus::Started => std::thread::yield_now(),
-                _ => break op.GetResults().ok()?,
+            let status = op.Status().ok()?;
+            if status == AsyncStatus::Started {
+                std::thread::yield_now();
+            } else {
+                break op.GetResults().ok()?;
             }
         }
     };
@@ -242,12 +243,14 @@ pub fn query_tidal() -> Option<DesktopTrack> {
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     });
     let manager = {
-        use windows::Foundation::AsyncStatus;
+        use windows_future::AsyncStatus;
         let op = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?;
         loop {
-            match op.Status().ok()? {
-                AsyncStatus::Started => std::thread::yield_now(),
-                _ => break op.GetResults().ok()?,
+            let status = op.Status().ok()?;
+            if status == AsyncStatus::Started {
+                std::thread::yield_now();
+            } else {
+                break op.GetResults().ok()?;
             }
         }
     };
@@ -269,10 +272,10 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
 
         let manager = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
             .and_then(|op| {
-                use windows::Foundation::AsyncStatus;
+                use windows_future::AsyncStatus;
                 loop {
                     match op.Status() {
-                        Ok(AsyncStatus::Started) => std::thread::yield_now(),
+                        Ok(s) if s == AsyncStatus::Started => std::thread::yield_now(),
                         Ok(_) => return op.GetResults(),
                         Err(e) => return Err(e),
                     }
