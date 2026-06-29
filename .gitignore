@@ -21,3 +21,4 @@ Thumbs.db
 *.log
 .serena/.gitignore
 .serena/project.yml
+.serena/*
