@@ -79,7 +79,16 @@ pub(crate) enum UpdateError {
     /// Failed to write, rename, or spawn the applied binary on disk.
     #[error("{0}")]
     Apply(String),
+    /// The minisign signature on the downloaded binary was invalid or untrusted.
+    #[error("{0}")]
+    SignatureInvalid(String),
 }
+
+/// Minisign public keys trusted to sign FreeMiD release artifacts.
+///
+/// Verification succeeds if the signature was produced by any key in this list.
+/// Add the new key here before retiring the old one when rotating.
+const TRUSTED_KEYS: &[&str] = &["RWRFjV2Q5UtunU61kMdRS0ViRXVmpxdOjI5zjTUbiJ/oS8OG+jCFb8De"];
 
 /// Platform-specific artifact filename, or `None` if self-update is unsupported.
 fn artifact_name() -> Option<&'static str> {
@@ -210,6 +219,12 @@ fn do_update(overrides: &UpdateSourceOverrides, send: &impl Fn(Value)) -> Result
     let hex = download_to_staged(&format!("{}/{}", base_url, artifact), &staged, &user_agent)?;
 
     let checksums = download_string(&format!("{}/checksums.sha256", base_url), &user_agent)?;
+    let sig_text = download_string(&format!("{}/{}.minisig", base_url, artifact), &user_agent)?;
+
+    if let Err(e) = verify_minisig(&staged, &sig_text) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
 
     if let Err(e) = verify_checksum_hex(&hex, &checksums, artifact) {
         let _ = std::fs::remove_file(&staged);
@@ -476,6 +491,36 @@ fn verify_checksum_hex(actual: &str, checksums: &str, artifact: &str) -> Result<
 fn verify_sha256(data: &[u8], checksums: &str, artifact: &str) -> Result<(), UpdateError> {
     let actual = hex::encode(Sha256::digest(data));
     verify_checksum_hex(&actual, checksums, artifact)
+}
+
+/// Verify a minisign `.minisig` file against the staged binary.
+///
+/// Accepts any signature produced by a key in `TRUSTED_KEYS`. During key
+/// rotation, add the new key to `TRUSTED_KEYS` before retiring the old one so
+/// binaries from both key generations can verify the transition release.
+fn verify_minisig(staged: &Path, sig_text: &str) -> Result<(), UpdateError> {
+    use minisign_verify::{PublicKey, Signature};
+
+    let data = std::fs::read(staged).map_err(|e| {
+        UpdateError::SignatureInvalid(format!("Cannot read staged file for verification: {e}"))
+    })?;
+
+    let sig = Signature::decode(sig_text)
+        .map_err(|e| UpdateError::SignatureInvalid(format!("Cannot parse minisig: {e}")))?;
+
+    for &key_b64 in TRUSTED_KEYS {
+        let pk = PublicKey::from_base64(key_b64).map_err(|e| {
+            UpdateError::SignatureInvalid(format!("Invalid trusted public key: {e}"))
+        })?;
+        if pk.verify(&data, &sig, false).is_ok() {
+            eprintln!("[FreeMiD] Signature verified ✓");
+            return Ok(());
+        }
+    }
+
+    Err(UpdateError::SignatureInvalid(
+        "Signature does not match any trusted key".to_string(),
+    ))
 }
 
 /// Apply the already-staged binary: chmod + atomic rename (Unix) or
