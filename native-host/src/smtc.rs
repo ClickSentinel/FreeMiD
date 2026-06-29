@@ -280,8 +280,7 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
                         Err(e) => return Err(e),
                     }
                 }
-            })
-        {
+            }) {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("[FreeMiD/smtc] watcher: manager init failed: {e}");
