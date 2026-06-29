@@ -55,9 +55,9 @@ type OnUpdateFn = dyn Fn(Option<DesktopTrack>) + Send + Sync + 'static;
 
 struct ActiveSession {
     session: GlobalSystemMediaTransportControlsSession,
-    props_token: EventRegistrationToken,
-    playback_token: EventRegistrationToken,
-    timeline_token: EventRegistrationToken,
+    props_token: i64,
+    playback_token: i64,
+    timeline_token: i64,
 }
 
 impl Drop for ActiveSession {
@@ -232,10 +232,18 @@ pub fn query_tidal() -> Option<DesktopTrack> {
         // S_FALSE (already initialised on this thread) is also acceptable.
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     });
-    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-        .ok()?
-        .get()
-        .ok()?;
+    let manager = {
+        use windows_future::AsyncStatus;
+        let op = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?;
+        loop {
+            let status = op.Status().ok()?;
+            if status == AsyncStatus::Started {
+                std::thread::yield_now();
+            } else {
+                break op.GetResults().ok()?;
+            }
+        }
+    };
     let session = find_tidal_session(&manager)?;
     track_from_session(&session)
 }
