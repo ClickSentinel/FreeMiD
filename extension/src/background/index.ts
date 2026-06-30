@@ -106,7 +106,7 @@ const DISCORD_MIN_INTERVAL_MS = 5_000;
 let lastActivitySentAt = 0;
 let pendingActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingActivityPayload: object | null = null;
-// LRU artwork cache keyed by "artist|title|album". Map insertion order gives
+// LRU artwork cache keyed by "artist\x00title\x00album". Map insertion order gives
 // us LRU eviction for free: delete-then-re-set on read moves entry to the end.
 const ART_CACHE_MAX = 200;
 const desktopArtCache = new Map<string, string | null>();
@@ -132,7 +132,7 @@ function lookupArtworkCached(
   title: string,
   album?: string,
 ): Promise<string | null> {
-  const key = `${artist}|${title}|${album ?? ''}`;
+  const key = `${artist}\x00${title}\x00${album ?? ''}`;
   const cached = artCacheGet(key);
   if (cached !== undefined) return Promise.resolve(cached);
   let pending = artPending.get(key);
@@ -1016,6 +1016,16 @@ chrome.runtime.onMessage.addListener(
         if (holdsLock) {
           clearActivity();
         }
+      } else if (
+        siteId === 'tidal' &&
+        nativePort &&
+        hostRuntimeOs === 'windows' &&
+        !paused &&
+        ![...activeActivityTabs.values()].includes('tidal')
+      ) {
+        // Tidal was just re-enabled — immediately poll SMTC so presence
+        // restores without waiting for the next keepalive cycle (~24 s).
+        sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
       }
       broadcastStatus();
       return;

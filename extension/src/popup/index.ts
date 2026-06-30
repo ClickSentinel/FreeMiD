@@ -1,8 +1,8 @@
 import { compareVersions, isUpdateInProgress } from '../background/helpers';
 import { githubLatestDownloadUrl, githubRepoUrl } from '../constants/github';
-import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
 import {
   artistFromActivity,
+  fallbackLogoPath,
   isUnsupportedPlatformUpdateError,
   urlLike,
 } from './helpers';
@@ -19,8 +19,6 @@ const helpDiscord = document.getElementById('help-discord') as HTMLElement;
 const btnInstallHost = document.getElementById(
   'btn-install-host',
 ) as HTMLButtonElement | null;
-const pageInfo = document.getElementById('page-info') as HTMLElement;
-
 const activityPanel = document.getElementById(
   'activity-panel',
 ) as HTMLElement | null;
@@ -86,7 +84,7 @@ let latestStatus: Status | null = null;
 let reconnectGraceUntilMs: number | null = null;
 let reconnectSawDisconnect = false;
 let reconnectPollTimer: ReturnType<typeof setInterval> | null = null;
-const RECONNECT_UI_GRACE_MS = 12_000;
+const RECONNECT_UI_GRACE_MS = 15_000;
 const RECONNECT_BUTTON_COOLDOWN_MS = 15_000;
 let reconnectButtonUnlockAtMs = 0;
 
@@ -251,9 +249,15 @@ reconnectBtn?.addEventListener('click', async () => {
   }
 
   if (!res?.ok) {
-    // If reconnect was throttled by background cooldown, keep current UI state
-    // but honor the server-provided lockout so popup reopen cannot bypass it.
-    if (res?.error !== 'Reconnect cooling down') {
+    if (res?.error === 'Reconnect cooling down') {
+      // A reconnect is already in progress — keep the grace window active but
+      // stop the spinner and tell the user why the button is locked.
+      setStatus(
+        'connecting',
+        'Connecting…',
+        'Already reconnecting — please wait',
+      );
+    } else {
       reconnectGraceUntilMs = null;
       reconnectSawDisconnect = false;
       if (reconnectPollTimer) {
@@ -445,22 +449,6 @@ function setImageEl(el: HTMLImageElement, url: string | null): void {
   }
 }
 
-function fallbackLogoUrl(
-  act: NonNullable<Status['lastActivity']>,
-): string | null {
-  const service =
-    `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();
-  if (service.includes('tidal')) {
-    return chrome.runtime.getURL(PRESENCE_PREVIEW_ASSETS.tidalLogo);
-  }
-  if (service.includes('youtube music') || service.includes('yt music')) {
-    return chrome.runtime.getURL(PRESENCE_PREVIEW_ASSETS.ytmusicLogo);
-  }
-  if (service.includes('youtube'))
-    return 'https://www.youtube.com/s/desktop/6cfcd65f/img/logos/favicon_32x32.png';
-  return null;
-}
-
 function setToggle(btn: HTMLButtonElement | null, checked: boolean): void {
   btn?.setAttribute('aria-checked', String(checked));
 }
@@ -469,6 +457,7 @@ function render(status: Status | null): void {
   latestStatus = status;
   helpHost.classList.add('hidden');
   helpDiscord.classList.add('hidden');
+  reconnectBtn?.classList.remove('visible');
 
   if (reconnectBtn && Date.now() < reconnectButtonUnlockAtMs) {
     reconnectBtn.disabled = true;
@@ -485,6 +474,7 @@ function render(status: Status | null): void {
     }
     if (hostVersionEl) hostVersionEl.textContent = '';
     if (btnUpdate) btnUpdate.classList.remove('visible', 'spinning');
+    reconnectBtn?.classList.add('visible');
     stopAllTicks();
     return;
   }
@@ -512,6 +502,7 @@ function render(status: Status | null): void {
       }
     } else {
       setStatus('connecting', 'Connecting…', 'Restarting native host');
+      reconnectBtn?.classList.add('visible');
       stopAllTicks();
       if (activityPanel) activityPanel.hidden = true;
       return;
@@ -638,6 +629,7 @@ function render(status: Status | null): void {
       }
     }
 
+    reconnectBtn?.classList.add('visible');
     stopAllTicks();
     if (activityPanel) activityPanel.hidden = true;
     return;
@@ -705,7 +697,34 @@ function render(status: Status | null): void {
   const act = status.lastActivity;
   if (activityPanel) activityPanel.hidden = !act;
   if (act) {
-    if (activityTitle) activityTitle.textContent = act.title;
+    if (activityTitle) {
+      let inner = activityTitle.querySelector('span');
+      if (!inner) {
+        inner = document.createElement('span');
+        activityTitle.textContent = '';
+        activityTitle.appendChild(inner);
+      }
+      if (inner.dataset.scrollTitle !== act.title) {
+        inner.classList.remove('scrolling');
+        inner.style.removeProperty('--marquee-offset');
+        inner.textContent = act.title;
+        // Cache the title now so rapid polls don't re-set text while the
+        // rAF measurement is pending.
+        inner.dataset.scrollTitle = act.title;
+        // Defer measurement one frame — the activity panel may have just
+        // become visible and clientWidth would be stale/zero in the same tick.
+        const titleSnapshot = act.title;
+        requestAnimationFrame(() => {
+          if (inner.dataset.scrollTitle !== titleSnapshot) return;
+          const containerWidth = activityTitle.clientWidth;
+          const overflow = inner.scrollWidth - containerWidth;
+          if (overflow > 8) {
+            inner.style.setProperty('--marquee-offset', `-${overflow}px`);
+            inner.classList.add('scrolling');
+          }
+        });
+      }
+    }
     if (activitySub) {
       const album =
         act.largeImageText && act.largeImageText !== act.title
@@ -725,9 +744,12 @@ function render(status: Status | null): void {
     if (activityArt) setImageEl(activityArt, artUrl ?? null);
 
     if (activityLogo) {
+      const logoPath = fallbackLogoPath(act);
       const logoUrl = urlLike(act.smallImageKey)
         ? act.smallImageKey
-        : fallbackLogoUrl(act);
+        : logoPath
+          ? chrome.runtime.getURL(logoPath)
+          : null;
       setImageEl(activityLogo, logoUrl ?? null);
     }
 
@@ -787,21 +809,4 @@ async function fetchStatus(retriesLeft = 4, intervalMs = 700): Promise<void> {
   }
 }
 
-void (async () => {
-  void fetchStatus();
-  try {
-    const [tab] = await chrome.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
-    if (tab?.url) {
-      try {
-        pageInfo.textContent = new URL(tab.url).hostname;
-      } catch {
-        pageInfo.textContent = tab.url;
-      }
-    }
-  } catch {
-    pageInfo.textContent = '—';
-  }
-})();
+void fetchStatus();
