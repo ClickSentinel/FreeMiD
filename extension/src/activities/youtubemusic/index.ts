@@ -182,7 +182,7 @@ presence.on('UpdateData', () => {
     startTimestamp: timestamps?.start,
     endTimestamp: timestamps?.end,
     largeImageKey: artUrl,
-    largeImageText: ms?.metadata?.album || title,
+    largeImageText: ms?.metadata?.album || undefined,
     largeImageUrl: songUrl,
     smallImageKey: PRESENCE_ASSET_KEYS.ytmusicLogo,
     smallImageText: 'YouTube Music',

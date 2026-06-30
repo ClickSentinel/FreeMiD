@@ -726,10 +726,7 @@ function render(status: Status | null): void {
       }
     }
     if (activitySub) {
-      const album =
-        act.largeImageText && act.largeImageText !== act.title
-          ? act.largeImageText
-          : '';
+      const album = act.largeImageText ?? '';
       activitySub.textContent = album;
     }
     if (activityMetaText) {

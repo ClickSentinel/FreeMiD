@@ -127,7 +127,7 @@ presence.on('UpdateData', () => {
     startTimestamp: timestamps?.start,
     endTimestamp: timestamps?.end,
     largeImageKey: artUrl,
-    largeImageText: albumName || collection || title,
+    largeImageText: albumName || collection || undefined,
     largeImageUrl: trackUrl,
     smallImageKey: PRESENCE_ASSET_KEYS.tidalLogo,
     smallImageText: 'TIDAL',
