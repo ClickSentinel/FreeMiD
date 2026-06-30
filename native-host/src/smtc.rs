@@ -89,9 +89,13 @@ fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Op
     let props = {
         use windows_future::AsyncStatus;
         let op = session.TryGetMediaPropertiesAsync().ok()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             let status = op.Status().ok()?;
             if status == AsyncStatus::Started {
+                if std::time::Instant::now() >= deadline {
+                    return None;
+                }
                 std::thread::yield_now();
             } else {
                 break op.GetResults().ok()?;
@@ -245,9 +249,13 @@ pub fn query_tidal() -> Option<DesktopTrack> {
     let manager = {
         use windows_future::AsyncStatus;
         let op = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             let status = op.Status().ok()?;
             if status == AsyncStatus::Started {
+                if std::time::Instant::now() >= deadline {
+                    return None;
+                }
                 std::thread::yield_now();
             } else {
                 break op.GetResults().ok()?;
@@ -273,9 +281,17 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
         let manager = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
             .and_then(|op| {
                 use windows_future::AsyncStatus;
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
                 loop {
                     match op.Status() {
-                        Ok(s) if s == AsyncStatus::Started => std::thread::yield_now(),
+                        Ok(s) if s == AsyncStatus::Started => {
+                            if std::time::Instant::now() >= deadline {
+                                return Err(windows::core::Error::from(
+                                    windows::core::HRESULT(0x800705B4u32 as i32), // ERROR_TIMEOUT
+                                ));
+                            }
+                            std::thread::yield_now();
+                        }
                         Ok(_) => return op.GetResults(),
                         Err(e) => return Err(e),
                     }

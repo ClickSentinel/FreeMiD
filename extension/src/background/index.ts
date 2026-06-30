@@ -105,7 +105,46 @@ const DISCORD_MIN_INTERVAL_MS = 5_000;
 let lastActivitySentAt = 0;
 let pendingActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingActivityPayload: object | null = null;
-const desktopArtCache = new Map<string, string | null>(); // "artist|title" → HTTPS URL or null
+// LRU artwork cache keyed by "artist|title|album". Map insertion order gives
+// us LRU eviction for free: delete-then-re-set on read moves entry to the end.
+const ART_CACHE_MAX = 200;
+const desktopArtCache = new Map<string, string | null>();
+const artPending = new Map<string, Promise<string | null>>();
+
+function artCacheGet(key: string): string | null | undefined {
+  if (!desktopArtCache.has(key)) return undefined;
+  const val = desktopArtCache.get(key) as string | null;
+  desktopArtCache.delete(key);
+  desktopArtCache.set(key, val);
+  return val;
+}
+
+function artCacheSet(key: string, value: string | null): void {
+  desktopArtCache.delete(key);
+  if (desktopArtCache.size >= ART_CACHE_MAX)
+    desktopArtCache.delete(desktopArtCache.keys().next().value as string);
+  desktopArtCache.set(key, value);
+}
+
+function lookupArtworkCached(
+  artist: string,
+  title: string,
+  album?: string,
+): Promise<string | null> {
+  const key = `${artist}|${title}|${album ?? ''}`;
+  const cached = artCacheGet(key);
+  if (cached !== undefined) return Promise.resolve(cached);
+  let pending = artPending.get(key);
+  if (!pending) {
+    pending = lookupArtworkUrl(artist, title, album).then((url) => {
+      artCacheSet(key, url);
+      artPending.delete(key);
+      return url;
+    });
+    artPending.set(key, pending);
+  }
+  return pending;
+}
 
 const APPLY_VERIFY_INTERVAL_MS = 1000;
 const APPLY_VERIFY_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 130000 : 30000;
@@ -524,17 +563,16 @@ function connectNativeHost(): void {
               ? start + Math.floor(track.duration_secs)
               : undefined;
 
-          const artKey = `${track.artist}|${track.title}`;
-          const artUrl = desktopArtCache.get(artKey) ?? null;
+          const artKey = `${track.artist}|${track.title}|${track.album ?? ''}`;
+          const artUrl = artCacheGet(artKey) ?? null;
           if (!desktopArtCache.has(artKey)) {
-            void lookupArtworkUrl(
+            void lookupArtworkCached(
               track.artist,
               track.title,
               track.album ?? undefined,
             ).then((url) => {
-              desktopArtCache.set(artKey, url);
               // Re-poll to apply the now-cached art URL if still showing.
-              if (presenceHolder === 'tidal-desktop' && nativePort) {
+              if (url && presenceHolder === 'tidal-desktop' && nativePort) {
                 sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
               }
             });
@@ -936,14 +974,11 @@ chrome.runtime.onMessage.addListener(
           // the first tick doesn't permanently poison the cache for the same
           // track once the correct album name arrives via mediaSession.
           const artKey = `${artist}|${title}|${album ?? ''}`;
-          if (desktopArtCache.has(artKey)) {
-            const cachedUrl = desktopArtCache.get(artKey);
+          const cachedUrl = artCacheGet(artKey);
+          if (cachedUrl !== undefined) {
             if (cachedUrl && assets) assets.large_image = cachedUrl;
           } else {
-            desktopArtCache.set(artKey, null);
-            void lookupArtworkUrl(artist, title, album).then((url) => {
-              desktopArtCache.set(artKey, url);
-            });
+            void lookupArtworkCached(artist, title, album);
           }
         }
       }
