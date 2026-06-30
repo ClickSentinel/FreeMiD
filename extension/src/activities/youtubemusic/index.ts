@@ -9,6 +9,9 @@ const presence = new Presence({
 
 const anchor = new PlaybackAnchor();
 let lastPausedState: boolean | undefined;
+let lastTrackId: string | undefined;
+let trackSeenAt: number | undefined;
+let albumPollTimer: ReturnType<typeof setInterval> | null = null;
 
 function getPlayerBarTimes(): { current?: number; duration?: number } {
   // Try several selectors — YouTube Music has changed its DOM structure over time.
@@ -127,6 +130,10 @@ presence.on('UpdateData', () => {
   }
 
   if (!title) {
+    if (albumPollTimer !== null) {
+      clearInterval(albumPollTimer);
+      albumPollTimer = null;
+    }
     // clearPresenceData (not clearActivity) keeps the interval and event
     // listeners active so presence can recover when a title appears.
     presence.clearPresenceData();
@@ -158,12 +165,21 @@ presence.on('UpdateData', () => {
 
   const trackId = videoId || `${title}::${artist || ''}`;
 
+  if (trackId !== lastTrackId) {
+    lastTrackId = trackId;
+    trackSeenAt = Date.now();
+  }
+
   const { timestamps } = anchor.update(trackId, current, duration, paused);
 
   // Paused: clear presence once on pause entry, then do nothing until resume.
   // clearPresenceData() sends a Discord clear without stopping the interval,
   // so the anchor keeps running and resume restores correctly.
   if (paused) {
+    if (albumPollTimer !== null) {
+      clearInterval(albumPollTimer);
+      albumPollTimer = null;
+    }
     if (lastPausedState === false) {
       presence.clearPresenceData();
     }
@@ -172,6 +188,33 @@ presence.on('UpdateData', () => {
   }
 
   lastPausedState = false;
+
+  const album = ms?.metadata?.album || undefined;
+
+  // YouTube Music populates mediaSession.metadata.album asynchronously —
+  // typically 500–1000ms after a play event. Poll every 50ms until it
+  // appears (or 1500ms has elapsed as a hard cutoff) so Discord gets one
+  // complete update the moment the metadata settles rather than on the
+  // next regular 5s poll.
+  if (!album && Date.now() - (trackSeenAt ?? 0) < 1500) {
+    if (albumPollTimer === null) {
+      albumPollTimer = setInterval(() => {
+        const ready =
+          !!navigator.mediaSession?.metadata?.album ||
+          Date.now() - (trackSeenAt ?? 0) >= 1500;
+        if (ready) {
+          clearInterval(albumPollTimer!);
+          albumPollTimer = null;
+          presence.triggerUpdate();
+        }
+      }, 50);
+    }
+    return;
+  }
+  if (albumPollTimer !== null) {
+    clearInterval(albumPollTimer);
+    albumPollTimer = null;
+  }
 
   presence.setActivity({
     applicationId: import.meta.env.VITE_DISCORD_CLIENT_ID,
@@ -182,7 +225,7 @@ presence.on('UpdateData', () => {
     startTimestamp: timestamps?.start,
     endTimestamp: timestamps?.end,
     largeImageKey: artUrl,
-    largeImageText: ms?.metadata?.album || undefined,
+    largeImageText: album,
     largeImageUrl: songUrl,
     smallImageKey: PRESENCE_ASSET_KEYS.ytmusicLogo,
     smallImageText: 'YouTube Music',

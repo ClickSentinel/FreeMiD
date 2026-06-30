@@ -863,6 +863,10 @@ function cancelPendingActivityFlush(): void {
     clearTimeout(pendingActivityFlushTimer);
     pendingActivityFlushTimer = null;
   }
+  if (activityBroadcastTimer !== null) {
+    clearTimeout(activityBroadcastTimer);
+    activityBroadcastTimer = null;
+  }
   pendingActivityPayload = null;
   lastSentActivityJson = null;
   lastActivitySentAt = 0;
@@ -873,6 +877,7 @@ export function clearActivity(): void {
   presenceHolder = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
+  broadcastStatus();
 }
 
 // Release presence held by a specific source. No-op if another source holds it.
@@ -882,6 +887,7 @@ function releasePresence(sourceId: string): void {
   presenceHolder = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
+  broadcastStatus();
   maybeAutoUpdate();
 }
 
