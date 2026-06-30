@@ -123,7 +123,7 @@ jobs:
 
   validate-signing-key:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.actor != 'dependabot[bot]'
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
