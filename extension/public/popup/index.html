@@ -346,13 +346,23 @@
         gap: 10px;
         align-items: center;
       }
-      .now-art {
+      /* Wrapper provides the border / live rainbow ring */
+      .now-art-wrap {
         width: 56px;
         height: 56px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 1.5px;
+        background: var(--border);
+        flex-shrink: 0;
+      }
+      .now-art {
+        width: 100%;
+        height: 100%;
+        border-radius: 7.5px;
+        border: none;
         object-fit: cover;
         background: var(--bg-1);
+        display: block;
       }
       .now-text { min-width: 0; }
       .now-title {
@@ -427,6 +437,82 @@
         transition: color 0.15s;
       }
       .btn-uninstall:hover { color: var(--warning); }
+
+      /* ── Live presence flare (active only while a song is playing) ─────────── */
+
+      @property --holo-angle {
+        syntax: '<angle>';
+        inherits: false;
+        initial-value: 0deg;
+      }
+      @keyframes holo-spin {
+        to { --holo-angle: 360deg; }
+      }
+      @keyframes sparkle-a {
+        0%, 100% { opacity: 0.08; }
+        50%      { opacity: 1; }
+      }
+      @keyframes sparkle-b {
+        0%, 100% { opacity: 0.9; }
+        50%      { opacity: 0.05; }
+      }
+
+      /* Floating rainbow box around the Now Playing section */
+      .now-playing-ring {
+        margin: 6px 8px;
+        border-radius: 10px;
+        transform-origin: top center;
+        transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      }
+      @starting-style {
+        .now-playing-ring:not(:has(#activity-panel[hidden])) {
+          opacity: 0;
+          transform: translateY(-6px) scale(0.96);
+        }
+      }
+      .now-playing-ring:has(#activity-panel[hidden]) {
+        display: none;
+      }
+      .now-playing-ring:not(:has(#activity-panel[hidden])) {
+        padding: 2px;
+        background: conic-gradient(from var(--holo-angle),
+          #ff758c, #ffb347, #ffd166, #06d6a0, #4cc9f0, #7b2ff7, #ff758c
+        );
+        animation: holo-spin 5s linear infinite;
+      }
+      .now-playing-ring:not(:has(#activity-panel[hidden])) .now-playing {
+        border-bottom: none;
+        border-radius: 8px;
+      }
+
+      /* Sparkle particles at the panel edges */
+      .now-playing { position: relative; overflow: hidden; }
+
+      #activity-panel:not([hidden]) .now-playing::before,
+      #activity-panel:not([hidden]) .now-playing::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      /* Group A */
+      #activity-panel:not([hidden]) .now-playing::before {
+        background-image:
+          radial-gradient(circle 1.5px at  5%  9%, rgba(255,255,255,.95), transparent 60%),
+          radial-gradient(circle  1px at 95% 14%, rgba( 76,201,240,.95), transparent 60%),
+          radial-gradient(circle  2px at  4% 85%, rgba(255,209,102,.90), transparent 60%),
+          radial-gradient(circle  1px at 94% 80%, rgba(255,117,140,.90), transparent 60%);
+        animation: sparkle-a 2.4s ease-in-out infinite;
+      }
+      /* Group B — offset phase */
+      #activity-panel:not([hidden]) .now-playing::after {
+        background-image:
+          radial-gradient(circle  1px at 50%  5%, rgba(255,255,255,.85), transparent 60%),
+          radial-gradient(circle 1.5px at  4% 50%, rgba(123, 47,247,.90), transparent 60%),
+          radial-gradient(circle  1px at 96% 48%, rgba(  6,214,160,.90), transparent 60%),
+          radial-gradient(circle 1.5px at 60% 94%, rgba(255,179, 71,.85), transparent 60%);
+        animation: sparkle-b 3.3s ease-in-out infinite;
+      }
     </style>
   </head>
   <body>
@@ -475,6 +561,7 @@
       <br /><button type="button" class="btn-discord" id="btn-open-discord">Open Discord ↗</button>
     </div>
 
+    <div class="now-playing-ring">
     <div class="now-playing" id="activity-panel" hidden>
       <div class="panel-label">Now Playing</div>
       <div class="now-top">
@@ -489,7 +576,9 @@
         <img class="now-logo" id="activity-logo" alt="Service logo" hidden />
       </div>
       <div class="now-main">
-        <img class="now-art" id="activity-art" alt="Album art" hidden />
+        <div class="now-art-wrap">
+          <img class="now-art" id="activity-art" alt="Album art" hidden />
+        </div>
         <div class="now-text">
           <div class="now-title" id="activity-title"><span>—</span></div>
           <div class="now-album" id="activity-sub"></div>
@@ -505,6 +594,7 @@
         </div>
       </div>
     </div>
+    </div><!-- /.now-playing-ring -->
 
     <div class="panel">
       <div class="panel-label">Services</div>
