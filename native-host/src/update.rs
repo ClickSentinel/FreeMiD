@@ -88,7 +88,7 @@ pub(crate) enum UpdateError {
 ///
 /// Verification succeeds if the signature was produced by any key in this list.
 /// Add the new key here before retiring the old one when rotating.
-const TRUSTED_KEYS: &[&str] = &["RWRFjV2Q5UtunU61kMdRS0ViRXVmpxdOjI5zjTUbiJ/oS8OG+jCFb8De"];
+const TRUSTED_KEYS: &[&str] = &["RWRrys5Xai1z3ZBlJZV7nnnH3rYRcvx4k8VMf6GYzfyBXQ2yFw7DCWEX"];
 
 /// Platform-specific artifact filename, or `None` if self-update is unsupported.
 fn artifact_name() -> Option<&'static str> {

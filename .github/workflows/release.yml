@@ -13,6 +13,40 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  validate-signing-key:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Validate signing key matches TRUSTED_KEYS
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -q minisign
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/test.sec
+          echo "freemid signing key validation" > /tmp/test.txt
+          printf '\n' | minisign -S -s /tmp/test.sec -m /tmp/test.txt -x /tmp/test.txt.minisig
+          mapfile -t trusted_keys < <(grep -oP '"RW[A-Za-z0-9+/=]+"' native-host/src/update.rs | tr -d '"')
+          if [[ ${#trusted_keys[@]} -eq 0 ]]; then
+            echo "No trusted keys found in native-host/src/update.rs"
+            exit 1
+          fi
+          matched=0
+          for pubkey in "${trusted_keys[@]}"; do
+            if minisign -V -P "$pubkey" -m /tmp/test.txt -x /tmp/test.txt.minisig 2>/dev/null; then
+              echo "OK: MINISIGN_SECRET_KEY matches trusted key $pubkey"
+              matched=1
+              break
+            fi
+          done
+          rm -f /tmp/test.sec /tmp/test.txt /tmp/test.txt.minisig
+          if [[ "$matched" -eq 0 ]]; then
+            echo "FAIL: MINISIGN_SECRET_KEY does not match any key in TRUSTED_KEYS"
+            printf '  %s\n' "${trusted_keys[@]}"
+            exit 1
+          fi
+
   audit-rust:
     runs-on: ubuntu-latest
     steps:
@@ -25,6 +59,7 @@ jobs:
 
   # Build the extension zip (platform-independent)
   build-extension:
+    needs: validate-signing-key
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -74,6 +109,7 @@ jobs:
 
   # Build native host binaries (one job per platform)
   build-native:
+    needs: validate-signing-key
     strategy:
       fail-fast: false
       matrix:
