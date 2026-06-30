@@ -2,7 +2,8 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::Duration;
-use windows::Foundation::{IAsyncOperation, TypedEventHandler};
+use windows::Foundation::TypedEventHandler;
+use windows_future::{AsyncStatus, IAsyncOperation};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus, MediaPropertiesChangedEventArgs,
@@ -71,11 +72,13 @@ impl Drop for ActiveSession {
 
 /// Poll an `IAsyncOperation` until it leaves the `Started` state or a 5-second
 /// deadline elapses. Returns `None` on timeout or if any WinRT call fails.
-fn spin_wait<T>(op: IAsyncOperation<T>) -> Option<T::DefaultType>
+fn spin_wait<T, R>(
+    op: IAsyncOperation<T>,
+    get_results: impl Fn(&IAsyncOperation<T>) -> windows::core::Result<R>,
+) -> Option<R>
 where
     T: windows::core::RuntimeType + 'static,
 {
-    use windows_future::AsyncStatus;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         let status = op.Status().ok()?;
@@ -85,7 +88,7 @@ where
             }
             std::thread::yield_now();
         } else {
-            break op.GetResults().ok();
+            break get_results(&op).ok();
         }
     }
 }
@@ -107,7 +110,7 @@ fn ticks_to_secs(ticks: u64) -> f64 {
 }
 
 fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Option<DesktopTrack> {
-    let props = spin_wait(session.TryGetMediaPropertiesAsync().ok()?)?;
+    let props = spin_wait(session.TryGetMediaPropertiesAsync().ok()?, |op| op.GetResults())?;
 
     let title = props.Title().ok()?.to_string();
     if title.is_empty() {
@@ -253,7 +256,7 @@ pub fn query_tidal() -> Option<DesktopTrack> {
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     });
     let manager =
-        spin_wait(GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?)?;
+        spin_wait(GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?, |op| op.GetResults())?;
     let session = find_tidal_session(&manager)?;
     track_from_session(&session)
 }
@@ -272,7 +275,6 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
 
         let manager = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
             .and_then(|op| {
-                use windows_future::AsyncStatus;
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
                 loop {
                     match op.Status() {
