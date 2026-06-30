@@ -697,7 +697,34 @@ function render(status: Status | null): void {
   const act = status.lastActivity;
   if (activityPanel) activityPanel.hidden = !act;
   if (act) {
-    if (activityTitle) activityTitle.textContent = act.title;
+    if (activityTitle) {
+      let inner = activityTitle.querySelector('span');
+      if (!inner) {
+        inner = document.createElement('span');
+        activityTitle.textContent = '';
+        activityTitle.appendChild(inner);
+      }
+      if (inner.dataset.scrollTitle !== act.title) {
+        inner.classList.remove('scrolling');
+        inner.style.removeProperty('--marquee-offset');
+        inner.textContent = act.title;
+        // Cache the title now so rapid polls don't re-set text while the
+        // rAF measurement is pending.
+        inner.dataset.scrollTitle = act.title;
+        // Defer measurement one frame — the activity panel may have just
+        // become visible and clientWidth would be stale/zero in the same tick.
+        const titleSnapshot = act.title;
+        requestAnimationFrame(() => {
+          if (inner.dataset.scrollTitle !== titleSnapshot) return;
+          const containerWidth = activityTitle.clientWidth;
+          const overflow = inner.scrollWidth - containerWidth;
+          if (overflow > 8) {
+            inner.style.setProperty('--marquee-offset', `-${overflow}px`);
+            inner.classList.add('scrolling');
+          }
+        });
+      }
+    }
     if (activitySub) {
       const album =
         act.largeImageText && act.largeImageText !== act.title

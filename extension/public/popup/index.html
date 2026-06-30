@@ -359,9 +359,22 @@
         font-size: 14px;
         color: var(--text-0);
         font-weight: 600;
+        overflow: hidden;
+      }
+      .now-title > span {
+        display: block;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+      .now-title > span.scrolling {
+        overflow: visible;
+        text-overflow: clip;
+        animation: scroll-title 5s 2s ease-in-out infinite alternate;
+      }
+      @keyframes scroll-title {
+        0%, 15%   { transform: translateX(0); }
+        85%, 100% { transform: translateX(var(--marquee-offset)); }
       }
       .now-album {
         margin-top: 2px;
@@ -478,7 +491,7 @@
       <div class="now-main">
         <img class="now-art" id="activity-art" alt="Album art" hidden />
         <div class="now-text">
-          <div class="now-title" id="activity-title">—</div>
+          <div class="now-title" id="activity-title"><span>—</span></div>
           <div class="now-album" id="activity-sub"></div>
         </div>
       </div>
