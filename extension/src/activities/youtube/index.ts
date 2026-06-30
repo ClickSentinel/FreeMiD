@@ -1,5 +1,6 @@
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
 import { Presence } from '../../presence/Presence';
+import { PlaybackAnchor } from '../../utils/PlaybackAnchor';
 
 // Replace with your own Discord Application ID if you want custom artwork.
 // Create a free app at https://discord.com/developers/applications
@@ -7,6 +8,9 @@ const presence = new Presence({
   clientId: import.meta.env.VITE_DISCORD_CLIENT_ID,
   updateInterval: 5,
 });
+
+const anchor = new PlaybackAnchor();
+let lastPausedState: boolean | undefined;
 
 function isWatchPage(): boolean {
   const path = window.location.pathname;
@@ -194,27 +198,38 @@ presence.on('UpdateData', () => {
   const playing = isVideoPlaying(video);
   const duration = video?.duration ?? 0;
   const elapsed = video?.currentTime ?? 0;
-  const nowSec = Math.floor(Date.now() / 1000);
   const channelIcon = getChannelIconUrl();
   const videoThumbnail = getVideoThumbnailUrl();
   const largeImage =
     channelIcon ?? videoThumbnail ?? PRESENCE_ASSET_KEYS.youtubeLogo;
   const videoUrl = getVideoUrl();
+  const videoId = getVideoId();
 
-  if (!title || !playing) {
-    // Match YT Music behavior: hide presence whenever playback is idle.
+  if (!title) {
     presence.clearPresenceData();
     return;
   }
 
-  // duration is Infinity for live streams; guard against it to avoid sending
-  // { start } with no { end }, which Discord shows as a counting-up game timer.
-  const hasProgress = playing && duration > 0 && Number.isFinite(duration);
-  const startTimestamp = hasProgress ? nowSec - Math.floor(elapsed) : undefined;
-  const endTimestamp =
-    hasProgress && startTimestamp != null
-      ? startTimestamp + Math.floor(duration)
-      : undefined;
+  // Pass duration=0 for live streams so PlaybackAnchor returns no end timestamp,
+  // avoiding a counting-up game timer Discord would show for { start } with no { end }.
+  const anchorDuration = Number.isFinite(duration) ? duration : 0;
+  const trackKey = videoId ?? title;
+  const { timestamps } = anchor.update(
+    trackKey,
+    elapsed,
+    anchorDuration,
+    !playing,
+  );
+
+  if (!playing) {
+    if (!lastPausedState) {
+      presence.clearPresenceData();
+    }
+    lastPausedState = true;
+    return;
+  }
+
+  lastPausedState = false;
 
   presence.setActivity({
     name: 'YouTube',
@@ -226,9 +241,8 @@ presence.on('UpdateData', () => {
     largeImageUrl: videoUrl,
     smallImageKey: PRESENCE_ASSET_KEYS.youtubeLogo,
     smallImageText: 'YouTube',
-    // Provide both timestamps so popup and Discord can render synced progress.
-    startTimestamp,
-    endTimestamp,
+    startTimestamp: timestamps?.start,
+    endTimestamp: timestamps?.end,
     buttons: [{ label: 'Watch on YouTube', url: videoUrl }],
   });
 });
