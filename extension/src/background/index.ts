@@ -106,6 +106,7 @@ const DISCORD_MIN_INTERVAL_MS = 5_000;
 let lastActivitySentAt = 0;
 let pendingActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingActivityPayload: object | null = null;
+let activityBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
 // LRU artwork cache keyed by "artist\x00title\x00album". Map insertion order gives
 // us LRU eviction for free: delete-then-re-set on read moves entry to the end.
 const ART_CACHE_MAX = 200;
@@ -589,7 +590,7 @@ function connectNativeHost(): void {
               timestamps: start !== undefined ? { start, end } : undefined,
               assets: {
                 large_image: artUrl ?? 'tidal-logo-1024',
-                large_text: track.album || track.title,
+                large_text: track.album || undefined,
                 small_image: artUrl ? 'tidal-logo-1024' : undefined,
                 small_text: artUrl ? 'TIDAL' : undefined,
               },
@@ -781,7 +782,7 @@ export function setActivity(activity: object, siteId?: string): void {
         ? a.timestamps.end
         : undefined;
 
-  lastActivity = a.details
+  const nextActivity = a.details
     ? {
         title: a.details,
         sub: a.state ?? '',
@@ -796,6 +797,27 @@ export function setActivity(activity: object, siteId?: string): void {
         firstButtonLabel: a.buttons?.[0]?.label,
       }
     : null;
+
+  // Notify the popup when visible metadata changes. On a track change, debounce
+  // by 1100 ms so the 300 ms and 1000 ms UpdateData triggers consolidate into
+  // one broadcast — by 1000 ms mediaSession.album and barTimes are both settled.
+  // Same-track updates (seek, timestamp tick) broadcast immediately.
+  if (JSON.stringify(nextActivity) !== JSON.stringify(lastActivity)) {
+    const titleChanged = nextActivity?.title !== lastActivity?.title;
+    lastActivity = nextActivity;
+    if (activityBroadcastTimer !== null) {
+      clearTimeout(activityBroadcastTimer);
+      activityBroadcastTimer = null;
+    }
+    if (titleChanged && nextActivity !== null) {
+      activityBroadcastTimer = setTimeout(() => {
+        activityBroadcastTimer = null;
+        broadcastStatus();
+      }, 1100);
+    } else {
+      broadcastStatus();
+    }
+  }
 
   // Dedup: skip if nothing has changed since the last send.
   // If a flush is pending with a different payload and we just returned to the
@@ -841,6 +863,10 @@ function cancelPendingActivityFlush(): void {
     clearTimeout(pendingActivityFlushTimer);
     pendingActivityFlushTimer = null;
   }
+  if (activityBroadcastTimer !== null) {
+    clearTimeout(activityBroadcastTimer);
+    activityBroadcastTimer = null;
+  }
   pendingActivityPayload = null;
   lastSentActivityJson = null;
   lastActivitySentAt = 0;
@@ -851,6 +877,7 @@ export function clearActivity(): void {
   presenceHolder = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
+  broadcastStatus();
 }
 
 // Release presence held by a specific source. No-op if another source holds it.
@@ -860,6 +887,7 @@ function releasePresence(sourceId: string): void {
   presenceHolder = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
+  broadcastStatus();
   maybeAutoUpdate();
 }
 
