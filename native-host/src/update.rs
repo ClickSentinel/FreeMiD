@@ -279,17 +279,14 @@ fn resolve_update_sources(
     validate_update_source_url(&latest_url, "latest API")?;
     validate_update_source_url(&releases_base, "releases base")?;
 
-    if latest_url != GITHUB_API_LATEST || releases_base != GITHUB_RELEASES_BASE {
-        eprintln!(
-            "[FreeMiD] Using updater source override\n  latest: {}\n  releases: {}",
-            latest_url, releases_base
-        );
+    let kind = if latest_url != GITHUB_API_LATEST || releases_base != GITHUB_RELEASES_BASE {
+        "override"
     } else {
-        eprintln!(
-            "[FreeMiD] Using updater source defaults\n  latest: {}\n  releases: {}",
-            latest_url, releases_base
-        );
-    }
+        "defaults"
+    };
+    eprintln!(
+        "[FreeMiD] Using updater source {kind}\n  latest: {latest_url}\n  releases: {releases_base}"
+    );
 
     Ok((latest_url, releases_base))
 }
@@ -426,29 +423,29 @@ fn download_to_staged(url: &str, dest: &Path, user_agent: &str) -> Result<String
 }
 
 fn download_string(url: &str, user_agent: &str) -> Result<String, UpdateError> {
-    const MAX_CHECKSUMS_BYTES: u64 = 1024 * 1024; // 1 MiB
+    const MAX_BYTES: u64 = 1024 * 1024; // 1 MiB
 
     let resp = http_agent()
         .get(url)
         .header("User-Agent", user_agent)
         .call()
-        .map_err(|e| UpdateError::Network(format!("Failed to fetch checksums ({url}): {e}")))?;
+        .map_err(|e| UpdateError::Network(format!("Failed to fetch ({url}): {e}")))?;
 
     let mut buf = Vec::new();
     resp.into_body()
         .into_reader()
-        .take(MAX_CHECKSUMS_BYTES + 1)
+        .take(MAX_BYTES + 1)
         .read_to_end(&mut buf)
-        .map_err(|e| UpdateError::Network(format!("Failed to read checksums body: {e}")))?;
+        .map_err(|e| UpdateError::Network(format!("Failed to read response body: {e}")))?;
 
-    if buf.len() as u64 > MAX_CHECKSUMS_BYTES {
+    if buf.len() as u64 > MAX_BYTES {
         return Err(UpdateError::ResponseTooLarge(format!(
-            "Checksums file exceeded max size of {MAX_CHECKSUMS_BYTES} bytes"
+            "Response exceeded max size of {MAX_BYTES} bytes ({url})"
         )));
     }
 
     String::from_utf8(buf)
-        .map_err(|e| UpdateError::Parse(format!("Checksums file is not valid UTF-8: {e}")))
+        .map_err(|e| UpdateError::Parse(format!("Response body is not valid UTF-8: {e}")))
 }
 
 /// Find the expected SHA-256 hex string for `artifact` in a `checksums.sha256` file.

@@ -1,6 +1,11 @@
+import { compareVersions, isUpdateInProgress } from '../background/helpers';
 import { githubLatestDownloadUrl, githubRepoUrl } from '../constants/github';
 import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
-import { isUnsupportedPlatformUpdateError } from './helpers';
+import {
+  artistFromActivity,
+  isUnsupportedPlatformUpdateError,
+  urlLike,
+} from './helpers';
 
 /**
  * FreeMiD — Popup
@@ -168,16 +173,6 @@ function formatTimestamp(seconds: number): string {
   return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
 function updateTimelineDisplay(): void {
   if (
     timelineStartSec == null ||
@@ -214,6 +209,11 @@ function stopTimelineTick(): void {
   if (timelineElapsed) timelineElapsed.textContent = '0:00';
   if (timelineTotal) timelineTotal.textContent = '0:00';
   if (elapsedBar) elapsedBar.classList.add('hidden');
+}
+
+function stopAllTicks(): void {
+  stopUptimeTick();
+  stopTimelineTick();
 }
 
 // ── Reconnect ─────────────────────────────────────────────────────────────────
@@ -418,20 +418,6 @@ type Status = {
   } | null;
 };
 
-function urlLike(value?: string): boolean {
-  return typeof value === 'string' && /^https?:\/\//i.test(value);
-}
-
-function isUpdateInProgress(updateStatus?: Status['updateStatus']): boolean {
-  if (!updateStatus) return false;
-  return (
-    updateStatus.status === 'requested' ||
-    updateStatus.status === 'checking' ||
-    updateStatus.status === 'downloading' ||
-    updateStatus.status === 'reconnecting'
-  );
-}
-
 function clearTimer(
   timer: ReturnType<typeof setInterval> | null,
   clearFn: (handle: ReturnType<typeof setInterval>) => void,
@@ -449,11 +435,14 @@ function setStatus(
   sub.textContent = message;
 }
 
-function artistFromActivity(act: NonNullable<Status['lastActivity']>): string {
-  const fromSub = act.sub?.replace(/^by\s+/i, '').trim();
-  if (fromSub) return fromSub;
-  if (act.activityName) return act.activityName;
-  return '';
+function setImageEl(el: HTMLImageElement, url: string | null): void {
+  if (url) {
+    el.src = url;
+    el.hidden = false;
+  } else {
+    el.removeAttribute('src');
+    el.hidden = true;
+  }
 }
 
 function fallbackLogoUrl(
@@ -496,8 +485,7 @@ function render(status: Status | null): void {
     }
     if (hostVersionEl) hostVersionEl.textContent = '';
     if (btnUpdate) btnUpdate.classList.remove('visible', 'spinning');
-    stopUptimeTick();
-    stopTimelineTick();
+    stopAllTicks();
     return;
   }
 
@@ -524,8 +512,7 @@ function render(status: Status | null): void {
       }
     } else {
       setStatus('connecting', 'Connecting…', 'Restarting native host');
-      stopUptimeTick();
-      stopTimelineTick();
+      stopAllTicks();
       if (activityPanel) activityPanel.hidden = true;
       return;
     }
@@ -544,13 +531,8 @@ function render(status: Status | null): void {
 
     if (status.updateStatus) {
       const s = status.updateStatus.status;
-      const inProgress =
-        s === 'requested' ||
-        s === 'checking' ||
-        s === 'downloading' ||
-        s === 'reconnecting';
 
-      if (inProgress) {
+      if (isUpdateInProgress(status.updateStatus)) {
         btnUpdate.classList.add('visible', 'spinning');
         btnUpdate.disabled = true;
         btnUpdate.textContent = s === 'reconnecting' ? 'Applying' : 'Updating';
@@ -628,8 +610,7 @@ function render(status: Status | null): void {
           ? 'Restarting native host with updated binary'
           : 'Waiting for native host update process',
       );
-      stopUptimeTick();
-      stopTimelineTick();
+      stopAllTicks();
       if (activityPanel) activityPanel.hidden = true;
       return;
     }
@@ -657,8 +638,7 @@ function render(status: Status | null): void {
       }
     }
 
-    stopUptimeTick();
-    stopTimelineTick();
+    stopAllTicks();
     if (activityPanel) activityPanel.hidden = true;
     return;
   }
@@ -671,8 +651,7 @@ function render(status: Status | null): void {
   hostCheckShown = false;
 
   if (!status.discordConnected) {
-    stopUptimeTick();
-    stopTimelineTick();
+    stopAllTicks();
     if (activityPanel) activityPanel.hidden = true;
     // Show "checking" for DISCORD_CHECK_DELAY_MS before revealing help panel
     if (!discordCheckShown) {
@@ -717,8 +696,7 @@ function render(status: Status | null): void {
       'Rich Presence paused',
       'Toggle to resume sending to Discord',
     );
-    stopUptimeTick();
-    stopTimelineTick();
+    stopAllTicks();
     if (activityPanel) activityPanel.hidden = true;
     return;
   }
@@ -744,27 +722,13 @@ function render(status: Status | null): void {
       : urlLike(act.smallImageKey)
         ? act.smallImageKey
         : null;
-    if (activityArt) {
-      if (artUrl) {
-        activityArt.src = artUrl;
-        activityArt.hidden = false;
-      } else {
-        activityArt.removeAttribute('src');
-        activityArt.hidden = true;
-      }
-    }
+    if (activityArt) setImageEl(activityArt, artUrl ?? null);
 
     if (activityLogo) {
       const logoUrl = urlLike(act.smallImageKey)
         ? act.smallImageKey
         : fallbackLogoUrl(act);
-      if (logoUrl) {
-        activityLogo.src = logoUrl;
-        activityLogo.hidden = false;
-      } else {
-        activityLogo.removeAttribute('src');
-        activityLogo.hidden = true;
-      }
+      setImageEl(activityLogo, logoUrl ?? null);
     }
 
     if (

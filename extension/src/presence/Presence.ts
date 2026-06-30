@@ -69,6 +69,18 @@ export class Presence {
     }
   }
 
+  private sendClear(): void {
+    if (!this.isContextValid()) return;
+    chrome.runtime
+      .sendMessage({ type: 'FREEMID_CLEAR_ACTIVITY' })
+      .catch(() => {});
+  }
+
+  private clearPendingTriggers(): void {
+    for (const t of this.pendingTriggerTimers) clearTimeout(t);
+    this.pendingTriggerTimers = [];
+  }
+
   on(event: 'UpdateData', callback: () => void | Promise<void>): void {
     if (event !== 'UpdateData') return;
 
@@ -145,10 +157,7 @@ export class Presence {
       clearInterval(this.intervalId);
       this.intervalId = undefined;
     }
-    if (!this.isContextValid()) return;
-    chrome.runtime
-      .sendMessage({ type: 'FREEMID_CLEAR_ACTIVITY' })
-      .catch(() => {});
+    this.sendClear();
   }
 
   /**
@@ -167,7 +176,7 @@ export class Presence {
    * timer chains that fire with stale or inconsistent DOM state.
    */
   scheduleTrigger(...delays: number[]): void {
-    for (const t of this.pendingTriggerTimers) clearTimeout(t);
+    this.clearPendingTriggers();
     this.pendingTriggerTimers = delays.map((d) =>
       setTimeout(() => this.triggerUpdate(), d),
     );
@@ -180,8 +189,7 @@ export class Presence {
    * cleanup handlers so they are removed automatically on re-injection.
    */
   freshSignal(): AbortSignal {
-    for (const t of this.pendingTriggerTimers) clearTimeout(t);
-    this.pendingTriggerTimers = [];
+    this.clearPendingTriggers();
 
     const KEY = '__freemid_events_abort';
     const prev = (globalThis as Record<string, unknown>)[KEY] as
@@ -228,10 +236,7 @@ export class Presence {
    * while keeping the tick running (unlike clearActivity which stops it).
    */
   clearPresenceData(): void {
-    if (!this.isContextValid()) return;
-    chrome.runtime
-      .sendMessage({ type: 'FREEMID_CLEAR_ACTIVITY' })
-      .catch(() => {});
+    this.sendClear();
   }
 
   /**

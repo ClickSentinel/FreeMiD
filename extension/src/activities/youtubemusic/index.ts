@@ -1,14 +1,13 @@
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
 import { Presence } from '../../presence/Presence';
+import { PlaybackAnchor } from '../../utils/PlaybackAnchor';
 import { parseClock } from '../../utils/parseClock';
 
 const presence = new Presence({
   clientId: import.meta.env.VITE_DISCORD_CLIENT_ID,
 });
 
-let activeTrackId: string | undefined;
-let playbackAnchorStart: number | undefined;
-let pausedAtWallClock: number | undefined;
+const anchor = new PlaybackAnchor();
 let lastPausedState: boolean | undefined;
 
 function getPlayerBarTimes(): { current?: number; duration?: number } {
@@ -134,7 +133,6 @@ presence.on('UpdateData', () => {
     return;
   }
 
-  const now = Math.floor(Date.now() / 1000);
   const playbackState = ms?.playbackState;
   const paused = playbackState
     ? playbackState !== 'playing'
@@ -147,7 +145,9 @@ presence.on('UpdateData', () => {
   // YouTube Music is a continuous stream — both video.currentTime and
   // video.duration accumulate across tracks and must never be used.
   // barTimes (scraped from the player bar) is the only reliable source.
-  const current = barTimes.current ?? 0;
+  // Pass barTimes.current as-is (possibly undefined) so PlaybackAnchor
+  // skips the drift check rather than re-anchoring to 0 when the bar hasn't loaded.
+  const current = barTimes.current;
   const duration = barTimes.duration ?? 0;
 
   const artUrl = getArtUrl();
@@ -158,46 +158,11 @@ presence.on('UpdateData', () => {
 
   const trackId = videoId || `${title}::${artist || ''}`;
 
-  let trackJustChanged = false;
-  if (trackId !== activeTrackId || playbackAnchorStart === undefined) {
-    activeTrackId = trackId;
-    pausedAtWallClock = undefined;
-    trackJustChanged = true;
-    // barTimes.current correctly shows position within the current song for
-    // both fresh injection and mid-session track changes, so we anchor directly.
-    // The update interval (~10 s) means we detect changes well after barTimes
-    // has already updated to the new song's position.
-    playbackAnchorStart = now - current;
-  }
-
-  if (paused) {
-    if (pausedAtWallClock === undefined) {
-      pausedAtWallClock = now;
-    }
-  } else if (playbackAnchorStart !== undefined) {
-    if (pausedAtWallClock !== undefined) {
-      // Shift anchor forward by pause duration so paused time is excluded.
-      playbackAnchorStart += now - pausedAtWallClock;
-      pausedAtWallClock = undefined;
-    }
-
-    if (!trackJustChanged && barTimes.current !== undefined) {
-      const expectedCurrent = now - playbackAnchorStart;
-      if (Math.abs(expectedCurrent - current) > 3) {
-        // Re-anchor on large drift (seek or stream discontinuity).
-        playbackAnchorStart = now - current;
-      }
-    }
-  }
-
-  const timestamps =
-    duration > 0 && playbackAnchorStart !== undefined
-      ? { start: playbackAnchorStart, end: playbackAnchorStart + duration }
-      : undefined;
+  const { timestamps } = anchor.update(trackId, current, duration, paused);
 
   // Paused: clear presence once on pause entry, then do nothing until resume.
   // clearPresenceData() sends a Discord clear without stopping the interval,
-  // so the anchor math above keeps running and resume restores correctly.
+  // so the anchor keeps running and resume restores correctly.
   if (paused) {
     if (lastPausedState === false) {
       presence.clearPresenceData();

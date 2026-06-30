@@ -356,6 +356,20 @@ where
 
 // ── Message dispatch ───────────────────────────────────────────────────────────
 
+fn run_ipc_op(
+    label: &str,
+    ipc: &Mutex<Option<DiscordIpc>>,
+    f: impl FnMut(&mut DiscordIpc) -> Result<(), IpcError>,
+) {
+    match with_reconnect(ipc, f) {
+        Ok(()) => send_status(true, None),
+        Err(e) => {
+            eprintln!("[FreeMiD] {} failed: {}", label, e);
+            send_status(false, Some(&e.to_string()));
+        }
+    }
+}
+
 fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), String> {
     let kind = msg.get("type").and_then(Value::as_str).unwrap_or("");
     match kind {
@@ -391,26 +405,14 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
             Ok(())
         }
         "SET_ACTIVITY" => {
-            let activity_value = msg.get("activity").cloned().unwrap_or(Value::Null);
-            let activity: Activity = serde_json::from_value(activity_value)
-                .map_err(|e| format!("invalid activity: {}", e))?;
-            match with_reconnect(ipc, |c| c.set_activity(&activity)) {
-                Ok(()) => send_status(true, None),
-                Err(e) => {
-                    eprintln!("[FreeMiD] SET_ACTIVITY failed: {}", e);
-                    send_status(false, Some(&e.to_string()));
-                }
-            }
+            let activity: Activity =
+                serde_json::from_value(msg.get("activity").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| format!("invalid activity: {}", e))?;
+            run_ipc_op("SET_ACTIVITY", ipc, |c| c.set_activity(&activity));
             Ok(())
         }
         "CLEAR_ACTIVITY" => {
-            match with_reconnect(ipc, |c| c.clear_activity()) {
-                Ok(()) => send_status(true, None),
-                Err(e) => {
-                    eprintln!("[FreeMiD] CLEAR_ACTIVITY failed: {}", e);
-                    send_status(false, Some(&e.to_string()));
-                }
-            }
+            run_ipc_op("CLEAR_ACTIVITY", ipc, |c| c.clear_activity());
             Ok(())
         }
         #[cfg(windows)]

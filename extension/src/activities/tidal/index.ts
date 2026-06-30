@@ -1,5 +1,6 @@
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
 import { Presence } from '../../presence/Presence';
+import { PlaybackAnchor } from '../../utils/PlaybackAnchor';
 import { parseClock } from '../../utils/parseClock';
 
 const presence = new Presence({
@@ -7,9 +8,7 @@ const presence = new Presence({
   updateInterval: 5,
 });
 
-let activeTrackUrl: string | undefined;
-let playbackAnchorStart: number | undefined;
-let pausedAtWallClock: number | undefined;
+const anchor = new PlaybackAnchor();
 let pausedConfirmTicks = 0;
 
 function text(sel: string): string {
@@ -100,40 +99,15 @@ presence.on('UpdateData', () => {
   const trackUrl = currentTrackUrl();
   const artUrl = currentArtworkUrl();
 
-  const now = Math.floor(Date.now() / 1000);
   const paused = !isPlaying();
   pausedConfirmTicks = paused ? pausedConfirmTicks + 1 : 0;
 
-  const trackChanged =
-    trackUrl !== activeTrackUrl || playbackAnchorStart === undefined;
-  if (trackChanged) {
-    activeTrackUrl = trackUrl;
-    playbackAnchorStart = now - current;
-    pausedAtWallClock = undefined;
-  }
-
-  if (paused) {
-    if (pausedAtWallClock === undefined) {
-      pausedAtWallClock = now;
-    }
-  } else if (playbackAnchorStart !== undefined) {
-    if (pausedAtWallClock !== undefined) {
-      playbackAnchorStart += now - pausedAtWallClock;
-      pausedAtWallClock = undefined;
-    }
-
-    if (!trackChanged) {
-      const expectedCurrent = now - playbackAnchorStart;
-      if (Math.abs(expectedCurrent - current) > 3) {
-        playbackAnchorStart = now - current;
-      }
-    }
-  }
-
-  const timestamps =
-    duration > 0 && playbackAnchorStart !== undefined
-      ? { start: playbackAnchorStart, end: playbackAnchorStart + duration }
-      : undefined;
+  const { timestamps } = anchor.update(
+    trackUrl ?? '',
+    current,
+    duration,
+    paused,
+  );
 
   if (paused) {
     // Require two consecutive paused ticks before clearing. This avoids
