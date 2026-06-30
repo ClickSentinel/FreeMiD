@@ -222,13 +222,17 @@ export async function lookupArtworkUrl(
 
     const top = ranked.slice(0, 10);
 
-    const rgUrls = top.filter((c) => c.rgId).map((c) =>
-      probe(`https://coverartarchive.org/release-group/${c.rgId}/front`),
-    );
+    const rgUrls = top
+      .filter((c) => c.rgId)
+      .map((c) =>
+        probe(`https://coverartarchive.org/release-group/${c.rgId}/front`),
+      );
     if (rgUrls.length > 0) {
       try {
         return await Promise.any(rgUrls);
-      } catch { /* all failed, fall through to release IDs */ }
+      } catch {
+        /* all failed, fall through to release IDs */
+      }
     }
 
     const relUrls = [...new Set(top.map((c) => c.releaseId))].map((id) =>
