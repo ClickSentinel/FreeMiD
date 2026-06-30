@@ -175,7 +175,6 @@ dependencies = [
  "thiserror 2.0.18",
  "ureq",
  "windows",
- "windows-core",
  "windows-sys 0.61.2",
 ]
 

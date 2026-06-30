@@ -214,28 +214,34 @@ export async function lookupArtworkUrl(
     const minScore = candidates.some((c) => c.score >= 2) ? 2 : 1;
     const ranked = candidates.filter((c) => c.score >= minScore);
 
-    for (const c of ranked.slice(0, 10)) {
-      if (c.rgId) {
-        const resp = await fetch(
-          `https://coverartarchive.org/release-group/${c.rgId}/front`,
-          { method: 'HEAD' },
-        );
-        if (resp.ok && parseUrl(resp.url)?.protocol === 'https:')
-          return resp.url;
+    const probe = async (url: string): Promise<string> => {
+      const resp = await fetch(url, { method: 'HEAD' });
+      if (resp.ok && parseUrl(resp.url)?.protocol === 'https:') return resp.url;
+      throw new Error('no art');
+    };
+
+    const top = ranked.slice(0, 10);
+
+    const rgUrls = top
+      .filter((c) => c.rgId)
+      .map((c) =>
+        probe(`https://coverartarchive.org/release-group/${c.rgId}/front`),
+      );
+    if (rgUrls.length > 0) {
+      try {
+        return await Promise.any(rgUrls);
+      } catch {
+        /* all failed, fall through to release IDs */
       }
     }
 
-    const triedRels = new Set<string>();
-    for (const c of ranked.slice(0, 10)) {
-      if (!triedRels.has(c.releaseId)) {
-        triedRels.add(c.releaseId);
-        const resp = await fetch(
-          `https://coverartarchive.org/release/${c.releaseId}/front-500`,
-          { method: 'HEAD' },
-        );
-        if (resp.ok && parseUrl(resp.url)?.protocol === 'https:')
-          return resp.url;
-      }
+    const relUrls = [...new Set(top.map((c) => c.releaseId))].map((id) =>
+      probe(`https://coverartarchive.org/release/${id}/front-500`),
+    );
+    if (relUrls.length > 0) {
+      try {
+        return await Promise.any(relUrls);
+      } catch {}
     }
 
     return null;
