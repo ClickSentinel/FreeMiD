@@ -388,7 +388,7 @@ impl DiscordIpc {
         }
     }
 
-    pub fn set_activity(&mut self, activity: &Activity) -> IpcResult<()> {
+    fn send_set_activity(&mut self, activity: &Value) -> IpcResult<()> {
         let payload = json!({
             "cmd": "SET_ACTIVITY",
             "args": { "pid": std::process::id(), "activity": activity },
@@ -399,14 +399,11 @@ impl DiscordIpc {
         Ok(())
     }
 
+    pub fn set_activity(&mut self, activity: &Activity) -> IpcResult<()> {
+        self.send_set_activity(&serde_json::to_value(activity)?)
+    }
+
     pub fn clear_activity(&mut self) -> IpcResult<()> {
-        let payload = json!({
-            "cmd": "SET_ACTIVITY",
-            "args": { "pid": std::process::id(), "activity": Value::Null },
-            "nonce": nonce(),
-        });
-        self.send_frame(OPCODE_FRAME, &payload)?;
-        self.drain_ack();
-        Ok(())
+        self.send_set_activity(&Value::Null)
     }
 }

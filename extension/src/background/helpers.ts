@@ -107,6 +107,18 @@ export function isUpdateAvailableForHost(
   return compareVersions(baselineVersion, hostVersion) > 0;
 }
 
+export function isUpdateInProgress(
+  updateStatus?: { status: string } | null,
+): boolean {
+  const s = updateStatus?.status;
+  return (
+    s === 'requested' ||
+    s === 'checking' ||
+    s === 'downloading' ||
+    s === 'reconnecting'
+  );
+}
+
 export async function lookupArtworkUrl(
   artist: string,
   title: string,

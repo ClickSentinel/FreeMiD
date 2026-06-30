@@ -16,6 +16,7 @@ import {
   compareVersions,
   isHostSelfUpdateSupported,
   isUpdateAvailableForHost,
+  isUpdateInProgress,
   lookupArtworkUrl,
   MIN_SELF_UPDATE_HOST_VERSION,
   MIN_WINDOWS_SELF_UPDATE_HOST_VERSION,
@@ -358,7 +359,7 @@ function scheduleManualReconnectRetry(delayMs: number): void {
         // sendToHost already reset/disconnected broken ports.
         connectNativeHost();
       }
-    } else if (!nativePort) {
+    } else {
       connectNativeHost();
     }
 
@@ -632,7 +633,7 @@ function connectNativeHost(): void {
           // picks up the newly replaced binary on disk.
           setTimeout(() => {
             autoReconnectScheduled = false;
-            reconnectNativeHost();
+            requestReconnectNativeHost();
           }, POST_UPDATE_RECONNECT_DELAY_MS);
         }
         broadcastStatus();
@@ -644,11 +645,7 @@ function connectNativeHost(): void {
       const err = chrome.runtime.lastError?.message ?? 'disconnected';
       console.warn(`[FreeMiD] Native host disconnected: ${err}`);
 
-      const wasUpdateInFlight =
-        updateStatus?.status === 'requested' ||
-        updateStatus?.status === 'checking' ||
-        updateStatus?.status === 'downloading' ||
-        updateStatus?.status === 'reconnecting';
+      const wasUpdateInFlight = isUpdateInProgress(updateStatus);
 
       clearUpdateRequestTimeout();
 
@@ -718,10 +715,6 @@ function sendToHost(payload: object): boolean {
     broadcastStatus();
     return false;
   }
-}
-
-function reconnectNativeHost(): void {
-  requestReconnectNativeHost();
 }
 
 function reconnectCooldownRemainingMs(): number {
@@ -882,12 +875,7 @@ async function handleTabNavigation(
 ): Promise<void> {
   const meta = matchActivity(url);
 
-  if (!meta) {
-    clearTabActivity(tabId);
-    return;
-  }
-
-  if (!enabledSites[meta.id]) {
+  if (!meta || !enabledSites[meta.id]) {
     clearTabActivity(tabId);
     return;
   }
@@ -1052,23 +1040,7 @@ chrome.runtime.onMessage.addListener(
       ) {
         sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
       }
-      sendResponse({
-        hostConnected,
-        discordConnected,
-        error: lastError,
-        paused,
-        lastActivity,
-        connectedSince: discordConnectedSince,
-        enabledSites,
-        hostVersion,
-        hostSelfUpdateSupported,
-        hostRuntimeOs,
-        hostRuntimeArch,
-        hostBinaryPath,
-        latestVersion,
-        updateAvailable: isUpdateAvailable(),
-        updateStatus,
-      });
+      sendResponse(buildStatus());
       return true;
     }
 
@@ -1082,24 +1054,8 @@ chrome.runtime.onMessage.addListener(
       // Require explicit capability from the host. Older hosts (e.g. v0.3.14)
       // do not emit this field and cannot process UPDATE, which otherwise leaves
       // the popup stuck in a spinning "requested" state.
-      if (hostSelfUpdateSupported !== true) {
-        clearApplyVerification();
-        clearPendingReconnectSession();
-        clearUpdateRequestTimeout();
-        updateStatus = {
-          status: 'failed',
-          error: manualInstallRequiredError(),
-        };
-        broadcastStatus();
-        sendResponse({
-          ok: false,
-          manualInstall: true,
-          error: manualInstallRequiredError(),
-        });
-        return true;
-      }
-
       if (
+        hostSelfUpdateSupported !== true ||
         !isHostSelfUpdateSupported(
           hostVersion,
           DEV_MIN_SELF_UPDATE_HOST_VERSION,
@@ -1185,26 +1141,29 @@ chrome.runtime.onSuspend.addListener(() => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function buildStatus() {
+  return {
+    hostConnected,
+    discordConnected,
+    error: lastError,
+    paused,
+    lastActivity,
+    connectedSince: discordConnectedSince,
+    enabledSites,
+    hostVersion,
+    hostSelfUpdateSupported,
+    hostRuntimeOs,
+    hostRuntimeArch,
+    hostBinaryPath,
+    latestVersion,
+    updateAvailable: isUpdateAvailable(),
+    updateStatus,
+  };
+}
+
 function broadcastStatus(): void {
   chrome.runtime
-    .sendMessage({
-      type: 'HOST_STATUS',
-      hostConnected,
-      discordConnected,
-      error: lastError,
-      paused,
-      lastActivity,
-      connectedSince: discordConnectedSince,
-      enabledSites,
-      hostVersion,
-      hostSelfUpdateSupported,
-      hostRuntimeOs,
-      hostRuntimeArch,
-      hostBinaryPath,
-      latestVersion,
-      updateAvailable: isUpdateAvailable(),
-      updateStatus,
-    })
+    .sendMessage({ type: 'HOST_STATUS', ...buildStatus() })
     .catch(() => {
       // popup might not be open — ignore
     });
