@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::Duration;
 use windows::Foundation::TypedEventHandler;
-use windows_future::{AsyncStatus, IAsyncOperation};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus, MediaPropertiesChangedEventArgs,
@@ -11,6 +10,7 @@ use windows::Media::Control::{
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
+use windows_future::{AsyncStatus, IAsyncOperation};
 
 static COM_INIT: Once = Once::new();
 static WATCHER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -110,7 +110,9 @@ fn ticks_to_secs(ticks: u64) -> f64 {
 }
 
 fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Option<DesktopTrack> {
-    let props = spin_wait(session.TryGetMediaPropertiesAsync().ok()?, |op| op.GetResults())?;
+    let props = spin_wait(session.TryGetMediaPropertiesAsync().ok()?, |op| {
+        op.GetResults()
+    })?;
 
     let title = props.Title().ok()?.to_string();
     if title.is_empty() {
@@ -255,8 +257,10 @@ pub fn query_tidal() -> Option<DesktopTrack> {
         // S_FALSE (already initialised on this thread) is also acceptable.
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     });
-    let manager =
-        spin_wait(GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?, |op| op.GetResults())?;
+    let manager = spin_wait(
+        GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?,
+        |op| op.GetResults(),
+    )?;
     let session = find_tidal_session(&manager)?;
     track_from_session(&session)
 }
