@@ -22,6 +22,16 @@
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
+      .no-transition * { transition: none !important; }
+
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: radial-gradient(ellipse at top left, rgba(255,255,255,0.07) 0%, transparent 60%);
+        pointer-events: none;
+        z-index: 99998;
+      }
 
       html { overflow: hidden; }
 
@@ -40,7 +50,7 @@
         align-items: center;
         gap: 12px;
         padding: 18px 18px 14px;
-        background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
+        background: var(--bg-0);
         border-bottom: 1px solid var(--border);
       }
 
@@ -60,18 +70,11 @@
         letter-spacing: -0.01em;
       }
 
-      header p {
-        font-size: 11px;
-        color: var(--text-2);
-        margin-top: 1px;
-      }
-
       .status {
         display: flex;
         align-items: center;
         gap: 10px;
         padding: 12px 18px;
-        background: var(--bg-1);
         border-bottom: 1px solid var(--border);
       }
 
@@ -92,7 +95,6 @@
         border-radius: 50%;
         background: inherit;
         opacity: 0.25;
-        z-index: -1;
       }
 
       .dot.connected   { background: var(--success); }
@@ -100,6 +102,13 @@
       .dot.error       { background: var(--danger); }
       .dot.connecting  { background: var(--warning); animation: pulse 1.4s ease-in-out infinite; }
 
+      .dot.connected::after { animation: dot-ping 3s ease-out infinite; }
+
+      @keyframes dot-ping {
+        0%   { transform: scale(1);   opacity: 0.35; }
+        75%  { transform: scale(2.4); opacity: 0; }
+        100% { transform: scale(2.4); opacity: 0; }
+      }
       @keyframes pulse {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.35; }
@@ -112,27 +121,35 @@
         font-size: 13px;
       }
 
-      .status-sub {
-        font-size: 11px;
-        color: var(--text-2);
+      .status-sub-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
         margin-top: 2px;
       }
+      .status-sub {
+        font-size: 12px;
+        color: var(--text-2);
+      }
+      .status-uptime {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-2);
+        background: rgba(255,255,255,0.08);
+        border-radius: 999px;
+        padding: 1px 7px;
+      }
+      .status-uptime:empty { display: none; }
 
       .status-text { min-width: 0; flex: 1; }
 
       .panel,
-      .control-row,
-      .help,
-      .now-playing,
-      footer {
+      .help {
         padding: 12px 18px;
         border-bottom: 1px solid var(--border);
       }
-
-      .panel,
-      .control-row,
-      footer {
-        background: var(--bg-1);
+      .now-playing {
+        border-bottom: 1px solid var(--border);
       }
 
       .help {
@@ -160,14 +177,6 @@
       .help p { margin-top: 2px; }
       .help.hidden { display: none; }
 
-      footer {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 11px;
-        border-bottom: 0;
-      }
-
       footer a {
         color: var(--text-2);
         text-decoration: none;
@@ -178,29 +187,43 @@
       .version-group { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
       .version-host-row { display: flex; align-items: center; gap: 6px; }
       .version-ext { color: var(--text-1); font-weight: 500; font-variant-numeric: tabular-nums; }
-      .version-host { color: var(--text-2); font-size: 10px; font-variant-numeric: tabular-nums; }
+      .version-host { color: var(--text-2); font-size: 11px; font-variant-numeric: tabular-nums; }
       .version-host:empty { display: none; }
       .btn-host-update {
         display: none;
         align-items: center;
-        gap: 4px;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        background: none;
+        border: none;
+        border-radius: 50%;
+        color: var(--warning);
+        cursor: pointer;
+        transition: opacity 0.15s;
+        flex-shrink: 0;
+      }
+      .btn-host-update:hover { opacity: 0.7; }
+      .btn-host-update:disabled { opacity: 0.45; cursor: not-allowed; }
+      .btn-host-update.visible { display: inline-flex; }
+      .btn-update-label { font-size: 11px; font-weight: 700; line-height: 1.4; }
+      .btn-update-label:empty { display: none; }
+      /* Switch to pill style when label has text */
+      .btn-host-update:has(.btn-update-label:not(:empty)) {
+        width: auto;
         padding: 1px 7px;
+        gap: 4px;
         border: 1px solid rgba(240, 178, 50, 0.45);
         background: rgba(240, 178, 50, 0.2);
         border-radius: 999px;
-        color: var(--warning);
-        font-size: 10px;
-        font-weight: 700;
-        cursor: pointer;
-        line-height: 1.4;
       }
-      .btn-host-update:hover { opacity: 0.86; }
-      .btn-host-update:disabled { opacity: 0.7; cursor: not-allowed; }
-      .btn-host-update.visible { display: inline-flex; }
+      .btn-host-update:has(.btn-update-label:not(:empty)) svg { display: none; }
+      .btn-host-update.spinning svg { display: none; }
       .btn-host-update.spinning::before {
         content: '';
-        width: 8px;
-        height: 8px;
+        width: 12px;
+        height: 12px;
         border: 1.5px solid currentColor;
         border-right-color: transparent;
         border-radius: 50%;
@@ -216,7 +239,7 @@
         border: 1px solid rgba(88, 101, 242, 0.35);
         border-radius: 6px;
         color: var(--accent);
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 600;
         cursor: pointer;
         transition: background 0.15s, opacity 0.15s;
@@ -255,21 +278,49 @@
       .toggle-btn[aria-checked="true"] .toggle-thumb { transform: translateX(16px); background: #fff; }
       .toggle-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-      .control-row {
+      .services-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
+        width: 100%;
+        background: none;
+        border: none;
+        padding: 0;
+        cursor: pointer;
+        color: inherit;
+        margin-bottom: 6px;
       }
-      .control-label { display: flex; flex-direction: column; gap: 2px; }
-      .control-label > span:first-child { font-size: 13px; font-weight: 600; color: var(--text-0); }
-      .control-sub { font-size: 11px; color: var(--text-2); }
-      .control-row[data-paused="true"] .control-sub { color: var(--warning); }
+      .services-header .panel-label { margin-bottom: 0; }
+      .services-count {
+        font-size: 11px;
+        color: var(--text-2);
+        background: rgba(255,255,255,0.07);
+        border-radius: 999px;
+        padding: 1px 7px;
+      }
+      .services-count:empty { display: none; }
+      .services-header-right { display: flex; align-items: center; gap: 6px; }
+      .services-chevron {
+        color: var(--text-2);
+        transition: transform 0.25s ease;
+        flex-shrink: 0;
+      }
+      .services-header[aria-expanded="false"] .services-chevron { transform: rotate(-90deg); }
+
+      .services-body {
+        display: grid;
+        grid-template-rows: 1fr;
+        overflow: hidden;
+        transition: grid-template-rows 0.25s ease;
+      }
+      .services-body.collapsed { grid-template-rows: 0fr; }
+      .services-body > .site-toggles { min-height: 0; }
 
       .site-toggles { display: flex; flex-direction: column; gap: 10px; }
       .site-row { display: flex; align-items: center; justify-content: space-between; }
       .site-label { display: flex; align-items: center; gap: 8px; }
       .site-label span { font-size: 12px; color: var(--text-1); }
-      .site-icon { width: 16px; height: 16px; border-radius: 3px; object-fit: cover; flex-shrink: 0; }
+      .site-icon { width: 20px; height: 20px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
 
       .btn-discord,
       .btn-install {
@@ -290,7 +341,7 @@
       .btn-install:hover { opacity: 0.85; }
 
       .panel-label {
-        font-size: 10px;
+        font-size: 11px;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.08em;
@@ -307,69 +358,60 @@
         text-overflow: ellipsis;
       }
 
-      .now-playing {
-        background: var(--bg-0);
-      }
+      .now-playing { background: var(--bg-0); }
       .now-playing.hidden { display: none; }
-      .now-top {
+      .now-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 10px;
-        margin-bottom: 8px;
+        padding: 12px 18px 10px;
       }
-      .now-artist {
-        min-width: 0;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 11px;
-        color: var(--text-1);
-      }
-      .now-artist-text {
-        min-width: 0;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .now-logo {
-        width: 18px;
-        height: 18px;
-        border-radius: 4px;
-        border: 1px solid var(--border);
-        object-fit: cover;
-        background: var(--bg-1);
-      }
+      .now-header .panel-label { margin-bottom: 0; }
       .now-main {
         display: grid;
-        grid-template-columns: 56px 1fr;
-        gap: 10px;
+        grid-template-columns: 88px 1fr;
+        gap: 12px;
         align-items: center;
+        padding: 0 18px 10px;
       }
-      /* Wrapper provides the border / live rainbow ring */
-      .now-art-wrap {
-        width: 56px;
-        height: 56px;
-        border-radius: 9px;
-        padding: 1.5px;
-        background: var(--border);
+      .now-art-container {
+        position: relative;
+        width: 88px;
+        height: 88px;
         flex-shrink: 0;
+      }
+      .now-art-wrap {
+        width: 100%;
+        height: 100%;
+        border-radius: 6px;
+        overflow: hidden;
+        box-shadow: 0 4px 22px rgba(0,0,0,0.65);
+        transition: box-shadow 0.5s ease;
+      }
+      .now-logo {
+        position: absolute;
+        bottom: -2px;
+        right: -2px;
+        width: 26px;
+        height: 26px;
+        border-radius: 4px;
+        object-fit: contain;
+        background: transparent;
       }
       .now-art {
         width: 100%;
         height: 100%;
-        border-radius: 7.5px;
-        border: none;
         object-fit: cover;
         background: var(--bg-1);
         display: block;
       }
       .now-text { min-width: 0; }
       .now-title {
-        font-size: 14px;
+        font-size: 15px;
         color: var(--text-0);
-        font-weight: 600;
+        font-weight: 700;
         overflow: hidden;
+        margin-bottom: 3px;
       }
       .now-title > span {
         display: block;
@@ -386,34 +428,58 @@
         0%, 15%   { transform: translateX(0); }
         85%, 100% { transform: translateX(var(--marquee-offset)); }
       }
-      .now-album {
-        margin-top: 2px;
-        font-size: 11px;
+      .now-artist-line {
+        display: block;
+        font-size: 13px;
         color: var(--text-1);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        margin-bottom: 2px;
       }
-      .now-timeline { margin-top: 10px; }
+      .now-album-line {
+        display: block;
+        font-size: 12px;
+        color: #737580;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .now-album-line:empty { display: none; }
+      .now-timeline { padding: 0 18px 12px; }
       .timeline-track {
+        position: relative;
         width: 100%;
         height: 4px;
         border-radius: 999px;
         background: #2a2e3a;
-        overflow: hidden;
+        overflow: visible;
       }
       .timeline-fill {
+        position: relative;
         height: 100%;
         width: 0%;
         background: var(--accent);
-        border-radius: inherit;
+        border-radius: 999px;
         transition: width 0.25s linear;
+      }
+      .timeline-fill::after {
+        content: '';
+        position: absolute;
+        left: 100%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--text-0);
+        box-shadow: 0 1px 4px rgba(0,0,0,0.35);
       }
       .timeline-times {
         margin-top: 5px;
         display: flex;
         justify-content: space-between;
-        font-size: 11px;
+        font-size: 12px;
         color: var(--text-2);
         font-variant-numeric: tabular-nums;
       }
@@ -421,106 +487,78 @@
       .gh-link { color: var(--text-2); display: flex; align-items: center; transition: color 0.15s; }
       .gh-link:hover { color: var(--text-0); }
 
-      .footer-left {
+      .header-title { flex: 1; min-width: 0; }
+      .header-meta {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 5px;
+        flex-shrink: 0;
       }
-
-      .btn-uninstall {
-        border: 0;
-        background: none;
+      .version-host:not(:empty)::before {
+        content: '·';
+        margin-right: 5px;
         color: var(--text-2);
-        font-size: 11px;
-        cursor: pointer;
-        padding: 0;
-        transition: color 0.15s;
-      }
-      .btn-uninstall:hover { color: var(--warning); }
-
-      /* ── Live presence flare (active only while a song is playing) ─────────── */
-
-      @property --holo-angle {
-        syntax: '<angle>';
-        inherits: false;
-        initial-value: 0deg;
-      }
-      @keyframes holo-spin {
-        to { --holo-angle: 360deg; }
-      }
-      @keyframes sparkle-a {
-        0%, 100% { opacity: 0.08; }
-        50%      { opacity: 1; }
-      }
-      @keyframes sparkle-b {
-        0%, 100% { opacity: 0.9; }
-        50%      { opacity: 0.05; }
+        opacity: 0.5;
       }
 
-      /* Floating rainbow box around the Now Playing section */
+/* ── Live presence flare (active only while a song is playing) ─────────── */
+
+      @keyframes ring-appear {
+        from { opacity: 0; transform: translateY(-6px) scale(0.96); }
+        to   { opacity: 1; transform: none; }
+      }
+      @keyframes label-shimmer {
+        0%   { background-position: 200% center; }
+        100% { background-position: -200% center; }
+      }
+
       .now-playing-ring {
-        margin: 6px 8px;
-        border-radius: 10px;
         transform-origin: top center;
-        transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-      }
-      @starting-style {
-        .now-playing-ring:not(:has(#activity-panel[hidden])) {
-          opacity: 0;
-          transform: translateY(-6px) scale(0.96);
-        }
       }
       .now-playing-ring:has(#activity-panel[hidden]) {
         display: none;
       }
       .now-playing-ring:not(:has(#activity-panel[hidden])) {
-        padding: 2px;
-        background: conic-gradient(from var(--holo-angle),
-          #ff758c, #ffb347, #ffd166, #06d6a0, #4cc9f0, #7b2ff7, #ff758c
+        animation: ring-appear 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      }
+
+      /* Shimmer sweep on the "Now Playing" label */
+      #activity-panel:not([hidden]) .panel-label {
+        background: linear-gradient(90deg,
+          var(--text-2) 20%,
+          var(--text-0) 50%,
+          var(--text-2) 80%
         );
-        animation: holo-spin 5s linear infinite;
-      }
-      .now-playing-ring:not(:has(#activity-panel[hidden])) .now-playing {
-        border-bottom: none;
-        border-radius: 8px;
-      }
-
-      /* Sparkle particles at the panel edges */
-      .now-playing { position: relative; overflow: hidden; }
-
-      #activity-panel:not([hidden]) .now-playing::before,
-      #activity-panel:not([hidden]) .now-playing::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-      }
-      /* Group A */
-      #activity-panel:not([hidden]) .now-playing::before {
-        background-image:
-          radial-gradient(circle 1.5px at  5%  9%, rgba(255,255,255,.95), transparent 60%),
-          radial-gradient(circle  1px at 95% 14%, rgba( 76,201,240,.95), transparent 60%),
-          radial-gradient(circle  2px at  4% 85%, rgba(255,209,102,.90), transparent 60%),
-          radial-gradient(circle  1px at 94% 80%, rgba(255,117,140,.90), transparent 60%);
-        animation: sparkle-a 2.4s ease-in-out infinite;
-      }
-      /* Group B — offset phase */
-      #activity-panel:not([hidden]) .now-playing::after {
-        background-image:
-          radial-gradient(circle  1px at 50%  5%, rgba(255,255,255,.85), transparent 60%),
-          radial-gradient(circle 1.5px at  4% 50%, rgba(123, 47,247,.90), transparent 60%),
-          radial-gradient(circle  1px at 96% 48%, rgba(  6,214,160,.90), transparent 60%),
-          radial-gradient(circle 1.5px at 60% 94%, rgba(255,179, 71,.85), transparent 60%);
-        animation: sparkle-b 3.3s ease-in-out infinite;
+        background-size: 200% auto;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        animation: label-shimmer 9s linear infinite;
       }
     </style>
   </head>
   <body>
     <header>
       <img class="logo" src="../icons/icon48.png" alt="FreeMiD" />
-      <div>
+      <div class="header-title">
         <h1>FreeMiD</h1>
-        <p>Open-source Discord Rich Presence</p>
+      </div>
+      <div class="header-meta">
+        <a class="gh-link" href="https://github.com/ClickSentinel/freemid" target="_blank" rel="noopener noreferrer" title="GitHub">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.341-3.369-1.341-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.031 1.531 1.031.892 1.529 2.341 1.088 2.91.832.091-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.682-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836a9.59 9.59 0 0 1 2.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.698 1.028 1.591 1.028 2.682 0 3.841-2.337 4.687-4.565 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.741 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
+          </svg>
+        </a>
+        <span class="version-ext" id="version"></span>
+        <span class="version-host" id="host-version"></span>
+        <button type="button" class="btn-host-update" id="btn-update" title="Update host">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="m16 12-4-4-4 4"/>
+            <path d="M12 16V8"/>
+          </svg>
+          <span class="btn-update-label" id="btn-update-label"></span>
+        </button>
       </div>
     </header>
 
@@ -528,24 +566,20 @@
       <div class="dot connecting" id="dot"></div>
       <div class="status-text">
         <div class="status-label" id="status-label">Connecting…</div>
-        <div class="status-sub" id="status-sub">Reaching native host</div>
+        <div class="status-sub-row">
+          <span class="status-sub" id="status-sub">Reaching native host</span>
+          <span class="status-uptime" id="status-uptime"></span>
+        </div>
       </div>
+      <button type="button" class="toggle-btn" id="btn-pause" role="switch" aria-checked="true" title="Pause/resume Rich Presence">
+        <span class="toggle-thumb"></span>
+      </button>
       <button type="button" class="btn-reconnect" id="btn-reconnect" title="Reconnect">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
           <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
         </svg>
         Reconnect
-      </button>
-    </div>
-
-    <div class="control-row" id="pause-row" data-paused="false">
-      <div class="control-label">
-        <span>Rich Presence</span>
-        <span class="control-sub" id="pause-sub">Active</span>
-      </div>
-      <button type="button" class="toggle-btn" id="btn-pause" role="switch" aria-checked="true" title="Pause/resume Rich Presence">
-        <span class="toggle-thumb"></span>
       </button>
     </div>
 
@@ -563,25 +597,20 @@
 
     <div class="now-playing-ring">
     <div class="now-playing" id="activity-panel" hidden>
-      <div class="panel-label">Now Playing</div>
-      <div class="now-top">
-        <div class="now-artist">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M9 18V5l12-2v13"/>
-            <circle cx="6" cy="18" r="3"/>
-            <circle cx="18" cy="16" r="3"/>
-          </svg>
-          <span class="now-artist-text" id="activity-meta-text"></span>
-        </div>
-        <img class="now-logo" id="activity-logo" alt="Service logo" hidden />
+      <div class="now-header">
+        <div class="panel-label">Now Playing</div>
       </div>
       <div class="now-main">
-        <div class="now-art-wrap">
-          <img class="now-art" id="activity-art" alt="Album art" hidden />
+        <div class="now-art-container">
+          <div class="now-art-wrap">
+            <img class="now-art" id="activity-art" alt="Album art" hidden />
+          </div>
+          <img class="now-logo" id="activity-logo" alt="Service logo" hidden />
         </div>
         <div class="now-text">
           <div class="now-title" id="activity-title"><span>—</span></div>
-          <div class="now-album" id="activity-sub"></div>
+          <span class="now-artist-line" id="activity-meta-text"></span>
+          <span class="now-album-line" id="activity-sub"></span>
         </div>
       </div>
       <div class="now-timeline hidden" id="elapsed-bar">
@@ -597,7 +626,16 @@
     </div><!-- /.now-playing-ring -->
 
     <div class="panel">
-      <div class="panel-label">Services</div>
+      <button type="button" class="services-header" id="services-header" aria-expanded="true" aria-controls="services-body">
+        <span class="panel-label">Services</span>
+        <div class="services-header-right">
+          <span class="services-count" id="services-count"></span>
+          <svg class="services-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </div>
+      </button>
+      <div class="services-body" id="services-body">
       <div class="site-toggles">
         <div class="site-row">
           <div class="site-label">
@@ -627,26 +665,9 @@
           </button>
         </div>
       </div>
+      </div><!-- /.services-body -->
     </div>
 
-    <footer>
-      <div class="footer-left">
-        <a class="gh-link" href="https://github.com/ClickSentinel/freemid" target="_blank" rel="noopener noreferrer" title="GitHub">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.341-3.369-1.341-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.031 1.531 1.031.892 1.529 2.341 1.088 2.91.832.091-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.682-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836a9.59 9.59 0 0 1 2.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.698 1.028 1.591 1.028 2.682 0 3.841-2.337 4.687-4.565 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.741 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
-          </svg>
-        </a>
-        <button type="button" class="btn-uninstall" id="btn-uninstall" title="Open setup and choose Uninstall">Uninstall</button>
-      </div>
-      <div class="version-group">
-        <span class="version-ext" id="version"></span>
-        <div class="version-host-row">
-          <button type="button" class="btn-host-update" id="btn-update" title="Update host">Update</button>
-          <span class="version-host" id="host-version"></span>
-        </div>
-      </div>
-    </footer>
-
-    <script src="index.js" type="module"></script>
+<script src="index.js" type="module"></script>
   </body>
 </html>

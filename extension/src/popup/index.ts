@@ -1,5 +1,5 @@
 import { compareVersions, isUpdateInProgress } from '../background/helpers';
-import { githubLatestDownloadUrl, githubRepoUrl } from '../constants/github';
+import { githubRepoUrl } from '../constants/github';
 import {
   artistFromActivity,
   fallbackLogoPath,
@@ -14,6 +14,9 @@ import {
 const dot = document.getElementById('dot') as HTMLElement;
 const label = document.getElementById('status-label') as HTMLElement;
 const sub = document.getElementById('status-sub') as HTMLElement;
+const statusUptime = document.getElementById(
+  'status-uptime',
+) as HTMLElement | null;
 const helpHost = document.getElementById('help-host') as HTMLElement;
 const helpDiscord = document.getElementById('help-discord') as HTMLElement;
 const btnInstallHost = document.getElementById(
@@ -64,9 +67,21 @@ const hostVersionEl = document.getElementById(
 const btnUpdate = document.getElementById(
   'btn-update',
 ) as HTMLButtonElement | null;
-const btnUninstall = document.getElementById(
-  'btn-uninstall',
+const btnUpdateLabel = document.getElementById(
+  'btn-update-label',
+) as HTMLElement | null;
+const servicesHeader = document.getElementById(
+  'services-header',
 ) as HTMLButtonElement | null;
+const servicesBody = document.getElementById(
+  'services-body',
+) as HTMLElement | null;
+const servicesCount = document.getElementById(
+  'services-count',
+) as HTMLElement | null;
+const nowArtWrap = document.querySelector(
+  '.now-art-wrap',
+) as HTMLElement | null;
 const elapsedBar = document.getElementById('elapsed-bar') as HTMLElement | null;
 const timelineFill = document.getElementById(
   'timeline-fill',
@@ -81,6 +96,7 @@ const extensionVersion = chrome.runtime.getManifest().version;
 const DEV_WINDOWS_SETUP_URL =
   import.meta.env.VITE_WINDOWS_SETUP_URL?.trim() || '';
 let latestStatus: Status | null = null;
+let hasRenderedOnce = false;
 let reconnectGraceUntilMs: number | null = null;
 let reconnectSawDisconnect = false;
 let reconnectPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -97,14 +113,7 @@ function windowsSetupUrl(): string {
 
 if (versionEl) versionEl.textContent = `v${extensionVersion}`;
 
-// Clarify button behavior by platform so Windows users know these actions open Setup.
 const isWindowsPlatform = /Win/i.test(navigator.platform);
-if (isWindowsPlatform) {
-  if (btnUninstall) {
-    btnUninstall.textContent = 'Open Setup';
-    btnUninstall.title = 'Open setup and choose Uninstall';
-  }
-}
 
 // ── Uptime ────────────────────────────────────────────────────────────────────
 
@@ -146,7 +155,9 @@ function formatUptime(ms: number): string {
 
 function updateUptimeDisplay(): void {
   if (connectedSinceMs == null) return;
-  sub.textContent = `Rich Presence is live · ${formatUptime(Date.now() - connectedSinceMs)}`;
+  sub.textContent = 'Rich Presence is live';
+  if (statusUptime)
+    statusUptime.textContent = formatUptime(Date.now() - connectedSinceMs);
 }
 
 function startUptimeTick(): void {
@@ -158,6 +169,79 @@ function stopUptimeTick(): void {
   clearTimer(uptimeInterval, clearInterval);
   uptimeInterval = null;
   connectedSinceMs = null;
+}
+
+// ── Services count ────────────────────────────────────────────────────────────
+
+function updateServicesCount(): void {
+  if (!servicesCount || !servicesBody) return;
+  const total = servicesBody.querySelectorAll('.toggle-btn').length;
+  const active = servicesBody.querySelectorAll(
+    '.toggle-btn[aria-checked="true"]',
+  ).length;
+  servicesCount.textContent = `${active} / ${total}`;
+}
+
+// ── Ambient art glow ──────────────────────────────────────────────────────────
+
+function sampleArtColor(
+  src: string,
+  callback: (rgb: string | null) => void,
+): void {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    try {
+      const canvas = document.createElement('canvas');
+      const S = 24;
+      canvas.width = S;
+      canvas.height = S;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        callback(null);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, S, S);
+      const { data } = ctx.getImageData(0, 0, S, S);
+      let r = 0,
+        g = 0,
+        b = 0,
+        n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const lum =
+          0.2126 * (data[i] ?? 0) +
+          0.7152 * (data[i + 1] ?? 0) +
+          0.0722 * (data[i + 2] ?? 0);
+        if (lum > 15 && lum < 235) {
+          r += data[i] ?? 0;
+          g += data[i + 1] ?? 0;
+          b += data[i + 2] ?? 0;
+          n++;
+        }
+      }
+      callback(
+        n > 0
+          ? `${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)}`
+          : null,
+      );
+    } catch {
+      callback(null);
+    }
+  };
+  img.onerror = () => callback(null);
+  img.src = src;
+}
+
+function applyArtGlow(artUrl: string | null): void {
+  if (!nowArtWrap) return;
+  if (!artUrl) {
+    nowArtWrap.style.boxShadow = '';
+    return;
+  }
+  sampleArtColor(artUrl, (rgb) => {
+    if (!nowArtWrap) return;
+    nowArtWrap.style.boxShadow = rgb ? `0 6px 48px 4px rgba(${rgb}, 0.75)` : '';
+  });
 }
 
 // ── Timeline bar (Discord-style) ─────────────────────────────────────────────
@@ -293,11 +377,29 @@ function wireSiteToggle(btn: HTMLButtonElement | null, siteId: string): void {
       siteId,
       enabled: nowEnabled,
     });
+    updateServicesCount();
   });
 }
 wireSiteToggle(toggleYT, 'youtube');
 wireSiteToggle(toggleYTM, 'youtubemusic');
 wireSiteToggle(toggleTidal, 'tidal');
+
+// ── Services accordion ────────────────────────────────────────────────────────
+
+function setServicesExpanded(expanded: boolean): void {
+  servicesHeader?.setAttribute('aria-expanded', String(expanded));
+  servicesBody?.classList.toggle('collapsed', !expanded);
+}
+
+void chrome.storage.local.get('servicesExpanded').then((result) => {
+  setServicesExpanded(result.servicesExpanded !== false);
+});
+
+servicesHeader?.addEventListener('click', () => {
+  const expanded = servicesHeader.getAttribute('aria-expanded') !== 'true';
+  setServicesExpanded(expanded);
+  void chrome.storage.local.set({ servicesExpanded: expanded });
+});
 
 // ── Open Discord ──────────────────────────────────────────────────────────────
 
@@ -376,13 +478,6 @@ btnInstallHost?.addEventListener('click', () => {
   void chrome.tabs.create({ url: installUrl });
 });
 
-btnUninstall?.addEventListener('click', () => {
-  const url = isWindowsPlatform
-    ? windowsSetupUrl()
-    : githubLatestDownloadUrl('uninstall.sh');
-  void chrome.tabs.create({ url });
-});
-
 // ── Render ────────────────────────────────────────────────────────────────────
 
 type Status = {
@@ -437,6 +532,7 @@ function setStatus(
   dot.className = `dot ${kind}`;
   label.textContent = title;
   sub.textContent = message;
+  if (statusUptime) statusUptime.textContent = '';
 }
 
 function setImageEl(el: HTMLImageElement, url: string | null): void {
@@ -453,7 +549,15 @@ function setToggle(btn: HTMLButtonElement | null, checked: boolean): void {
   btn?.setAttribute('aria-checked', String(checked));
 }
 
+function finaliseFirstRender(): void {
+  if (hasRenderedOnce) return;
+  hasRenderedOnce = true;
+  document.body.classList.add('no-transition');
+  requestAnimationFrame(() => document.body.classList.remove('no-transition'));
+}
+
 function render(status: Status | null): void {
+  finaliseFirstRender();
   latestStatus = status;
   helpHost.classList.add('hidden');
   helpDiscord.classList.add('hidden');
@@ -474,6 +578,7 @@ function render(status: Status | null): void {
     }
     if (hostVersionEl) hostVersionEl.textContent = '';
     if (btnUpdate) btnUpdate.classList.remove('visible', 'spinning');
+    if (btnUpdateLabel) btnUpdateLabel.textContent = '';
     reconnectBtn?.classList.add('visible');
     stopAllTicks();
     return;
@@ -526,7 +631,9 @@ function render(status: Status | null): void {
       if (isUpdateInProgress(status.updateStatus)) {
         btnUpdate.classList.add('visible', 'spinning');
         btnUpdate.disabled = true;
-        btnUpdate.textContent = s === 'reconnecting' ? 'Applying' : 'Updating';
+        if (btnUpdateLabel)
+          btnUpdateLabel.textContent =
+            s === 'reconnecting' ? 'Applying' : 'Updating';
         btnUpdate.title =
           s === 'downloading'
             ? 'Downloading host update...'
@@ -540,10 +647,10 @@ function render(status: Status | null): void {
           isWindowsPlatform &&
           isUnsupportedPlatformUpdateError(status.updateStatus.error)
         ) {
-          btnUpdate.textContent = 'Install Guide';
+          if (btnUpdateLabel) btnUpdateLabel.textContent = 'Install Guide';
           btnUpdate.title = 'Open install instructions';
         } else {
-          btnUpdate.textContent = 'Retry';
+          if (btnUpdateLabel) btnUpdateLabel.textContent = 'Retry';
           btnUpdate.title = status.updateStatus.error
             ? `Update failed: ${status.updateStatus.error}`
             : 'Update failed. Try again.';
@@ -551,12 +658,13 @@ function render(status: Status | null): void {
       } else {
         // up_to_date / success: hide the control until a new update is available.
         btnUpdate.classList.remove('visible');
+        if (btnUpdateLabel) btnUpdateLabel.textContent = '';
       }
     } else if (status.updateAvailable) {
       btnUpdate.classList.add('visible');
       btnUpdate.disabled = false;
       if (status.hostSelfUpdateSupported === false) {
-        btnUpdate.textContent = 'Install Guide';
+        if (btnUpdateLabel) btnUpdateLabel.textContent = 'Install Guide';
         btnUpdate.title =
           'Open install instructions for one-time host bootstrap';
       } else {
@@ -565,11 +673,12 @@ function render(status: Status | null): void {
           compareVersions(status.latestVersion, extensionVersion) > 0
             ? status.latestVersion
             : extensionVersion;
-        btnUpdate.textContent = 'Update';
+        if (btnUpdateLabel) btnUpdateLabel.textContent = '';
         btnUpdate.title = `Update host to v${availableVersion}`;
       }
     } else {
       btnUpdate.classList.remove('visible');
+      if (btnUpdateLabel) btnUpdateLabel.textContent = '';
     }
   }
 
@@ -582,6 +691,7 @@ function render(status: Status | null): void {
   setToggle(toggleYT, status.enabledSites?.youtube ?? true);
   setToggle(toggleYTM, status.enabledSites?.youtubemusic ?? true);
   setToggle(toggleTidal, status.enabledSites?.tidal ?? true);
+  updateServicesCount();
 
   if (!status.hostConnected) {
     if (discordCheckTimer) {
@@ -696,6 +806,7 @@ function render(status: Status | null): void {
   // Activity preview & timeline bar — only shown when fully connected and active
   const act = status.lastActivity;
   if (activityPanel) activityPanel.hidden = !act;
+  if (!act) applyArtGlow(null);
   if (act) {
     if (activityTitle) {
       let inner = activityTitle.querySelector('span');
@@ -739,6 +850,7 @@ function render(status: Status | null): void {
         ? act.smallImageKey
         : null;
     if (activityArt) setImageEl(activityArt, artUrl ?? null);
+    applyArtGlow(artUrl ?? null);
 
     if (activityLogo) {
       const logoPath = fallbackLogoPath(act);
@@ -778,6 +890,7 @@ function render(status: Status | null): void {
     updateUptimeDisplay();
   } else {
     sub.textContent = 'Rich Presence is live';
+    if (statusUptime) statusUptime.textContent = '';
   }
 }
 
