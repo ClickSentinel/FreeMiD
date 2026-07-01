@@ -203,8 +203,9 @@ presence.on('UpdateData', () => {
           !!navigator.mediaSession?.metadata?.album ||
           Date.now() - (trackSeenAt ?? 0) >= 1500;
         if (ready) {
-          clearInterval(albumPollTimer!);
+          const t = albumPollTimer;
           albumPollTimer = null;
+          if (t !== null) clearInterval(t);
           presence.triggerUpdate();
         }
       }, 50);
