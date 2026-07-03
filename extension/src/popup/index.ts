@@ -4,7 +4,9 @@ import {
   artistFromActivity,
   fallbackLogoPath,
   isUnsupportedPlatformUpdateError,
+  isWindowsPlatform,
   urlLike,
+  windowsSetupUrl,
 } from './helpers';
 
 /**
@@ -19,6 +21,9 @@ const statusUptime = document.getElementById(
 ) as HTMLElement | null;
 const helpHost = document.getElementById('help-host') as HTMLElement;
 const helpDiscord = document.getElementById('help-discord') as HTMLElement;
+const btnSettings = document.getElementById(
+  'btn-settings',
+) as HTMLButtonElement | null;
 const btnInstallHost = document.getElementById(
   'btn-install-host',
 ) as HTMLButtonElement | null;
@@ -60,10 +65,6 @@ const btnOpenDiscord = document.getElementById(
 const reconnectBtn = document.getElementById(
   'btn-reconnect',
 ) as HTMLButtonElement | null;
-const versionEl = document.getElementById('version');
-const hostVersionEl = document.getElementById(
-  'host-version',
-) as HTMLElement | null;
 const btnUpdate = document.getElementById(
   'btn-update',
 ) as HTMLButtonElement | null;
@@ -93,8 +94,15 @@ const timelineTotal = document.getElementById(
   'timeline-total',
 ) as HTMLElement | null;
 const extensionVersion = chrome.runtime.getManifest().version;
-const DEV_WINDOWS_SETUP_URL =
-  import.meta.env.VITE_WINDOWS_SETUP_URL?.trim() || '';
+
+function updateSettingsTitle(hostVersion?: string | null): void {
+  if (!btnSettings) return;
+  btnSettings.title = hostVersion
+    ? `Settings\nExtension v${extensionVersion}\nHost v${hostVersion}`
+    : `Settings\nExtension v${extensionVersion}`;
+}
+updateSettingsTitle();
+
 let latestStatus: Status | null = null;
 let hasRenderedOnce = false;
 let reconnectGraceUntilMs: number | null = null;
@@ -103,17 +111,6 @@ let reconnectPollTimer: ReturnType<typeof setInterval> | null = null;
 const RECONNECT_UI_GRACE_MS = 15_000;
 const RECONNECT_BUTTON_COOLDOWN_MS = 15_000;
 let reconnectButtonUnlockAtMs = 0;
-
-function windowsSetupUrl(): string {
-  // Keep env override for local testing, but default users to install docs.
-  return urlLike(DEV_WINDOWS_SETUP_URL)
-    ? DEV_WINDOWS_SETUP_URL
-    : githubRepoUrl('installation');
-}
-
-if (versionEl) versionEl.textContent = `v${extensionVersion}`;
-
-const isWindowsPlatform = /Win/i.test(navigator.platform);
 
 // ── Uptime ────────────────────────────────────────────────────────────────────
 
@@ -407,6 +404,12 @@ btnOpenDiscord?.addEventListener('click', () => {
   void chrome.tabs.create({ url: 'discord://' });
 });
 
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+btnSettings?.addEventListener('click', () => {
+  void chrome.runtime.openOptionsPage();
+});
+
 btnUpdate?.addEventListener('click', () => {
   if (btnUpdate?.disabled) return;
 
@@ -576,13 +579,15 @@ function render(status: Status | null): void {
     } else {
       setStatus('connecting', 'Connecting…', 'Reaching native host');
     }
-    if (hostVersionEl) hostVersionEl.textContent = '';
     if (btnUpdate) btnUpdate.classList.remove('visible', 'spinning');
     if (btnUpdateLabel) btnUpdateLabel.textContent = '';
     reconnectBtn?.classList.add('visible');
+    updateSettingsTitle(null);
     stopAllTicks();
     return;
   }
+
+  updateSettingsTitle(status.hostConnected ? status.hostVersion : null);
 
   const paused = status.paused ?? false;
 
@@ -612,13 +617,6 @@ function render(status: Status | null): void {
       if (activityPanel) activityPanel.hidden = true;
       return;
     }
-  }
-
-  // Host version
-  if (hostVersionEl) {
-    hostVersionEl.textContent = status.hostVersion
-      ? `host v${status.hostVersion}`
-      : '';
   }
 
   // Inline host update control

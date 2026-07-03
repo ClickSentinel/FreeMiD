@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   artistFromActivity,
   fallbackLogoPath,
   isUnsupportedPlatformUpdateError,
   urlLike,
+  windowsSetupUrl,
 } from './helpers';
 
 describe('popup helpers', () => {
@@ -59,5 +60,25 @@ describe('popup helpers', () => {
     ).toBe(false);
     expect(isUnsupportedPlatformUpdateError('network error')).toBe(false);
     expect(isUnsupportedPlatformUpdateError(undefined)).toBe(false);
+  });
+
+  describe('windowsSetupUrl', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('falls back to the install docs when no override is set', () => {
+      expect(windowsSetupUrl()).toBe(
+        'https://github.com/ClickSentinel/FreeMiD#installation',
+      );
+    });
+
+    it('uses the env override when it is a URL', () => {
+      vi.stubEnv(
+        'VITE_WINDOWS_SETUP_URL',
+        'http://127.0.0.1:8787/freemid-setup.exe',
+      );
+      expect(windowsSetupUrl()).toBe('http://127.0.0.1:8787/freemid-setup.exe');
+    });
   });
 });
