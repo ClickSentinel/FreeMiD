@@ -568,14 +568,23 @@ function finaliseFirstRender(): void {
 }
 
 // The toggles default to "on" in the markup and only get their real value
-// once a render() call actually reaches setToggle() below — which may not
-// be the first render() call (e.g. an initial null/reconnecting status
-// returns early). Gate the reveal on that instead of on first render, so a
-// stale "on" guess is never painted before being corrected without
-// suppressing the transition.
-function revealTogglesOnce(): void {
+// once a render() call actually reaches this point — which may not be the
+// first render() call (e.g. an initial null/reconnecting status returns
+// early). Gate the reveal on that instead of on first render, so a stale
+// "on" guess is never painted before being corrected.
+//
+// The real value is applied here *before* the toggle is revealed — not
+// simultaneously with revealing it — so there is no reliance on the browser
+// coalescing two separate DOM mutations (visibility + aria-checked) into a
+// single paint. Whatever the render() calls right after this do is then
+// necessarily a same-value no-op on this first pass.
+function revealTogglesOnce(status: Status): void {
   if (hasRevealedToggles) return;
   hasRevealedToggles = true;
+  setToggle(btnPause, !(status.paused ?? false));
+  setToggle(toggleYT, status.enabledSites?.youtube ?? true);
+  setToggle(toggleYTM, status.enabledSites?.youtubemusic ?? true);
+  setToggle(toggleTidal, status.enabledSites?.tidal ?? true);
   document.body.classList.add('no-transition');
   btnPause?.classList.remove('pending');
   toggleYT?.classList.remove('pending');
@@ -706,7 +715,7 @@ function render(status: Status | null): void {
   }
 
   // Pause toggle — toggle is ON when Rich Presence is active (not paused)
-  revealTogglesOnce();
+  revealTogglesOnce(status);
   setToggle(btnPause, !paused);
   if (pauseSub) pauseSub.textContent = paused ? 'Paused' : 'Active';
   if (pauseRow) pauseRow.dataset.paused = String(paused);
