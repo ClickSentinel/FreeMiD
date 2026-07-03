@@ -105,6 +105,7 @@ updateSettingsTitle();
 
 let latestStatus: Status | null = null;
 let hasRenderedOnce = false;
+let hasRevealedToggles = false;
 let reconnectGraceUntilMs: number | null = null;
 let reconnectSawDisconnect = false;
 let reconnectPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -563,9 +564,19 @@ function finaliseFirstRender(): void {
   if (hasRenderedOnce) return;
   hasRenderedOnce = true;
   document.body.classList.add('no-transition');
-  // The toggles default to "on" in the markup and only get their real value
-  // once this first render runs — reveal them now, in the same synchronous
-  // pass that sets that real value, so a stale guess is never painted.
+  requestAnimationFrame(() => document.body.classList.remove('no-transition'));
+}
+
+// The toggles default to "on" in the markup and only get their real value
+// once a render() call actually reaches setToggle() below — which may not
+// be the first render() call (e.g. an initial null/reconnecting status
+// returns early). Gate the reveal on that instead of on first render, so a
+// stale "on" guess is never painted before being corrected without
+// suppressing the transition.
+function revealTogglesOnce(): void {
+  if (hasRevealedToggles) return;
+  hasRevealedToggles = true;
+  document.body.classList.add('no-transition');
   btnPause?.classList.remove('pending');
   toggleYT?.classList.remove('pending');
   toggleYTM?.classList.remove('pending');
@@ -695,6 +706,7 @@ function render(status: Status | null): void {
   }
 
   // Pause toggle — toggle is ON when Rich Presence is active (not paused)
+  revealTogglesOnce();
   setToggle(btnPause, !paused);
   if (pauseSub) pauseSub.textContent = paused ? 'Paused' : 'Active';
   if (pauseRow) pauseRow.dataset.paused = String(paused);
