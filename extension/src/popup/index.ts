@@ -563,6 +563,13 @@ function finaliseFirstRender(): void {
   if (hasRenderedOnce) return;
   hasRenderedOnce = true;
   document.body.classList.add('no-transition');
+  // The toggles default to "on" in the markup and only get their real value
+  // once this first render runs — reveal them now, in the same synchronous
+  // pass that sets that real value, so a stale guess is never painted.
+  btnPause?.classList.remove('pending');
+  toggleYT?.classList.remove('pending');
+  toggleYTM?.classList.remove('pending');
+  toggleTidal?.classList.remove('pending');
   requestAnimationFrame(() => document.body.classList.remove('no-transition'));
 }
 
