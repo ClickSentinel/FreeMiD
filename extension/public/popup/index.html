@@ -303,6 +303,7 @@
       }
       .services-body.collapsed { grid-template-rows: 0fr; }
       .services-body > .site-toggles { min-height: 0; }
+      .services-body.pending { visibility: hidden; }
 
       .site-toggles { display: flex; flex-direction: column; gap: 10px; }
       .site-row { display: flex; align-items: center; justify-content: space-between; }
@@ -632,7 +633,7 @@
           </svg>
         </div>
       </button>
-      <div class="services-body" id="services-body">
+      <div class="services-body pending" id="services-body">
       <div class="site-toggles">
         <div class="site-row">
           <div class="site-label">

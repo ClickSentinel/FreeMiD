@@ -389,7 +389,14 @@ function setServicesExpanded(expanded: boolean): void {
 }
 
 void chrome.storage.local.get('servicesExpanded').then((result) => {
+  // The panel starts hidden (see the "pending" class in the HTML) so the
+  // default expanded markup is never shown before we know the real saved
+  // state — reading it is async and can be slow after the extension has
+  // been idle, which previously caused a visible flash-then-collapse.
+  document.body.classList.add('no-transition');
   setServicesExpanded(result.servicesExpanded !== false);
+  servicesBody?.classList.remove('pending');
+  requestAnimationFrame(() => document.body.classList.remove('no-transition'));
 });
 
 servicesHeader?.addEventListener('click', () => {
