@@ -177,18 +177,6 @@
       .help p { margin-top: 2px; }
       .help.hidden { display: none; }
 
-      footer a {
-        color: var(--text-2);
-        text-decoration: none;
-        transition: color 0.15s;
-      }
-      footer a:hover { color: var(--accent); }
-
-      .version-group { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
-      .version-host-row { display: flex; align-items: center; gap: 6px; }
-      .version-ext { color: var(--text-1); font-weight: 500; font-variant-numeric: tabular-nums; }
-      .version-host { color: var(--text-2); font-size: 11px; font-variant-numeric: tabular-nums; }
-      .version-host:empty { display: none; }
       .btn-host-update {
         display: none;
         align-items: center;
@@ -315,6 +303,7 @@
       }
       .services-body.collapsed { grid-template-rows: 0fr; }
       .services-body > .site-toggles { min-height: 0; }
+      .pending { visibility: hidden; }
 
       .site-toggles { display: flex; flex-direction: column; gap: 10px; }
       .site-row { display: flex; align-items: center; justify-content: space-between; }
@@ -487,6 +476,18 @@
       .gh-link { color: var(--text-2); display: flex; align-items: center; transition: color 0.15s; }
       .gh-link:hover { color: var(--text-0); }
 
+      .btn-settings {
+        display: flex;
+        align-items: center;
+        background: none;
+        border: none;
+        padding: 0;
+        color: var(--text-2);
+        cursor: pointer;
+        transition: color 0.15s;
+      }
+      .btn-settings:hover { color: var(--text-0); }
+
       .header-title { flex: 1; min-width: 0; }
       .header-meta {
         display: flex;
@@ -494,13 +495,6 @@
         gap: 5px;
         flex-shrink: 0;
       }
-      .version-host:not(:empty)::before {
-        content: '·';
-        margin-right: 5px;
-        color: var(--text-2);
-        opacity: 0.5;
-      }
-
 /* ── Live presence flare (active only while a song is playing) ─────────── */
 
       @keyframes ring-appear {
@@ -549,8 +543,12 @@
             <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.341-3.369-1.341-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.031 1.531 1.031.892 1.529 2.341 1.088 2.91.832.091-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.682-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836a9.59 9.59 0 0 1 2.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.698 1.028 1.591 1.028 2.682 0 3.841-2.337 4.687-4.565 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.741 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
           </svg>
         </a>
-        <span class="version-ext" id="version"></span>
-        <span class="version-host" id="host-version"></span>
+        <button type="button" class="btn-settings" id="btn-settings" title="Settings">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
         <button type="button" class="btn-host-update" id="btn-update" title="Update host">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="10"/>
@@ -571,7 +569,7 @@
           <span class="status-uptime" id="status-uptime"></span>
         </div>
       </div>
-      <button type="button" class="toggle-btn" id="btn-pause" role="switch" aria-checked="true" title="Pause/resume Rich Presence">
+      <button type="button" class="toggle-btn pending" id="btn-pause" role="switch" aria-checked="true" title="Pause/resume Rich Presence">
         <span class="toggle-thumb"></span>
       </button>
       <button type="button" class="btn-reconnect" id="btn-reconnect" title="Reconnect">
@@ -635,14 +633,14 @@
           </svg>
         </div>
       </button>
-      <div class="services-body" id="services-body">
+      <div class="services-body pending" id="services-body">
       <div class="site-toggles">
         <div class="site-row">
           <div class="site-label">
             <img class="site-icon" src="../icons/youtube-logo-1024.png" alt="" />
             <span>YouTube</span>
           </div>
-          <button type="button" class="toggle-btn" id="toggle-youtube" role="switch" aria-checked="true" title="Toggle YouTube activity">
+          <button type="button" class="toggle-btn pending" id="toggle-youtube" role="switch" aria-checked="true" title="Toggle YouTube activity">
             <span class="toggle-thumb"></span>
           </button>
         </div>
@@ -651,7 +649,7 @@
             <img class="site-icon" src="../icons/ytmusic-logo-1024.png" alt="" />
             <span>YouTube Music</span>
           </div>
-          <button type="button" class="toggle-btn" id="toggle-ytm" role="switch" aria-checked="true" title="Toggle YouTube Music activity">
+          <button type="button" class="toggle-btn pending" id="toggle-ytm" role="switch" aria-checked="true" title="Toggle YouTube Music activity">
             <span class="toggle-thumb"></span>
           </button>
         </div>
@@ -660,7 +658,7 @@
             <img class="site-icon" src="../icons/tidal-logo-1024.png" alt="" />
             <span>TIDAL</span>
           </div>
-          <button type="button" class="toggle-btn" id="toggle-tidal" role="switch" aria-checked="true" title="Toggle TIDAL activity">
+          <button type="button" class="toggle-btn pending" id="toggle-tidal" role="switch" aria-checked="true" title="Toggle TIDAL activity">
             <span class="toggle-thumb"></span>
           </button>
         </div>

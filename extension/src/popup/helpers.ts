@@ -1,3 +1,4 @@
+import { githubRepoUrl } from '../constants/github';
 import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
 
 export type ActivityPreview = {
@@ -6,8 +7,19 @@ export type ActivityPreview = {
   smallImageText?: string;
 };
 
+export const isWindowsPlatform = /Win/i.test(navigator.platform);
+
 export function urlLike(value?: string): boolean {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+export function windowsSetupUrl(): string {
+  // Keep env override for local testing, but default users to install docs.
+  const devWindowsSetupUrl =
+    import.meta.env.VITE_WINDOWS_SETUP_URL?.trim() || '';
+  return urlLike(devWindowsSetupUrl)
+    ? devWindowsSetupUrl
+    : githubRepoUrl('installation');
 }
 
 export function artistFromActivity(act: ActivityPreview): string {

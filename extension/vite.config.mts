@@ -23,6 +23,7 @@ export default defineConfig({
       input: {
         'background/index': resolve(here, 'src/background/index.ts'),
         'popup/index': resolve(here, 'src/popup/index.ts'),
+        'settings/index': resolve(here, 'src/settings/index.ts'),
         // Activities are built separately via scripts/build-activities.mjs
         // so they get IIFE format (self-contained, no shared chunks).
       },

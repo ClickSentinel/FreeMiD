@@ -4,7 +4,9 @@ import {
   artistFromActivity,
   fallbackLogoPath,
   isUnsupportedPlatformUpdateError,
+  isWindowsPlatform,
   urlLike,
+  windowsSetupUrl,
 } from './helpers';
 
 /**
@@ -19,6 +21,9 @@ const statusUptime = document.getElementById(
 ) as HTMLElement | null;
 const helpHost = document.getElementById('help-host') as HTMLElement;
 const helpDiscord = document.getElementById('help-discord') as HTMLElement;
+const btnSettings = document.getElementById(
+  'btn-settings',
+) as HTMLButtonElement | null;
 const btnInstallHost = document.getElementById(
   'btn-install-host',
 ) as HTMLButtonElement | null;
@@ -60,10 +65,6 @@ const btnOpenDiscord = document.getElementById(
 const reconnectBtn = document.getElementById(
   'btn-reconnect',
 ) as HTMLButtonElement | null;
-const versionEl = document.getElementById('version');
-const hostVersionEl = document.getElementById(
-  'host-version',
-) as HTMLElement | null;
 const btnUpdate = document.getElementById(
   'btn-update',
 ) as HTMLButtonElement | null;
@@ -93,27 +94,24 @@ const timelineTotal = document.getElementById(
   'timeline-total',
 ) as HTMLElement | null;
 const extensionVersion = chrome.runtime.getManifest().version;
-const DEV_WINDOWS_SETUP_URL =
-  import.meta.env.VITE_WINDOWS_SETUP_URL?.trim() || '';
+
+function updateSettingsTitle(hostVersion?: string | null): void {
+  if (!btnSettings) return;
+  btnSettings.title = hostVersion
+    ? `Settings\nExtension v${extensionVersion}\nHost v${hostVersion}`
+    : `Settings\nExtension v${extensionVersion}`;
+}
+updateSettingsTitle();
+
 let latestStatus: Status | null = null;
 let hasRenderedOnce = false;
+let hasRevealedToggles = false;
 let reconnectGraceUntilMs: number | null = null;
 let reconnectSawDisconnect = false;
 let reconnectPollTimer: ReturnType<typeof setInterval> | null = null;
 const RECONNECT_UI_GRACE_MS = 15_000;
 const RECONNECT_BUTTON_COOLDOWN_MS = 15_000;
 let reconnectButtonUnlockAtMs = 0;
-
-function windowsSetupUrl(): string {
-  // Keep env override for local testing, but default users to install docs.
-  return urlLike(DEV_WINDOWS_SETUP_URL)
-    ? DEV_WINDOWS_SETUP_URL
-    : githubRepoUrl('installation');
-}
-
-if (versionEl) versionEl.textContent = `v${extensionVersion}`;
-
-const isWindowsPlatform = /Win/i.test(navigator.platform);
 
 // ── Uptime ────────────────────────────────────────────────────────────────────
 
@@ -392,7 +390,14 @@ function setServicesExpanded(expanded: boolean): void {
 }
 
 void chrome.storage.local.get('servicesExpanded').then((result) => {
+  // The panel starts hidden (see the "pending" class in the HTML) so the
+  // default expanded markup is never shown before we know the real saved
+  // state — reading it is async and can be slow after the extension has
+  // been idle, which previously caused a visible flash-then-collapse.
+  document.body.classList.add('no-transition');
   setServicesExpanded(result.servicesExpanded !== false);
+  servicesBody?.classList.remove('pending');
+  requestAnimationFrame(() => document.body.classList.remove('no-transition'));
 });
 
 servicesHeader?.addEventListener('click', () => {
@@ -405,6 +410,12 @@ servicesHeader?.addEventListener('click', () => {
 
 btnOpenDiscord?.addEventListener('click', () => {
   void chrome.tabs.create({ url: 'discord://' });
+});
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+btnSettings?.addEventListener('click', () => {
+  void chrome.runtime.openOptionsPage();
 });
 
 btnUpdate?.addEventListener('click', () => {
@@ -556,6 +567,32 @@ function finaliseFirstRender(): void {
   requestAnimationFrame(() => document.body.classList.remove('no-transition'));
 }
 
+// The toggles default to "on" in the markup and only get their real value
+// once a render() call actually reaches this point — which may not be the
+// first render() call (e.g. an initial null/reconnecting status returns
+// early). Gate the reveal on that instead of on first render, so a stale
+// "on" guess is never painted before being corrected.
+//
+// The real value is applied here *before* the toggle is revealed — not
+// simultaneously with revealing it — so there is no reliance on the browser
+// coalescing two separate DOM mutations (visibility + aria-checked) into a
+// single paint. Whatever the render() calls right after this do is then
+// necessarily a same-value no-op on this first pass.
+function revealTogglesOnce(status: Status): void {
+  if (hasRevealedToggles) return;
+  hasRevealedToggles = true;
+  setToggle(btnPause, !(status.paused ?? false));
+  setToggle(toggleYT, status.enabledSites?.youtube ?? true);
+  setToggle(toggleYTM, status.enabledSites?.youtubemusic ?? true);
+  setToggle(toggleTidal, status.enabledSites?.tidal ?? true);
+  document.body.classList.add('no-transition');
+  btnPause?.classList.remove('pending');
+  toggleYT?.classList.remove('pending');
+  toggleYTM?.classList.remove('pending');
+  toggleTidal?.classList.remove('pending');
+  requestAnimationFrame(() => document.body.classList.remove('no-transition'));
+}
+
 function render(status: Status | null): void {
   finaliseFirstRender();
   latestStatus = status;
@@ -576,13 +613,15 @@ function render(status: Status | null): void {
     } else {
       setStatus('connecting', 'Connecting…', 'Reaching native host');
     }
-    if (hostVersionEl) hostVersionEl.textContent = '';
     if (btnUpdate) btnUpdate.classList.remove('visible', 'spinning');
     if (btnUpdateLabel) btnUpdateLabel.textContent = '';
     reconnectBtn?.classList.add('visible');
+    updateSettingsTitle(null);
     stopAllTicks();
     return;
   }
+
+  updateSettingsTitle(status.hostConnected ? status.hostVersion : null);
 
   const paused = status.paused ?? false;
 
@@ -612,13 +651,6 @@ function render(status: Status | null): void {
       if (activityPanel) activityPanel.hidden = true;
       return;
     }
-  }
-
-  // Host version
-  if (hostVersionEl) {
-    hostVersionEl.textContent = status.hostVersion
-      ? `host v${status.hostVersion}`
-      : '';
   }
 
   // Inline host update control
@@ -683,6 +715,7 @@ function render(status: Status | null): void {
   }
 
   // Pause toggle — toggle is ON when Rich Presence is active (not paused)
+  revealTogglesOnce(status);
   setToggle(btnPause, !paused);
   if (pauseSub) pauseSub.textContent = paused ? 'Paused' : 'Active';
   if (pauseRow) pauseRow.dataset.paused = String(paused);

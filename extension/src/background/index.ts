@@ -1060,25 +1060,31 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (msg.type === 'GET_STATUS') {
-      // Return the cached state immediately (kept fresh by the keepalive PING).
-      // If the port isn't open yet, try to connect — the onMessage STATUS
-      // response will broadcast the real state to the popup shortly after.
-      if (!nativePort) connectNativeHost();
-      if (!latestVersion) {
-        void checkForUpdates();
-      }
-      // Trigger an immediate desktop media poll when the popup opens so there
-      // is no need to wait for the next keepalive alarm (~24 s).
-      if (
-        nativePort &&
-        hostRuntimeOs === 'windows' &&
-        enabledSites.tidal &&
-        !paused &&
-        ![...activeActivityTabs.values()].includes('tidal')
-      ) {
-        sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
-      }
-      sendResponse(buildStatus());
+      // Wait for persisted state (paused/enabledSites) to finish loading before
+      // answering — otherwise a request that races a cold service-worker start
+      // gets the hardcoded module defaults instead of the user's real saved
+      // preferences, which then visibly corrects itself moments later.
+      void stateLoaded.then(() => {
+        // Return the cached state immediately (kept fresh by the keepalive PING).
+        // If the port isn't open yet, try to connect — the onMessage STATUS
+        // response will broadcast the real state to the popup shortly after.
+        if (!nativePort) connectNativeHost();
+        if (!latestVersion) {
+          void checkForUpdates();
+        }
+        // Trigger an immediate desktop media poll when the popup opens so there
+        // is no need to wait for the next keepalive alarm (~24 s).
+        if (
+          nativePort &&
+          hostRuntimeOs === 'windows' &&
+          enabledSites.tidal &&
+          !paused &&
+          ![...activeActivityTabs.values()].includes('tidal')
+        ) {
+          sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
+        }
+        sendResponse(buildStatus());
+      });
       return true;
     }
 
@@ -1254,28 +1260,38 @@ async function checkForUpdates(): Promise<void> {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
-// Load persisted state (pause flag, site toggles, pending reconnect) before connecting.
-void Promise.all([
-  chrome.storage.local.get([
+// Load persisted state (pause flag, site toggles) before answering GET_STATUS —
+// until this resolves, `paused`/`enabledSites` still hold their hardcoded
+// module-level defaults, and a GET_STATUS message that arrives while the
+// service worker is still waking up would otherwise get those wrong defaults
+// instead of the user's real saved preferences.
+const stateLoaded: Promise<void> = chrome.storage.local
+  .get([
     STORAGE_KEYS.paused,
     STORAGE_KEYS.enabledSites,
     STORAGE_KEYS.latestVersion,
-  ]),
+  ])
+  .then((stored) => {
+    if (typeof stored[STORAGE_KEYS.paused] === 'boolean')
+      paused = stored[STORAGE_KEYS.paused] as boolean;
+    if (
+      stored[STORAGE_KEYS.enabledSites] &&
+      typeof stored[STORAGE_KEYS.enabledSites] === 'object'
+    ) {
+      enabledSites = {
+        ...enabledSites,
+        ...(stored[STORAGE_KEYS.enabledSites] as Record<string, boolean>),
+      };
+    }
+    if (typeof stored[STORAGE_KEYS.latestVersion] === 'string')
+      latestVersion = stored[STORAGE_KEYS.latestVersion] as string;
+  });
+
+// Load pending reconnect (session-scoped) alongside persisted state, then connect.
+void Promise.all([
+  stateLoaded,
   chrome.storage.session.get(SESSION_KEYS.pendingReconnect),
-]).then(([stored, session]) => {
-  if (typeof stored[STORAGE_KEYS.paused] === 'boolean')
-    paused = stored[STORAGE_KEYS.paused] as boolean;
-  if (
-    stored[STORAGE_KEYS.enabledSites] &&
-    typeof stored[STORAGE_KEYS.enabledSites] === 'object'
-  ) {
-    enabledSites = {
-      ...enabledSites,
-      ...(stored[STORAGE_KEYS.enabledSites] as Record<string, boolean>),
-    };
-  }
-  if (typeof stored[STORAGE_KEYS.latestVersion] === 'string')
-    latestVersion = stored[STORAGE_KEYS.latestVersion] as string;
+]).then(([, session]) => {
   connectNativeHost();
   // Restore a pending post-update reconnect if the SW was suspended before
   // the reconnect timer fired. startApplyVerification will send PINGs and
