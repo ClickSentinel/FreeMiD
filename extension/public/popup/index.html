@@ -22,6 +22,9 @@
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
+      /* biome-ignore lint/complexity/noImportantStyles: intentional global kill-switch that must
+         always beat any component's own transition regardless of specificity — used to suppress
+         first-paint flashes when restoring persisted UI state (see popup/index.ts). */
       .no-transition * { transition: none !important; }
 
       body::before {
@@ -207,6 +210,9 @@
         border-radius: 999px;
       }
       .btn-host-update:has(.btn-update-label:not(:empty)) svg { display: none; }
+      /* biome-ignore lint/style/noDescendingSpecificity: both rules set the same
+         `display: none` value for this element, so which one "wins" when both
+         match (spinning with a label) doesn't change the outcome. */
       .btn-host-update.spinning svg { display: none; }
       .btn-host-update.spinning::before {
         content: '';
@@ -236,8 +242,15 @@
       .btn-reconnect.visible { display: flex; }
       .btn-reconnect:hover { background: rgba(88, 101, 242, 0.28); }
       .btn-reconnect:disabled { opacity: 0.45; cursor: not-allowed; }
+      /* biome-ignore lint/style/noDescendingSpecificity: flagged against
+         .btn-host-update's svg rule above, but .btn-reconnect and .btn-host-update
+         are mutually exclusive classes on different buttons — this selector can
+         never actually collide with that one. */
       .btn-reconnect svg { flex-shrink: 0; }
       @keyframes spin { to { transform: rotate(360deg); } }
+      /* biome-ignore lint/style/noDescendingSpecificity: same false positive as
+         .btn-reconnect svg above — compared against an unrelated .btn-host-update
+         selector that can't match the same element. */
       .btn-reconnect.spinning svg { animation: spin 0.7s linear infinite; }
 
       .toggle-btn {
@@ -278,7 +291,6 @@
         color: inherit;
         margin-bottom: 6px;
       }
-      .services-header .panel-label { margin-bottom: 0; }
       .services-count {
         font-size: 11px;
         color: var(--text-2);
@@ -302,10 +314,10 @@
         transition: grid-template-rows 0.25s ease;
       }
       .services-body.collapsed { grid-template-rows: 0fr; }
-      .services-body > .site-toggles { min-height: 0; }
       .pending { visibility: hidden; }
 
       .site-toggles { display: flex; flex-direction: column; gap: 10px; }
+      .services-body > .site-toggles { min-height: 0; }
       .site-row { display: flex; align-items: center; justify-content: space-between; }
       .site-label { display: flex; align-items: center; gap: 8px; }
       .site-label span { font-size: 12px; color: var(--text-1); }
@@ -337,6 +349,7 @@
         color: var(--text-2);
         margin-bottom: 6px;
       }
+      .services-header .panel-label { margin-bottom: 0; }
 
       .panel-value {
         font-size: 13px;
