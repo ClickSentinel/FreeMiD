@@ -13,7 +13,7 @@
     "lint:fix": "biome check --write ."
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.1",
+    "@biomejs/biome": "2.5.2",
     "@types/chrome": "^0.2.2",
     "@types/node": "^26.1.0",
     "jsdom": "^29.1.1",
