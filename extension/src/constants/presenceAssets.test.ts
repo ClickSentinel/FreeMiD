@@ -8,6 +8,7 @@ describe('presence assets', () => {
       youtubeLogo: 'youtube-logo-1024',
       tidalLogo: 'tidal-logo-1024',
       ytmusicLogo: 'ytmusic-logo-1024',
+      appleMusicLogo: 'applemusic-logo-1024',
     });
   });
 
@@ -16,6 +17,7 @@ describe('presence assets', () => {
       youtubeLogo: 'icons/youtube-logo-1024.png',
       tidalLogo: 'icons/tidal-logo-1024.png',
       ytmusicLogo: 'icons/ytmusic-logo-1024.png',
+      appleMusicLogo: 'icons/applemusic-logo-1024.png',
     });
   });
 });

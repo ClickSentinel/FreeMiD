@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::Duration;
@@ -51,7 +52,7 @@ pub struct DesktopTrack {
     pub duration_secs: Option<f64>,
 }
 
-type OnUpdateFn = dyn Fn(Option<DesktopTrack>) + Send + Sync + 'static;
+type OnUpdateFn = dyn Fn(&str, Option<DesktopTrack>) + Send + Sync + 'static;
 
 struct ActiveSession {
     session: GlobalSystemMediaTransportControlsSession,
@@ -93,14 +94,24 @@ where
     }
 }
 
-fn find_tidal_session(
+/// Known desktop apps we can find via SMTC: (app id used in the extension
+/// protocol, lowercase substring to match against SourceAppUserModelId).
+///
+/// NEEDS VERIFICATION: the Apple Music entry's needle is a best-effort guess,
+/// not confirmed against a real installation. Verify by temporarily logging
+/// `SourceAppUserModelId` for all sessions in `find_session` with Apple Music
+/// running on Windows, then adjust this string if it doesn't match.
+const KNOWN_APPS: &[(&str, &str)] = &[("tidal", "tidal"), ("applemusic", "applemusic")];
+
+fn find_session(
     manager: &GlobalSystemMediaTransportControlsSessionManager,
+    needle: &str,
 ) -> Option<GlobalSystemMediaTransportControlsSession> {
     let sessions = manager.GetSessions().ok()?;
     let count = sessions.Size().ok()?;
     (0..count).filter_map(|i| sessions.GetAt(i).ok()).find(|s| {
         s.SourceAppUserModelId()
-            .map(|id| id.to_string().to_lowercase().contains("tidal"))
+            .map(|id| id.to_string().to_lowercase().contains(needle))
             .unwrap_or(false)
     })
 }
@@ -109,7 +120,30 @@ fn ticks_to_secs(ticks: u64) -> f64 {
     ticks as f64 / 10_000_000.0
 }
 
-fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Option<DesktopTrack> {
+/// Best-effort split of a packed "Artist — Album" (em dash) or "Artist - Album"
+/// (hyphen) field. Returns None if neither separator is found.
+///
+/// NEEDS VERIFICATION: added because Apple Music for Windows has been
+/// reported to combine artist and album into a single SMTC field rather than
+/// using Artist/AlbumTitle independently like other apps — the exact field
+/// and separator have not been confirmed against a real installation.
+fn split_packed_artist_album(raw: &str) -> Option<(String, String)> {
+    for sep in [" — ", " - "] {
+        if let Some(idx) = raw.find(sep) {
+            let artist = raw[..idx].trim().to_string();
+            let album = raw[idx + sep.len()..].trim().to_string();
+            if !artist.is_empty() && !album.is_empty() {
+                return Some((artist, album));
+            }
+        }
+    }
+    None
+}
+
+fn track_from_session(
+    session: &GlobalSystemMediaTransportControlsSession,
+    app_id: &str,
+) -> Option<DesktopTrack> {
     let props = spin_wait(session.TryGetMediaPropertiesAsync().ok()?, |op| {
         op.GetResults()
     })?;
@@ -119,16 +153,23 @@ fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Op
         return None;
     }
 
-    let artist = props
+    let mut artist = props
         .Artist()
         .ok()
         .map(|s| s.to_string())
         .unwrap_or_default();
-    let album = props
+    let mut album = props
         .AlbumTitle()
         .ok()
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty());
+
+    if app_id == "applemusic" && album.is_none() {
+        if let Some((a, b)) = split_packed_artist_album(&artist) {
+            artist = a;
+            album = Some(b);
+        }
+    }
 
     let playback = session.GetPlaybackInfo().ok()?;
     let status = playback.PlaybackStatus().ok()?;
@@ -143,9 +184,9 @@ fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Op
 
     let timeline = session.GetTimelineProperties().ok()?;
 
-    // When playing, SMTC position is only updated when Tidal explicitly pushes
-    // it (e.g. on seek). Extrapolate forward using LastUpdatedTime so the
-    // extension receives a continuously-accurate position on every push.
+    // When playing, SMTC position is only updated when the app explicitly
+    // pushes it (e.g. on seek). Extrapolate forward using LastUpdatedTime so
+    // the extension receives a continuously-accurate position on every push.
     let position_secs = match (timeline.Position().ok(), timeline.LastUpdatedTime().ok()) {
         (Some(pos), Some(updated)) if state == "playing" => {
             let ft = unsafe { GetSystemTimeAsFileTime() };
@@ -181,95 +222,105 @@ fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Op
 }
 
 fn make_session_handler<TArgs: windows::core::RuntimeType + 'static>(
+    app_id: &'static str,
     f: Arc<OnUpdateFn>,
 ) -> TypedEventHandler<GlobalSystemMediaTransportControlsSession, TArgs> {
     TypedEventHandler::new(
         move |sender: windows::core::Ref<GlobalSystemMediaTransportControlsSession>, _| {
             if let Some(s) = sender.as_ref() {
-                f(track_from_session(s));
+                f(app_id, track_from_session(s, app_id));
             }
             Ok(())
         },
     )
 }
 
-/// (Re)subscribe to the current Tidal SMTC session, or unsubscribe if Tidal
-/// is no longer running. Pushes the current state immediately via `on_update`.
-fn refresh_subscription(
+/// (Re)subscribe to each known app's current SMTC session, or unsubscribe any
+/// that are no longer running. Pushes each app's current state immediately
+/// via `on_update`.
+fn refresh_subscriptions(
     manager: &GlobalSystemMediaTransportControlsSessionManager,
-    active: &Arc<Mutex<Option<ActiveSession>>>,
+    active: &Arc<Mutex<HashMap<&'static str, ActiveSession>>>,
     on_update: &Arc<OnUpdateFn>,
 ) {
-    let tidal = find_tidal_session(manager);
-    let mut guard = active.lock().unwrap_or_else(|e| e.into_inner());
+    for &(app_id, needle) in KNOWN_APPS {
+        // Drop any previous subscription for this app before re-subscribing.
+        active.lock().unwrap_or_else(|e| e.into_inner()).remove(app_id);
 
-    // Drop the previous session subscription before re-subscribing.
-    *guard = None;
+        let Some(session) = find_session(manager, needle) else {
+            on_update(app_id, None);
+            continue;
+        };
 
-    let Some(session) = tidal else {
-        on_update(None);
-        return;
-    };
+        on_update(app_id, track_from_session(&session, app_id));
 
-    on_update(track_from_session(&session));
+        let props_token = session.MediaPropertiesChanged(&make_session_handler::<
+            MediaPropertiesChangedEventArgs,
+        >(app_id, on_update.clone()));
+        let playback_token = session.PlaybackInfoChanged(&make_session_handler::<
+            PlaybackInfoChangedEventArgs,
+        >(app_id, on_update.clone()));
+        let timeline_token = session.TimelinePropertiesChanged(&make_session_handler::<
+            TimelinePropertiesChangedEventArgs,
+        >(app_id, on_update.clone()));
 
-    let props_token = session.MediaPropertiesChanged(&make_session_handler::<
-        MediaPropertiesChangedEventArgs,
-    >(on_update.clone()));
-    let playback_token = session.PlaybackInfoChanged(&make_session_handler::<
-        PlaybackInfoChangedEventArgs,
-    >(on_update.clone()));
-    let timeline_token = session.TimelinePropertiesChanged(&make_session_handler::<
-        TimelinePropertiesChangedEventArgs,
-    >(on_update.clone()));
-
-    match (props_token, playback_token, timeline_token) {
-        (Ok(p), Ok(pl), Ok(t)) => {
-            *guard = Some(ActiveSession {
-                session,
-                props_token: p,
-                playback_token: pl,
-                timeline_token: t,
-            });
-        }
-        // On partial failure, explicitly revoke any handlers that did register.
-        // EventRegistrationToken does not revoke on drop, so leaking a token
-        // would leave an orphaned handler that fires on every subsequent event.
-        (p, pl, t) => {
-            if let Ok(tok) = p {
-                let _ = session.RemoveMediaPropertiesChanged(tok);
+        match (props_token, playback_token, timeline_token) {
+            (Ok(p), Ok(pl), Ok(t)) => {
+                active.lock().unwrap_or_else(|e| e.into_inner()).insert(
+                    app_id,
+                    ActiveSession {
+                        session,
+                        props_token: p,
+                        playback_token: pl,
+                        timeline_token: t,
+                    },
+                );
             }
-            if let Ok(tok) = pl {
-                let _ = session.RemovePlaybackInfoChanged(tok);
+            // On partial failure, explicitly revoke any handlers that did register.
+            // EventRegistrationToken does not revoke on drop, so leaking a token
+            // would leave an orphaned handler that fires on every subsequent event.
+            (p, pl, t) => {
+                if let Ok(tok) = p {
+                    let _ = session.RemoveMediaPropertiesChanged(tok);
+                }
+                if let Ok(tok) = pl {
+                    let _ = session.RemovePlaybackInfoChanged(tok);
+                }
+                if let Ok(tok) = t {
+                    let _ = session.RemoveTimelinePropertiesChanged(tok);
+                }
+                eprintln!("[FreeMiD/smtc] failed to subscribe to session events for {app_id}");
             }
-            if let Ok(tok) = t {
-                let _ = session.RemoveTimelinePropertiesChanged(tok);
-            }
-            eprintln!("[FreeMiD/smtc] failed to subscribe to session events");
         }
     }
 }
 
-/// Query Windows SMTC for a Tidal session. Returns None if Tidal is not
-/// running, has no session, or the session data cannot be read.
-pub fn query_tidal() -> Option<DesktopTrack> {
+/// Query Windows SMTC for a known app's session (see `KNOWN_APPS`). Returns
+/// None if the app is not running, has no session, or the session data
+/// cannot be read.
+pub fn query_desktop_media(app_id: &str) -> Option<DesktopTrack> {
     COM_INIT.call_once(|| {
         // S_FALSE (already initialised on this thread) is also acceptable.
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     });
+    let needle = KNOWN_APPS
+        .iter()
+        .find(|(id, _)| *id == app_id)
+        .map(|(_, needle)| *needle)?;
     let manager = spin_wait(
         GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?,
         |op| op.GetResults(),
     )?;
-    let session = find_tidal_session(&manager)?;
-    track_from_session(&session)
+    let session = find_session(&manager, needle)?;
+    track_from_session(&session, app_id)
 }
 
 /// Spawn a background thread that subscribes to SMTC events and calls
-/// `on_update` whenever Tidal's media state changes. The first call delivers
-/// the current state immediately; subsequent calls fire on track change,
-/// play/pause, seek, and when Tidal starts or stops.
-pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 'static) {
+/// `on_update(app_id, track)` whenever a known app's (see `KNOWN_APPS`) media
+/// state changes. The first call delivers each app's current state
+/// immediately; subsequent calls fire on track change, play/pause, seek, and
+/// when an app starts or stops.
+pub fn start_watcher(on_update: impl Fn(&str, Option<DesktopTrack>) + Send + Sync + 'static) {
     let on_update: Arc<OnUpdateFn> = Arc::new(on_update);
 
     std::thread::spawn(move || {
@@ -302,14 +353,15 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
             }
         };
 
-        let active: Arc<Mutex<Option<ActiveSession>>> = Arc::new(Mutex::new(None));
+        let active: Arc<Mutex<HashMap<&'static str, ActiveSession>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         let active2 = active.clone();
         let on_update2 = on_update.clone();
         if let Err(e) = manager.SessionsChanged(&TypedEventHandler::new(
             move |mgr: windows::core::Ref<GlobalSystemMediaTransportControlsSessionManager>, _| {
                 if let Some(m) = mgr.as_ref() {
-                    refresh_subscription(m, &active2, &on_update2);
+                    refresh_subscriptions(m, &active2, &on_update2);
                 }
                 Ok(())
             },
@@ -317,9 +369,9 @@ pub fn start_watcher(on_update: impl Fn(Option<DesktopTrack>) + Send + Sync + 's
             eprintln!("[FreeMiD/smtc] watcher: SessionsChanged subscribe failed: {e}");
         }
 
-        // Subscribe to the current Tidal session (if already running) and push
-        // the initial state.
-        refresh_subscription(&manager, &active, &on_update);
+        // Subscribe to each known app's current session (if already running)
+        // and push the initial state.
+        refresh_subscriptions(&manager, &active, &on_update);
 
         // Keep this thread alive so the manager reference and its SessionsChanged
         // subscription remain valid. WinRT event callbacks fire on thread-pool

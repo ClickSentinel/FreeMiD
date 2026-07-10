@@ -63,6 +63,7 @@ let enabledSites: Record<string, boolean> = {
   youtube: true,
   youtubemusic: true,
   tidal: true,
+  applemusic: true,
 };
 let hostVersion: string | null = null;
 let hostSelfUpdateSupported: boolean | null = null;
@@ -107,6 +108,29 @@ let lastActivitySentAt = 0;
 let pendingActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingActivityPayload: object | null = null;
 let activityBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+// Desktop apps reachable via the native host's SMTC bridge (see
+// native-host/src/smtc.rs KNOWN_APPS — the `app` id here must match).
+const DESKTOP_APPS: Record<
+  string,
+  { presenceKey: string; brandName: string; logoAssetKey: string }
+> = {
+  tidal: {
+    presenceKey: 'tidal-desktop',
+    brandName: 'TIDAL',
+    logoAssetKey: 'tidal-logo-1024',
+  },
+  applemusic: {
+    presenceKey: 'applemusic-desktop',
+    brandName: 'Apple Music',
+    logoAssetKey: 'applemusic-logo-1024',
+  },
+};
+// Reverse lookup: presenceHolder key (e.g. 'tidal-desktop') -> site toggle id
+// (e.g. 'tidal') — desktop presence shares its web activity's site toggle.
+const DESKTOP_PRESENCE_TO_TOGGLE: Record<string, string> = Object.fromEntries(
+  Object.entries(DESKTOP_APPS).map(([appId, cfg]) => [cfg.presenceKey, appId]),
+);
+
 // LRU artwork cache keyed by "artist\x00title\x00album". Map insertion order gives
 // us LRU eviction for free: delete-then-re-set on read moves entry to the end.
 const ART_CACHE_MAX = 200;
@@ -309,7 +333,9 @@ function resetHostConnection(error?: string): void {
   // is gone so no further DESKTOP_MEDIA events will arrive to release it
   // voluntarily, and the lock would otherwise block browser activities until
   // the watcher re-pushes state after reconnect (~24 s via keepalive alarm).
-  if (presenceHolder === 'tidal-desktop') presenceHolder = null;
+  if (presenceHolder !== null && presenceHolder in DESKTOP_PRESENCE_TO_TOGGLE) {
+    presenceHolder = null;
+  }
 }
 
 function clearReconnectSettleTimer(): void {
@@ -544,61 +570,64 @@ function connectNativeHost(): void {
         }
 
         broadcastStatus();
-      } else if (m.type === 'DESKTOP_MEDIA' && m.app === 'tidal') {
-        const track = m.track;
-        const hasTidalBrowserTab = [...activeActivityTabs.values()].includes(
-          'tidal',
-        );
-        if (!hasTidalBrowserTab && track && track.state === 'playing') {
-          const now = Math.floor(Date.now() / 1000);
-          // Only set timestamps when both position and duration are available.
-          // Sending only `start` (no `end`) causes Discord to show a game-style
-          // counting-up timer instead of a music progress bar. The SMTC fires
-          // MediaPropertiesChanged before TimelinePropertiesChanged, so the first
-          // push may have position but not yet duration — skip timestamps then.
-          const start =
-            track.position_secs != null && track.duration_secs != null
-              ? now - Math.floor(track.position_secs)
-              : undefined;
-          const end =
-            start !== undefined && track.duration_secs != null
-              ? start + Math.floor(track.duration_secs)
-              : undefined;
+      } else if (m.type === 'DESKTOP_MEDIA' && m.app) {
+        const app = m.app;
+        const desktopApp = DESKTOP_APPS[app];
+        if (desktopApp) {
+          const { presenceKey, brandName, logoAssetKey } = desktopApp;
+          const track = m.track;
+          const hasBrowserTab = [...activeActivityTabs.values()].includes(app);
+          if (!hasBrowserTab && track && track.state === 'playing') {
+            const now = Math.floor(Date.now() / 1000);
+            // Only set timestamps when both position and duration are available.
+            // Sending only `start` (no `end`) causes Discord to show a game-style
+            // counting-up timer instead of a music progress bar. The SMTC fires
+            // MediaPropertiesChanged before TimelinePropertiesChanged, so the first
+            // push may have position but not yet duration — skip timestamps then.
+            const start =
+              track.position_secs != null && track.duration_secs != null
+                ? now - Math.floor(track.position_secs)
+                : undefined;
+            const end =
+              start !== undefined && track.duration_secs != null
+                ? start + Math.floor(track.duration_secs)
+                : undefined;
 
-          const artKey = `${track.artist}|${track.title}|${track.album ?? ''}`;
-          const artUrl = artCacheGet(artKey) ?? null;
-          if (!desktopArtCache.has(artKey)) {
-            void lookupArtworkCached(
-              track.artist,
-              track.title,
-              track.album ?? undefined,
-            ).then((url) => {
-              // Re-poll to apply the now-cached art URL if still showing.
-              if (url && presenceHolder === 'tidal-desktop' && nativePort) {
-                sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
-              }
-            });
-          }
+            const artKey = `${track.artist}|${track.title}|${track.album ?? ''}`;
+            const artUrl = artCacheGet(artKey) ?? null;
+            if (!desktopArtCache.has(artKey)) {
+              void lookupArtworkCached(
+                track.artist,
+                track.title,
+                track.album ?? undefined,
+              ).then((url) => {
+                // Re-poll to apply the now-cached art URL if still showing.
+                if (url && presenceHolder === presenceKey && nativePort) {
+                  sendToHost({ type: 'GET_DESKTOP_MEDIA', app });
+                }
+              });
+            }
 
-          setActivity(
-            {
-              application_id: DISCORD_CLIENT_ID || undefined,
-              name: track.artist || 'TIDAL',
-              type: 2,
-              details: track.title,
-              state: track.artist ? `by ${track.artist}` : 'TIDAL',
-              timestamps: start !== undefined ? { start, end } : undefined,
-              assets: {
-                large_image: artUrl ?? 'tidal-logo-1024',
-                large_text: track.album || undefined,
-                small_image: artUrl ? 'tidal-logo-1024' : undefined,
-                small_text: artUrl ? 'TIDAL' : undefined,
+            setActivity(
+              {
+                application_id: DISCORD_CLIENT_ID || undefined,
+                name: track.artist || brandName,
+                type: 2,
+                details: track.title,
+                state: track.artist ? `by ${track.artist}` : brandName,
+                timestamps: start !== undefined ? { start, end } : undefined,
+                assets: {
+                  large_image: artUrl ?? logoAssetKey,
+                  large_text: track.album || undefined,
+                  small_image: artUrl ? logoAssetKey : undefined,
+                  small_text: artUrl ? brandName : undefined,
+                },
               },
-            },
-            'tidal-desktop',
-          );
-        } else {
-          releasePresence('tidal-desktop');
+              presenceKey,
+            );
+          } else {
+            releasePresence(presenceKey);
+          }
         }
       } else if (m.type === 'UPDATE_STATUS' && m.status) {
         clearUpdateRequestTimeout();
@@ -722,6 +751,25 @@ function reconnectCooldownRemainingMs(): number {
   return Math.max(0, reconnectCooldownUntilMs - Date.now());
 }
 
+/**
+ * Request an immediate SMTC poll for a known desktop app (see DESKTOP_APPS),
+ * skipping if there's nothing to gain: no host connection, wrong platform,
+ * the site is disabled/paused, or a browser tab for the same site is already
+ * reporting presence.
+ */
+function pollDesktopMediaForApp(appId: string): void {
+  if (
+    DESKTOP_APPS[appId] &&
+    nativePort &&
+    hostRuntimeOs === 'windows' &&
+    enabledSites[appId] &&
+    !paused &&
+    ![...activeActivityTabs.values()].includes(appId)
+  ) {
+    sendToHost({ type: 'GET_DESKTOP_MEDIA', app: appId });
+  }
+}
+
 // ── Activity helpers ──────────────────────────────────────────────────────────
 
 function flushPendingActivity(): void {
@@ -744,8 +792,12 @@ function flushPendingActivity(): void {
  */
 export function setActivity(activity: object, siteId?: string): void {
   if (paused) return;
-  // 'tidal-desktop' shares the 'tidal' site toggle.
-  const toggleKey = siteId === 'tidal-desktop' ? 'tidal' : siteId;
+  // Desktop presence keys (e.g. 'tidal-desktop') share their web activity's
+  // site toggle rather than having their own.
+  const toggleKey =
+    siteId !== undefined
+      ? (DESKTOP_PRESENCE_TO_TOGGLE[siteId] ?? siteId)
+      : siteId;
   if (toggleKey !== undefined && !enabledSites[toggleKey]) return;
   // Lock model: first playing source claims the lock; others are blocked until
   // the holder voluntarily releases via releasePresence().
@@ -911,9 +963,10 @@ async function handleTabNavigation(
   const forceInject = options?.forceInject === true;
   if (!forceInject && activeActivityTabs.get(tabId) === meta.id) return;
 
-  // Tidal web always takes priority over Tidal desktop — release the desktop
-  // lock so the web content script can claim it.
-  if (meta.id === 'tidal') releasePresence('tidal-desktop');
+  // A web activity always takes priority over its desktop counterpart —
+  // release the desktop lock so the web content script can claim it.
+  const desktopApp = DESKTOP_APPS[meta.id];
+  if (desktopApp) releasePresence(desktopApp.presenceKey);
 
   activeActivityTabs.set(tabId, meta.id);
 
@@ -1040,20 +1093,15 @@ chrome.runtime.onMessage.addListener(
         // presence owned by a different site that currently holds the lock.
         const holdsLock =
           presenceHolder === siteId ||
-          (siteId === 'tidal' && presenceHolder === 'tidal-desktop');
+          presenceHolder === DESKTOP_APPS[siteId]?.presenceKey;
         if (holdsLock) {
           clearActivity();
         }
-      } else if (
-        siteId === 'tidal' &&
-        nativePort &&
-        hostRuntimeOs === 'windows' &&
-        !paused &&
-        ![...activeActivityTabs.values()].includes('tidal')
-      ) {
-        // Tidal was just re-enabled — immediately poll SMTC so presence
-        // restores without waiting for the next keepalive cycle (~24 s).
-        sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
+      } else {
+        // Site was just re-enabled — immediately poll SMTC (if it's a known
+        // desktop app) so presence restores without waiting for the next
+        // keepalive cycle (~24 s).
+        pollDesktopMediaForApp(siteId);
       }
       broadcastStatus();
       return;
@@ -1072,16 +1120,11 @@ chrome.runtime.onMessage.addListener(
         if (!latestVersion) {
           void checkForUpdates();
         }
-        // Trigger an immediate desktop media poll when the popup opens so there
-        // is no need to wait for the next keepalive alarm (~24 s).
-        if (
-          nativePort &&
-          hostRuntimeOs === 'windows' &&
-          enabledSites.tidal &&
-          !paused &&
-          ![...activeActivityTabs.values()].includes('tidal')
-        ) {
-          sendToHost({ type: 'GET_DESKTOP_MEDIA', app: 'tidal' });
+        // Trigger an immediate desktop media poll for each known desktop app
+        // when the popup opens, so there is no need to wait for the next
+        // keepalive alarm (~24 s).
+        for (const appId of Object.keys(DESKTOP_APPS)) {
+          pollDesktopMediaForApp(appId);
         }
         sendResponse(buildStatus());
       });

@@ -59,6 +59,9 @@ const toggleYTM = document.getElementById(
 const toggleTidal = document.getElementById(
   'toggle-tidal',
 ) as HTMLButtonElement | null;
+const toggleAppleMusic = document.getElementById(
+  'toggle-applemusic',
+) as HTMLButtonElement | null;
 const btnOpenDiscord = document.getElementById(
   'btn-open-discord',
 ) as HTMLButtonElement | null;
@@ -381,6 +384,7 @@ function wireSiteToggle(btn: HTMLButtonElement | null, siteId: string): void {
 wireSiteToggle(toggleYT, 'youtube');
 wireSiteToggle(toggleYTM, 'youtubemusic');
 wireSiteToggle(toggleTidal, 'tidal');
+wireSiteToggle(toggleAppleMusic, 'applemusic');
 
 // ── Services accordion ────────────────────────────────────────────────────────
 
@@ -585,11 +589,13 @@ function revealTogglesOnce(status: Status): void {
   setToggle(toggleYT, status.enabledSites?.youtube ?? true);
   setToggle(toggleYTM, status.enabledSites?.youtubemusic ?? true);
   setToggle(toggleTidal, status.enabledSites?.tidal ?? true);
+  setToggle(toggleAppleMusic, status.enabledSites?.applemusic ?? true);
   document.body.classList.add('no-transition');
   btnPause?.classList.remove('pending');
   toggleYT?.classList.remove('pending');
   toggleYTM?.classList.remove('pending');
   toggleTidal?.classList.remove('pending');
+  toggleAppleMusic?.classList.remove('pending');
   requestAnimationFrame(() => document.body.classList.remove('no-transition'));
 }
 
@@ -724,6 +730,7 @@ function render(status: Status | null): void {
   setToggle(toggleYT, status.enabledSites?.youtube ?? true);
   setToggle(toggleYTM, status.enabledSites?.youtubemusic ?? true);
   setToggle(toggleTidal, status.enabledSites?.tidal ?? true);
+  setToggle(toggleAppleMusic, status.enabledSites?.applemusic ?? true);
   updateServicesCount();
 
   if (!status.hostConnected) {

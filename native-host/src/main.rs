@@ -124,13 +124,14 @@ fn main() {
         eprintln!("[FreeMiD] Discord IPC connected at startup");
     }
 
-    // Subscribe to Windows SMTC events so Tidal desktop state is pushed to the
-    // extension immediately on track change, play/pause, or seek — no polling.
+    // Subscribe to Windows SMTC events so known desktop apps' state (see
+    // smtc::KNOWN_APPS) is pushed to the extension immediately on track
+    // change, play/pause, or seek — no polling.
     #[cfg(windows)]
-    smtc::start_watcher(|track| {
+    smtc::start_watcher(|app, track| {
         write_message(&json!({
             "type": "DESKTOP_MEDIA",
-            "app": "tidal",
+            "app": app,
             "track": track,
         }));
     });
@@ -418,11 +419,7 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
         #[cfg(windows)]
         "GET_DESKTOP_MEDIA" => {
             let app = msg.get("app").and_then(Value::as_str).unwrap_or("");
-            let track = if app == "tidal" {
-                smtc::query_tidal()
-            } else {
-                None
-            };
+            let track = smtc::query_desktop_media(app);
             write_message(&json!({
                 "type": "DESKTOP_MEDIA",
                 "app": app,
