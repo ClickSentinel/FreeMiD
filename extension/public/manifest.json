@@ -18,7 +18,9 @@
     "*://music.youtube.com/*",
     "*://tidal.com/*",
     "*://listen.tidal.com/*",
-    "https://api.github.com/*"
+    "https://api.github.com/*",
+    "https://coverartarchive.org/*",
+    "https://*.archive.org/*"
   ],
 
   "background": {
