@@ -152,12 +152,16 @@ function artCacheSet(key: string, value: string | null): void {
   desktopArtCache.set(key, value);
 }
 
+function artCacheKey(artist: string, title: string, album?: string): string {
+  return `${artist}\x00${title}\x00${album ?? ''}`;
+}
+
 function lookupArtworkCached(
   artist: string,
   title: string,
   album?: string,
 ): Promise<string | null> {
-  const key = `${artist}\x00${title}\x00${album ?? ''}`;
+  const key = artCacheKey(artist, title, album);
   const cached = artCacheGet(key);
   if (cached !== undefined) return Promise.resolve(cached);
   let pending = artPending.get(key);
@@ -593,7 +597,11 @@ function connectNativeHost(): void {
                 ? start + Math.floor(track.duration_secs)
                 : undefined;
 
-            const artKey = `${track.artist}|${track.title}|${track.album ?? ''}`;
+            const artKey = artCacheKey(
+              track.artist,
+              track.title,
+              track.album ?? undefined,
+            );
             const artUrl = artCacheGet(artKey) ?? null;
             if (!desktopArtCache.has(artKey)) {
               void lookupArtworkCached(
@@ -1042,7 +1050,7 @@ chrome.runtime.onMessage.addListener(
           // Include album in the key so a bad album name (playlist name) on
           // the first tick doesn't permanently poison the cache for the same
           // track once the correct album name arrives via mediaSession.
-          const artKey = `${artist}|${title}|${album ?? ''}`;
+          const artKey = artCacheKey(artist, title, album);
           const cachedUrl = artCacheGet(artKey);
           if (cachedUrl !== undefined) {
             if (cachedUrl && assets) assets.large_image = cachedUrl;
