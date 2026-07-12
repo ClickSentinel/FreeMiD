@@ -28,7 +28,7 @@ extension/              # Chrome MV3 extension (TypeScript + Vite)
     background/index.ts  # Service worker: manages native port, tab injection, update flow
     background/helpers.ts# Artwork lookup (iTunes → MusicBrainz/CAA fallback), URL/version utils
     presence/Presence.ts # API class used by all activities; PresenceData supports largeImageUrl/smallImageUrl for URL-based art
-    activities/          # One subdirectory per supported site (youtube, youtubemusic, tidal)
+    activities/          # One subdirectory per supported site (youtube, youtubemusic, tidal, applemusic)
     constants/           # presenceAssets.ts (Discord asset keys), storageKeys.ts, github.ts
     popup/index.ts       # Extension popup UI (status, per-site toggles, update/reconnect)
     popup/helpers.ts     # Popup-only helpers (artistFromActivity, fallbackLogoPath, urlLike)
@@ -107,7 +107,7 @@ CI also checks that the default extension ID in `install/install.sh`, `install/i
 
 **Artwork resolution:** When an activity sets `largeImageUrl` or `smallImageUrl` on a `PresenceData` object, the background calls `lookupArtworkUrl(artist, title, album?)` from `background/helpers.ts`. It first queries the **iTunes Search API** (returns 600×600 art, most reliable for mainstream tracks). On miss or failure it falls back to **MusicBrainz + Cover Art Archive** (queries recordings, ranks by album name match → Album → Single, then hits `coverartarchive.org`). The resolved URL is passed straight to Discord as the image URL.
 
-**SMTC (Windows desktop media):** On Windows, `smtc.rs` runs a background watcher thread that subscribes to the Windows System Media Transport Controls API. The Tidal desktop activity (`activities/tidal/index.ts`) sends a `GET_DESKTOP_MEDIA` message to the background → native host reads the current SMTC session and replies with artist/title/album/position data. This lets the Tidal activity work with the native Windows app even when the Chrome tab is not focused or the web player is not active.
+**SMTC (Windows desktop media):** On Windows, `smtc.rs` runs a background watcher thread that subscribes to the Windows System Media Transport Controls API, tracking any number of known desktop apps concurrently (`KNOWN_APPS` — currently TIDAL and Apple Music, matched by a substring of each session's `SourceAppUserModelId`). The extension sends a `GET_DESKTOP_MEDIA` message (with an `app` id) to the background → native host reads the matching SMTC session and replies with artist/title/album/position data. `extension/src/background/index.ts`'s `DESKTOP_APPS` table drives the corresponding presence branding and site-toggle sharing (e.g. `tidal-desktop` shares the `tidal` toggle). This lets desktop apps report presence even when no browser tab for that site is open or focused; a web activity for the same site always takes priority over its desktop counterpart when both are active.
 
 **Activity injection:** The background service worker listens to `chrome.tabs.onUpdated` and `chrome.tabs.onActivated`. When a tab navigates to a URL matching an entry in `extension/src/activities/registry.ts`, the background injects the corresponding `dist/activities/<id>/index.js` via `chrome.scripting.executeScript`. Each activity is a self-contained IIFE bundle (not code-split with the rest of the extension) — this is why activities are built separately via `scripts/build-activities.mjs` rather than through the main Vite rollup entry points.
 

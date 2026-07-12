@@ -5,6 +5,7 @@ import { ACTIVITY_REGISTRY } from './registry';
 describe('ACTIVITY_REGISTRY', () => {
   it('contains the expected activity IDs', () => {
     expect(Object.keys(ACTIVITY_REGISTRY).sort()).toEqual([
+      'applemusic',
       'tidal',
       'youtube',
       'youtubemusic',
@@ -25,6 +26,12 @@ describe('ACTIVITY_REGISTRY', () => {
     expect(ACTIVITY_REGISTRY.tidal.matches).toEqual([
       '*://tidal.com/*',
       '*://listen.tidal.com/*',
+    ]);
+  });
+
+  it('keeps the expected Apple Music match pattern', () => {
+    expect(ACTIVITY_REGISTRY.applemusic.matches).toEqual([
+      '*://music.apple.com/*',
     ]);
   });
 });

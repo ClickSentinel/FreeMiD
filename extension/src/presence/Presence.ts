@@ -206,11 +206,24 @@ export class Presence {
    * changes. If the element is not yet in the DOM, a document.body watcher
    * waits for it to appear. Both observers are tied to `signal` (obtained from
    * freshSignal()) so they are disconnected when the activity is re-injected.
+   *
+   * Pass `observeAttributes: true` for sites that signal state changes (e.g.
+   * play/pause) via attribute mutations like `aria-hidden` rather than text
+   * or child changes.
    */
-  watchSelector(selector: string, signal: AbortSignal): void {
+  watchSelector(
+    selector: string,
+    signal: AbortSignal,
+    options?: { observeAttributes?: boolean },
+  ): void {
     const connect = (el: Element): void => {
       const obs = new MutationObserver(() => this.triggerUpdate());
-      obs.observe(el, { characterData: true, childList: true, subtree: true });
+      obs.observe(el, {
+        characterData: true,
+        childList: true,
+        subtree: true,
+        attributes: options?.observeAttributes,
+      });
       signal.addEventListener('abort', () => obs.disconnect());
     };
 
