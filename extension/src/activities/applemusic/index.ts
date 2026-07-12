@@ -30,13 +30,16 @@ function isPlaying(): boolean {
 
 // The player bar's elapsed/remaining <time> elements carry real ISO 8601
 // durations in their datetime attribute (e.g. "PT2S", "PT1M28S") — more
-// reliable than parsing the "0:02" display text.
+// reliable than parsing the "0:02" display text. They live inside
+// <amp-playback-controls-progress>'s open shadow root, not the light DOM, so
+// a plain document.querySelector can't see them.
 function getElapsedAndDuration(): {
   current: number | undefined;
   duration: number;
 } {
-  const elapsedEl = document.querySelector<HTMLElement>('.time.elapsed');
-  const remainingEl = document.querySelector<HTMLElement>('.time.remaining');
+  const progressRoot = document.querySelector('amp-playback-controls-progress')?.shadowRoot;
+  const elapsedEl = progressRoot?.querySelector<HTMLElement>('.time.elapsed');
+  const remainingEl = progressRoot?.querySelector<HTMLElement>('.time.remaining');
   const current = parseIsoDuration(elapsedEl?.getAttribute('datetime'));
   const remaining = parseIsoDuration(remainingEl?.getAttribute('datetime'));
   const duration =
