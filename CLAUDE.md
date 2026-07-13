@@ -21,6 +21,8 @@ native-host/            # Rust binary: freemid + freemid-apply (Windows updater 
     discord_ipc.rs      # Discord local IPC (Unix socket / Windows named pipe)
     update.rs           # Self-update logic (download, SHA-256 verify, atomic replace)
     smtc.rs             # Windows SMTC watcher — pushes desktop media info via GET_DESKTOP_MEDIA
+    applescript_media.rs # macOS Apple Music query (osascript) for GET_DESKTOP_MEDIA
+    desktop_track.rs    # Shared DesktopTrack struct used by both platform backends
     windows_apply.rs    # freemid-apply helper for Windows binary replacement
 installer/              # Rust binary: freemid-setup.exe (Windows GUI installer)
 extension/              # Chrome MV3 extension (TypeScript + Vite)
@@ -108,6 +110,8 @@ CI also checks that the default extension ID in `install/install.sh`, `install/i
 **Artwork resolution:** When an activity sets `largeImageUrl` or `smallImageUrl` on a `PresenceData` object, the background calls `lookupArtworkUrl(artist, title, album?)` from `background/helpers.ts`. It first queries the **iTunes Search API** (returns 600×600 art, most reliable for mainstream tracks). On miss or failure it falls back to **MusicBrainz + Cover Art Archive** (queries recordings, ranks by album name match → Album → Single, then hits `coverartarchive.org`). The resolved URL is passed straight to Discord as the image URL.
 
 **SMTC (Windows desktop media):** On Windows, `smtc.rs` runs a background watcher thread that subscribes to the Windows System Media Transport Controls API, tracking any number of known desktop apps concurrently (`KNOWN_APPS` — currently TIDAL and Apple Music, matched by a substring of each session's `SourceAppUserModelId`). The extension sends a `GET_DESKTOP_MEDIA` message (with an `app` id) to the background → native host reads the matching SMTC session and replies with artist/title/album/position data. `extension/src/background/index.ts`'s `DESKTOP_APPS` table drives the corresponding presence branding and site-toggle sharing (e.g. `tidal-desktop` shares the `tidal` toggle). This lets desktop apps report presence even when no browser tab for that site is open or focused; a web activity for the same site always takes priority over its desktop counterpart when both are active.
+
+**AppleScript (macOS desktop media):** On macOS, `applescript_media.rs` answers `GET_DESKTOP_MEDIA` for the `applemusic` app id only, by shelling out to `osascript` and querying `Music.app` (guarded by `application "Music" is running` so it never launches the app). Unlike Windows SMTC there is no push/subscribe mechanism — no background watcher runs on macOS, so Apple Music desktop presence only updates when the extension polls (popup open, toggle changes, the ~24s keepalive), not near-instantly on track/pause changes like Windows. Both backends share the same `DesktopTrack` struct (`desktop_track.rs`) and the same extension-side `DESKTOP_APPS` plumbing, so no extension changes were needed to add macOS support.
 
 **Activity injection:** The background service worker listens to `chrome.tabs.onUpdated` and `chrome.tabs.onActivated`. When a tab navigates to a URL matching an entry in `extension/src/activities/registry.ts`, the background injects the corresponding `dist/activities/<id>/index.js` via `chrome.scripting.executeScript`. Each activity is a self-contained IIFE bundle (not code-split with the rest of the extension) — this is why activities are built separately via `scripts/build-activities.mjs` rather than through the main Vite rollup entry points.
 

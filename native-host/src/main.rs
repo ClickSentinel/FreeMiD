@@ -17,6 +17,9 @@
 //!   ext → host  { "type": "CLEAR_ACTIVITY" }
 //!   host → ext  { "type": "STATUS", "connected": bool, "error"?: string }
 
+#[cfg(target_os = "macos")]
+mod applescript_media;
+mod desktop_track;
 mod discord_ipc;
 #[cfg(windows)]
 mod smtc;
@@ -427,7 +430,30 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
             }));
             Ok(())
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        "GET_DESKTOP_MEDIA" => {
+            let app = msg
+                .get("app")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            // `osascript` can block indefinitely on a first-run (or
+            // post-update) macOS "Automation" permission dialog, since
+            // Gatekeeper/TCC ties the grant to the binary's code-signature
+            // identity, which changes on every unsigned rebuild. Run it off
+            // the message loop so a stuck dialog doesn't starve PING/
+            // SET_ACTIVITY handling for everything else.
+            std::thread::spawn(move || {
+                let track = applescript_media::query_desktop_media(&app);
+                write_message(&json!({
+                    "type": "DESKTOP_MEDIA",
+                    "app": app,
+                    "track": track,
+                }));
+            });
+            Ok(())
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         "GET_DESKTOP_MEDIA" => {
             Err("GET_DESKTOP_MEDIA is not supported on this platform".to_string())
         }
