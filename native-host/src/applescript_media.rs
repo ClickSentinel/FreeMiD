@@ -33,9 +33,15 @@ end if
 "#;
 
 fn parse_f64(s: &str) -> Option<f64> {
-    // AppleScript's `as string` coercion for reals uses the system locale's
-    // decimal separator (e.g. ',' on many non-US locales); normalize before parsing.
-    s.trim().replace(',', ".").parse::<f64>().ok()
+    let s = s.trim();
+    // AppleScript's `as string` coercion for reals can use the system
+    // locale's decimal separator (',' on many non-US locales). Try the
+    // literal value first so well-formed US-locale output is never touched;
+    // only fall back to a comma-as-decimal-point reinterpretation if the
+    // first parse fails.
+    s.parse::<f64>()
+        .ok()
+        .or_else(|| s.replace(',', ".").parse::<f64>().ok())
 }
 
 fn track_from_output(output: &str) -> Option<DesktopTrack> {

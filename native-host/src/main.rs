@@ -419,18 +419,38 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
             run_ipc_op("CLEAR_ACTIVITY", ipc, |c| c.clear_activity());
             Ok(())
         }
-        #[cfg(any(windows, target_os = "macos"))]
+        #[cfg(windows)]
         "GET_DESKTOP_MEDIA" => {
             let app = msg.get("app").and_then(Value::as_str).unwrap_or("");
-            #[cfg(windows)]
             let track = smtc::query_desktop_media(app);
-            #[cfg(target_os = "macos")]
-            let track = applescript_media::query_desktop_media(app);
             write_message(&json!({
                 "type": "DESKTOP_MEDIA",
                 "app": app,
                 "track": track,
             }));
+            Ok(())
+        }
+        #[cfg(target_os = "macos")]
+        "GET_DESKTOP_MEDIA" => {
+            let app = msg
+                .get("app")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            // `osascript` can block indefinitely on a first-run (or
+            // post-update) macOS "Automation" permission dialog, since
+            // Gatekeeper/TCC ties the grant to the binary's code-signature
+            // identity, which changes on every unsigned rebuild. Run it off
+            // the message loop so a stuck dialog doesn't starve PING/
+            // SET_ACTIVITY handling for everything else.
+            std::thread::spawn(move || {
+                let track = applescript_media::query_desktop_media(&app);
+                write_message(&json!({
+                    "type": "DESKTOP_MEDIA",
+                    "app": app,
+                    "track": track,
+                }));
+            });
             Ok(())
         }
         #[cfg(not(any(windows, target_os = "macos")))]
