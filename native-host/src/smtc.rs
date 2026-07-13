@@ -1,4 +1,4 @@
-use serde::Serialize;
+use crate::desktop_track::DesktopTrack;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
@@ -37,19 +37,6 @@ pub fn wait_for_shutdown(timeout: Duration) -> bool {
         .wait_timeout_while(guard, timeout, |done| !*done)
         .unwrap_or_else(|e| e.into_inner());
     *result.0
-}
-
-#[derive(Debug, Serialize)]
-pub struct DesktopTrack {
-    pub title: String,
-    pub artist: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub album: Option<String>,
-    pub state: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub position_secs: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_secs: Option<f64>,
 }
 
 type OnUpdateFn = dyn Fn(&str, Option<DesktopTrack>) + Send + Sync + 'static;

@@ -17,6 +17,9 @@
 //!   ext → host  { "type": "CLEAR_ACTIVITY" }
 //!   host → ext  { "type": "STATUS", "connected": bool, "error"?: string }
 
+#[cfg(target_os = "macos")]
+mod applescript_media;
+mod desktop_track;
 mod discord_ipc;
 #[cfg(windows)]
 mod smtc;
@@ -416,10 +419,13 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
             run_ipc_op("CLEAR_ACTIVITY", ipc, |c| c.clear_activity());
             Ok(())
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         "GET_DESKTOP_MEDIA" => {
             let app = msg.get("app").and_then(Value::as_str).unwrap_or("");
+            #[cfg(windows)]
             let track = smtc::query_desktop_media(app);
+            #[cfg(target_os = "macos")]
+            let track = applescript_media::query_desktop_media(app);
             write_message(&json!({
                 "type": "DESKTOP_MEDIA",
                 "app": app,
@@ -427,7 +433,7 @@ fn handle_message(msg: &Value, ipc: &Mutex<Option<DiscordIpc>>) -> Result<(), St
             }));
             Ok(())
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "macos")))]
         "GET_DESKTOP_MEDIA" => {
             Err("GET_DESKTOP_MEDIA is not supported on this platform".to_string())
         }
