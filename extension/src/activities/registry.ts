@@ -30,4 +30,9 @@ export const ACTIVITY_REGISTRY = {
     name: 'TIDAL',
     matches: ['*://tidal.com/*', '*://listen.tidal.com/*'],
   },
+  applemusic: {
+    id: 'applemusic',
+    name: 'Apple Music',
+    matches: ['*://music.apple.com/*'],
+  },
 } satisfies Record<string, ActivityMeta>;

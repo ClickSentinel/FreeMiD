@@ -1,5 +1,6 @@
 import { githubRepoUrl } from '../constants/github';
 import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
+import { urlLike } from '../utils/urlLike';
 
 export type ActivityPreview = {
   sub?: string;
@@ -8,10 +9,6 @@ export type ActivityPreview = {
 };
 
 export const isWindowsPlatform = /Win/i.test(navigator.platform);
-
-export function urlLike(value?: string): boolean {
-  return typeof value === 'string' && /^https?:\/\//i.test(value);
-}
 
 export function windowsSetupUrl(): string {
   // Keep env override for local testing, but default users to install docs.
@@ -41,6 +38,8 @@ export function fallbackLogoPath(act: ActivityPreview): string | null {
   const service =
     `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();
   if (service.includes('tidal')) return PRESENCE_PREVIEW_ASSETS.tidalLogo;
+  if (service.includes('apple music'))
+    return PRESENCE_PREVIEW_ASSETS.appleMusicLogo;
   if (service.includes('youtube music') || service.includes('yt music'))
     return PRESENCE_PREVIEW_ASSETS.ytmusicLogo;
   if (service.includes('youtube')) return PRESENCE_PREVIEW_ASSETS.youtubeLogo;

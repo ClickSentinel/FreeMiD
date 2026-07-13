@@ -449,6 +449,7 @@
       }
       .now-album-line:empty { display: none; }
       .now-timeline { padding: 0 18px 12px; }
+      .now-timeline.hidden { display: none; }
       .timeline-track {
         position: relative;
         width: 100%;
@@ -672,6 +673,15 @@
             <span>TIDAL</span>
           </div>
           <button type="button" class="toggle-btn pending" id="toggle-tidal" role="switch" aria-checked="true" title="Toggle TIDAL activity">
+            <span class="toggle-thumb"></span>
+          </button>
+        </div>
+        <div class="site-row">
+          <div class="site-label">
+            <img class="site-icon" src="../icons/applemusic-logo-1024.png" alt="" />
+            <span>Apple Music</span>
+          </div>
+          <button type="button" class="toggle-btn pending" id="toggle-applemusic" role="switch" aria-checked="true" title="Toggle Apple Music activity">
             <span class="toggle-thumb"></span>
           </button>
         </div>
