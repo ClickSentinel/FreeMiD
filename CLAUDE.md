@@ -102,8 +102,8 @@ CI also checks that the default extension ID in `install/install.sh`, `install/i
 **Message protocol (extension ↔ native host):**
 
 - Chrome native messaging framing: `u32 LE length | UTF-8 JSON`
-- Extension → host: `{ type: "PING" }`, `{ type: "SET_ACTIVITY", activity: {...} }`, `{ type: "CLEAR_ACTIVITY" }`, `{ type: "UPDATE", latestUrl?, releasesBaseUrl? }`
-- Host → extension: `{ type: "STATUS", connected: bool, version, capabilities: string[], selfUpdateSupported, runtimeOs, runtimeArch, binaryPath, error? }`, `{ type: "UPDATE_STATUS", status, version?, error? }`
+- Extension → host: `{ type: "PING" }`, `{ type: "SET_ACTIVITY", activity: {...} }`, `{ type: "CLEAR_ACTIVITY" }`, `{ type: "UPDATE", latestUrl?, releasesBaseUrl? }`, `{ type: "GET_DESKTOP_MEDIA", app }`
+- Host → extension: `{ type: "STATUS", connected: bool, version, capabilities: string[], selfUpdateSupported, runtimeOs, runtimeArch, binaryPath, error? }`, `{ type: "UPDATE_STATUS", status, version?, error? }`, `{ type: "DESKTOP_MEDIA", app, track }`
 
 **Artwork resolution:** When an activity sets `largeImageUrl` or `smallImageUrl` on a `PresenceData` object, the background calls `lookupArtworkUrl(artist, title, album?)` from `background/helpers.ts`. It first queries the **iTunes Search API** (returns 600×600 art, most reliable for mainstream tracks). On miss or failure it falls back to **MusicBrainz + Cover Art Archive** (queries recordings, ranks by album name match → Album → Single, then hits `coverartarchive.org`). The resolved URL is passed straight to Discord as the image URL.
 

@@ -120,29 +120,8 @@ fn ticks_to_secs(ticks: u64) -> f64 {
     ticks as f64 / 10_000_000.0
 }
 
-/// Best-effort split of a packed "Artist — Album" (em dash) or "Artist - Album"
-/// (hyphen) field. Returns None if neither separator is found.
-///
-/// NEEDS VERIFICATION: added because Apple Music for Windows has been
-/// reported to combine artist and album into a single SMTC field rather than
-/// using Artist/AlbumTitle independently like other apps — the exact field
-/// and separator have not been confirmed against a real installation.
-fn split_packed_artist_album(raw: &str) -> Option<(String, String)> {
-    for sep in [" — ", " - "] {
-        if let Some(idx) = raw.find(sep) {
-            let artist = raw[..idx].trim().to_string();
-            let album = raw[idx + sep.len()..].trim().to_string();
-            if !artist.is_empty() && !album.is_empty() {
-                return Some((artist, album));
-            }
-        }
-    }
-    None
-}
-
 fn track_from_session(
     session: &GlobalSystemMediaTransportControlsSession,
-    app_id: &str,
 ) -> Option<DesktopTrack> {
     let props = spin_wait(session.TryGetMediaPropertiesAsync().ok()?, |op| {
         op.GetResults()
@@ -153,23 +132,16 @@ fn track_from_session(
         return None;
     }
 
-    let mut artist = props
+    let artist = props
         .Artist()
         .ok()
         .map(|s| s.to_string())
         .unwrap_or_default();
-    let mut album = props
+    let album = props
         .AlbumTitle()
         .ok()
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty());
-
-    if app_id == "applemusic" && album.is_none() {
-        if let Some((a, b)) = split_packed_artist_album(&artist) {
-            artist = a;
-            album = Some(b);
-        }
-    }
 
     let playback = session.GetPlaybackInfo().ok()?;
     let status = playback.PlaybackStatus().ok()?;
@@ -228,7 +200,7 @@ fn make_session_handler<TArgs: windows::core::RuntimeType + 'static>(
     TypedEventHandler::new(
         move |sender: windows::core::Ref<GlobalSystemMediaTransportControlsSession>, _| {
             if let Some(s) = sender.as_ref() {
-                f(app_id, track_from_session(s, app_id));
+                f(app_id, track_from_session(s));
             }
             Ok(())
         },
@@ -244,15 +216,39 @@ fn refresh_subscriptions(
     on_update: &Arc<OnUpdateFn>,
 ) {
     for &(app_id, needle) in KNOWN_APPS {
-        // Drop any previous subscription for this app before re-subscribing.
-        active.lock().unwrap_or_else(|e| e.into_inner()).remove(app_id);
+        // Hold one guard across this app's whole find+subscribe+store
+        // sequence. Two separate lock/unlock cycles here previously left an
+        // unguarded window in which a concurrent refresh (e.g. this initial
+        // call racing a SessionsChanged event fired from a WinRT threadpool
+        // thread) could interleave for the same app_id — registering
+        // duplicate live handlers on the same session, or delivering a
+        // stale on_update after a fresher one. A single guard per app
+        // restores the serialization the old single-app code had.
+        let mut guard = active.lock().unwrap_or_else(|e| e.into_inner());
 
         let Some(session) = find_session(manager, needle) else {
-            on_update(app_id, None);
+            let had_session = guard.remove(app_id).is_some();
+            drop(guard);
+            if had_session {
+                on_update(app_id, None);
+            }
             continue;
         };
 
-        on_update(app_id, track_from_session(&session, app_id));
+        // SessionsChanged fires for any app's session lifecycle, not just
+        // this one — skip the teardown/resubscribe (and the blocking
+        // property fetch below) when this app's session hasn't actually
+        // changed. The already-registered MediaPropertiesChanged/
+        // PlaybackInfoChanged/TimelinePropertiesChanged handlers remain the
+        // source of truth for real state changes within an unchanged session.
+        if guard.get(app_id).is_some_and(|active| active.session == session) {
+            drop(guard);
+            continue;
+        }
+
+        guard.remove(app_id);
+
+        on_update(app_id, track_from_session(&session));
 
         let props_token = session.MediaPropertiesChanged(&make_session_handler::<
             MediaPropertiesChangedEventArgs,
@@ -266,7 +262,7 @@ fn refresh_subscriptions(
 
         match (props_token, playback_token, timeline_token) {
             (Ok(p), Ok(pl), Ok(t)) => {
-                active.lock().unwrap_or_else(|e| e.into_inner()).insert(
+                guard.insert(
                     app_id,
                     ActiveSession {
                         session,
@@ -312,7 +308,7 @@ pub fn query_desktop_media(app_id: &str) -> Option<DesktopTrack> {
         |op| op.GetResults(),
     )?;
     let session = find_session(&manager, needle)?;
-    track_from_session(&session, app_id)
+    track_from_session(&session)
 }
 
 /// Spawn a background thread that subscribes to SMTC events and calls
