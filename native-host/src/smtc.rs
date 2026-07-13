@@ -120,9 +120,7 @@ fn ticks_to_secs(ticks: u64) -> f64 {
     ticks as f64 / 10_000_000.0
 }
 
-fn track_from_session(
-    session: &GlobalSystemMediaTransportControlsSession,
-) -> Option<DesktopTrack> {
+fn track_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Option<DesktopTrack> {
     let props = spin_wait(session.TryGetMediaPropertiesAsync().ok()?, |op| {
         op.GetResults()
     })?;
@@ -241,7 +239,10 @@ fn refresh_subscriptions(
         // changed. The already-registered MediaPropertiesChanged/
         // PlaybackInfoChanged/TimelinePropertiesChanged handlers remain the
         // source of truth for real state changes within an unchanged session.
-        if guard.get(app_id).is_some_and(|active| active.session == session) {
+        if guard
+            .get(app_id)
+            .is_some_and(|active| active.session == session)
+        {
             drop(guard);
             continue;
         }
@@ -256,9 +257,10 @@ fn refresh_subscriptions(
         let playback_token = session.PlaybackInfoChanged(&make_session_handler::<
             PlaybackInfoChangedEventArgs,
         >(app_id, on_update.clone()));
-        let timeline_token = session.TimelinePropertiesChanged(&make_session_handler::<
-            TimelinePropertiesChangedEventArgs,
-        >(app_id, on_update.clone()));
+        let timeline_token =
+            session.TimelinePropertiesChanged(&make_session_handler::<
+                TimelinePropertiesChangedEventArgs,
+            >(app_id, on_update.clone()));
 
         match (props_token, playback_token, timeline_token) {
             (Ok(p), Ok(pl), Ok(t)) => {
