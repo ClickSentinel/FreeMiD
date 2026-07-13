@@ -209,12 +209,16 @@ export class Presence {
    *
    * Pass `observeAttributes: true` for sites that signal state changes (e.g.
    * play/pause) via attribute mutations like `aria-hidden` rather than text
-   * or child changes.
+   * or child changes. Pass `attributeFilter` alongside it to narrow which
+   * attributes trigger an update, instead of the whole subtree's attributes —
+   * recommended whenever the specific attribute(s) are known, since an
+   * unfiltered subtree observer fires on every attribute mutation under
+   * `selector`, not just the one(s) actually being watched for.
    */
   watchSelector(
     selector: string,
     signal: AbortSignal,
-    options?: { observeAttributes?: boolean },
+    options?: { observeAttributes?: boolean; attributeFilter?: string[] },
   ): void {
     const connect = (el: Element): void => {
       const obs = new MutationObserver(() => this.triggerUpdate());
@@ -223,6 +227,7 @@ export class Presence {
         childList: true,
         subtree: true,
         attributes: options?.observeAttributes,
+        attributeFilter: options?.attributeFilter,
       });
       signal.addEventListener('abort', () => obs.disconnect());
     };

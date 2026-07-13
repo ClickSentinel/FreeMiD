@@ -1,11 +1,11 @@
 import { compareVersions, isUpdateInProgress } from '../background/helpers';
 import { githubRepoUrl } from '../constants/github';
+import { urlLike } from '../utils/urlLike';
 import {
   artistFromActivity,
   fallbackLogoPath,
   isUnsupportedPlatformUpdateError,
   isWindowsPlatform,
-  urlLike,
   windowsSetupUrl,
 } from './helpers';
 
@@ -50,18 +50,19 @@ const pauseSub = document.getElementById('pause-sub') as HTMLElement | null;
 const btnPause = document.getElementById(
   'btn-pause',
 ) as HTMLButtonElement | null;
-const toggleYT = document.getElementById(
-  'toggle-youtube',
-) as HTMLButtonElement | null;
-const toggleYTM = document.getElementById(
-  'toggle-ytm',
-) as HTMLButtonElement | null;
-const toggleTidal = document.getElementById(
-  'toggle-tidal',
-) as HTMLButtonElement | null;
-const toggleAppleMusic = document.getElementById(
-  'toggle-applemusic',
-) as HTMLButtonElement | null;
+// One row per service — every popup site toggle is declared, wired,
+// revealed, and rendered from this single table instead of separate
+// per-service call sites, so adding a service can't silently miss one.
+const SITE_TOGGLES = [
+  { elementId: 'toggle-youtube', siteId: 'youtube' },
+  { elementId: 'toggle-ytm', siteId: 'youtubemusic' },
+  { elementId: 'toggle-tidal', siteId: 'tidal' },
+  { elementId: 'toggle-applemusic', siteId: 'applemusic' },
+] as const;
+const siteToggles = SITE_TOGGLES.map(({ elementId, siteId }) => ({
+  siteId,
+  el: document.getElementById(elementId) as HTMLButtonElement | null,
+}));
 const btnOpenDiscord = document.getElementById(
   'btn-open-discord',
 ) as HTMLButtonElement | null;
@@ -381,10 +382,9 @@ function wireSiteToggle(btn: HTMLButtonElement | null, siteId: string): void {
     updateServicesCount();
   });
 }
-wireSiteToggle(toggleYT, 'youtube');
-wireSiteToggle(toggleYTM, 'youtubemusic');
-wireSiteToggle(toggleTidal, 'tidal');
-wireSiteToggle(toggleAppleMusic, 'applemusic');
+for (const { el, siteId } of siteToggles) {
+  wireSiteToggle(el, siteId);
+}
 
 // ── Services accordion ────────────────────────────────────────────────────────
 
@@ -586,16 +586,12 @@ function revealTogglesOnce(status: Status): void {
   if (hasRevealedToggles) return;
   hasRevealedToggles = true;
   setToggle(btnPause, !(status.paused ?? false));
-  setToggle(toggleYT, status.enabledSites?.youtube ?? true);
-  setToggle(toggleYTM, status.enabledSites?.youtubemusic ?? true);
-  setToggle(toggleTidal, status.enabledSites?.tidal ?? true);
-  setToggle(toggleAppleMusic, status.enabledSites?.applemusic ?? true);
   document.body.classList.add('no-transition');
   btnPause?.classList.remove('pending');
-  toggleYT?.classList.remove('pending');
-  toggleYTM?.classList.remove('pending');
-  toggleTidal?.classList.remove('pending');
-  toggleAppleMusic?.classList.remove('pending');
+  for (const { el, siteId } of siteToggles) {
+    setToggle(el, status.enabledSites?.[siteId] ?? true);
+    el?.classList.remove('pending');
+  }
   requestAnimationFrame(() => document.body.classList.remove('no-transition'));
 }
 
@@ -727,10 +723,9 @@ function render(status: Status | null): void {
   if (pauseRow) pauseRow.dataset.paused = String(paused);
 
   // Site toggles
-  setToggle(toggleYT, status.enabledSites?.youtube ?? true);
-  setToggle(toggleYTM, status.enabledSites?.youtubemusic ?? true);
-  setToggle(toggleTidal, status.enabledSites?.tidal ?? true);
-  setToggle(toggleAppleMusic, status.enabledSites?.applemusic ?? true);
+  for (const { el, siteId } of siteToggles) {
+    setToggle(el, status.enabledSites?.[siteId] ?? true);
+  }
   updateServicesCount();
 
   if (!status.hostConnected) {

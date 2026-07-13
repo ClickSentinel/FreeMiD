@@ -577,7 +577,14 @@ function connectNativeHost(): void {
       } else if (m.type === 'DESKTOP_MEDIA' && m.app) {
         const app = m.app;
         const desktopApp = DESKTOP_APPS[app];
-        if (desktopApp) {
+        if (!desktopApp) {
+          // The native host self-updates independently of the extension, so
+          // it can legitimately support an app id this extension version
+          // doesn't know about yet (KNOWN_APPS/DESKTOP_APPS version skew) —
+          // log it rather than silently dropping the message, so that skew
+          // is diagnosable instead of just "desktop presence doesn't work."
+          console.warn('[FreeMiD] DESKTOP_MEDIA for unknown app id:', app);
+        } else {
           const { presenceKey, brandName, logoAssetKey } = desktopApp;
           const track = m.track;
           const hasBrowserTab = [...activeActivityTabs.values()].includes(app);

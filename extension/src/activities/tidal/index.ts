@@ -2,6 +2,7 @@ import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
 import { Presence } from '../../presence/Presence';
 import { PlaybackAnchor } from '../../utils/PlaybackAnchor';
 import { parseClock } from '../../utils/parseClock';
+import { urlLike } from '../../utils/urlLike';
 
 const presence = new Presence({
   clientId: import.meta.env.VITE_DISCORD_CLIENT_ID,
@@ -33,8 +34,12 @@ function currentArtworkUrl(): string | undefined {
     ?.getAttribute('src');
   if (!src) return undefined;
 
+  // new URL(src, origin) only applies the base to a relative reference —
+  // an absolute string (e.g. a stray "javascript:"/"data:" src) parses with
+  // its own scheme intact, so gate the result through urlLike() as well.
   try {
-    return new URL(src, window.location.origin).toString();
+    const resolved = new URL(src, window.location.origin).toString();
+    return urlLike(resolved) ? resolved : undefined;
   } catch {
     return undefined;
   }

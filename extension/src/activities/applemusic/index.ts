@@ -2,6 +2,7 @@ import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
 import { Presence } from '../../presence/Presence';
 import { PlaybackAnchor } from '../../utils/PlaybackAnchor';
 import { parseIsoDuration } from '../../utils/parseIsoDuration';
+import { urlLike } from '../../utils/urlLike';
 
 const presence = new Presence({
   clientId: import.meta.env.VITE_DISCORD_CLIENT_ID,
@@ -28,6 +29,28 @@ function isPlaying(): boolean {
   return navigator.mediaSession?.playbackState === 'playing';
 }
 
+// The Media Session spec does not guarantee `artwork` entries are ordered by
+// size, even though Apple currently supplies them ascending — parse each
+// entry's `sizes` string (e.g. "512x512") and pick the largest by area
+// instead of assuming array order. Also gate through urlLike(): `src` is
+// fully page-controlled and could in principle be any URL scheme.
+function bestArtworkUrl(
+  artwork: readonly MediaImage[] | undefined,
+): string | undefined {
+  if (!artwork || artwork.length === 0) return undefined;
+  let best: { src: string; area: number } | undefined;
+  for (const entry of artwork) {
+    if (!entry.src || !urlLike(entry.src)) continue;
+    const [w, h] = (entry.sizes ?? '').split('x').map(Number);
+    const area =
+      w != null && h != null && Number.isFinite(w) && Number.isFinite(h)
+        ? w * h
+        : 0;
+    if (!best || area > best.area) best = { src: entry.src, area };
+  }
+  return best?.src;
+}
+
 // The player bar's elapsed/remaining <time> elements carry real ISO 8601
 // durations in their datetime attribute (e.g. "PT2S", "PT1M28S") — more
 // reliable than parsing the "0:02" display text. They live inside
@@ -37,9 +60,12 @@ function getElapsedAndDuration(): {
   current: number | undefined;
   duration: number;
 } {
-  const progressRoot = document.querySelector('amp-playback-controls-progress')?.shadowRoot;
+  const progressRoot = document.querySelector(
+    'amp-playback-controls-progress',
+  )?.shadowRoot;
   const elapsedEl = progressRoot?.querySelector<HTMLElement>('.time.elapsed');
-  const remainingEl = progressRoot?.querySelector<HTMLElement>('.time.remaining');
+  const remainingEl =
+    progressRoot?.querySelector<HTMLElement>('.time.remaining');
   const current = parseIsoDuration(elapsedEl?.getAttribute('datetime'));
   const remaining = parseIsoDuration(remainingEl?.getAttribute('datetime'));
   const duration =
@@ -81,11 +107,7 @@ presence.on('UpdateData', () => {
     return;
   }
 
-  const artwork = md?.artwork;
-  const artUrl =
-    artwork && artwork.length > 0
-      ? artwork[artwork.length - 1]?.src
-      : undefined;
+  const artUrl = bestArtworkUrl(md?.artwork);
 
   presence.setActivity({
     applicationId: import.meta.env.VITE_DISCORD_CLIENT_ID,
@@ -115,4 +137,7 @@ document.addEventListener('pause', trigger, { capture: true, signal });
 // Primary signal: watch the player bar for both track-title changes
 // (childList/characterData) and play/pause button toggles (aria-hidden
 // attribute mutations).
-presence.watchSelector('.player-bar', signal, { observeAttributes: true });
+presence.watchSelector('.player-bar', signal, {
+  observeAttributes: true,
+  attributeFilter: ['aria-hidden'],
+});
