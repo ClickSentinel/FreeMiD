@@ -50,7 +50,7 @@ irm https://github.com/ClickSentinel/FreeMiD/releases/latest/download/install.ps
 1. Reload extension:
   Open `chrome://extensions` and click Reload on FreeMiD.
 2. Verify:
-  Open YouTube, YouTube Music, or TIDAL, then confirm the FreeMiD toolbar dot is green.
+  Open YouTube, YouTube Music, TIDAL, or Apple Music, then confirm the FreeMiD toolbar dot is green.
 
 ### Local build
 
@@ -88,7 +88,7 @@ Quick start:
 
 ## Features
 
-- Live Rich Presence for YouTube Music, YouTube, and TIDAL
+- Live Rich Presence for YouTube Music, YouTube, TIDAL, and Apple Music
 - Progress bar for music (start + end timestamps via Discord's Listening activity type)
 - Album art pulled from source URLs, with stable Discord asset keys for service icons
 - "Listen" buttons linking to the current track when available
@@ -102,7 +102,7 @@ Quick start:
 FreeMiD has two parts that work together:
 
 ```text
-YouTube / YouTube Music / TIDAL tab
+YouTube / YouTube Music / TIDAL / Apple Music tab
   └─ Content script (JS, injected by Chrome)
   reads title / artist / timestamps from page metadata (mediaSession and DOM)
          └─ Background service worker (JS, runs in Chrome)
@@ -114,7 +114,7 @@ YouTube / YouTube Music / TIDAL tab
 
 **Why a native host?** Discord's IPC protocol uses a local Unix socket (`$XDG_RUNTIME_DIR/discord-ipc-0` on Linux, `$TMPDIR/discord-ipc-0` on macOS). Browsers cannot open Unix sockets directly, so a small native binary bridges the gap. Chrome spawns it on demand and kills it when Chrome closes — you never have to manage it yourself.
 
-> **Metadata sources:** YouTube Music primarily uses `navigator.mediaSession`; TIDAL web relies on stable player DOM selectors for title/artist/timestamps; TIDAL desktop (Windows) uses the Windows System Media Transport Controls (SMTC). No external API calls are made for track metadata (title, artist, timestamps) — those come directly from the page. Album art is looked up via the iTunes Search API (primary) with MusicBrainz and Cover Art Archive as a fallback.
+> **Metadata sources:** YouTube Music and Apple Music web both primarily use `navigator.mediaSession`; TIDAL web relies on stable player DOM selectors for title/artist/timestamps. Desktop apps (TIDAL and Apple Music) are tracked via the Windows System Media Transport Controls (SMTC) on Windows; Apple Music desktop is also supported on macOS via an `osascript` query to `Music.app`. No external API calls are made for track metadata (title, artist, timestamps) — those come directly from the page or OS media APIs. Album art is looked up via the iTunes Search API (primary) with MusicBrainz and Cover Art Archive as a fallback when a desktop app doesn't supply artwork directly.
 
 ### Native host lifecycle (Chrome)
 
@@ -297,6 +297,8 @@ mysite: {
 | YouTube | ✅ | Video title, channel name |
 | TIDAL (web) | ✅ | Track title, artist, album art, progress bar, track link button |
 | TIDAL (desktop) | ✅ Windows only | Track title, artist, album art, progress bar — via Windows SMTC; no link button |
+| Apple Music (web) | ✅ | Track title, artist, album art, progress bar — via `navigator.mediaSession`; no link button |
+| Apple Music (desktop) | ✅ Windows & macOS | Track title, artist, album art, progress bar — via Windows SMTC or macOS `osascript`/`Music.app`; no link button. Windows updates near-instantly (push); macOS updates only on the extension's poll interval (no push/subscribe API available) |
 
 ---
 

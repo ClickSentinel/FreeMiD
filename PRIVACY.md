@@ -3,7 +3,7 @@
 **Project:** FreeMiD  
 **Maintainer:** FreeMiD team  
 **Effective date:** 2026-05-30  
-**Last updated:** 2026-06-27
+**Last updated:** 2026-07-16
 
 ---
 
@@ -27,7 +27,7 @@ FreeMiD reads the following information **only on your local device** to display
 | --- | --- | --- |
 | Page title, artist, track name | Browser tab DOM / `mediaSession` API | Build the Rich Presence activity payload |
 | Playback timestamps (start / end) | Browser tab DOM / `mediaSession` API | Show a progress bar in Discord |
-| Album art URL | YouTube / YouTube Music CDN (already loaded by the page) | Display artwork in Discord |
+| Album art URL | YouTube / YouTube Music / Apple Music CDN (already loaded by the page) | Display artwork in Discord |
 | Currently active tab URL | Chrome `tabs` API | Detect which service is open |
 | Local extension settings (`paused`, enabled services, cached latest version) | `chrome.storage.local` | Persist user preferences and update UI state |
 
@@ -35,7 +35,7 @@ This data is not sent to FreeMiD-operated servers.
 
 ### Sent to external services
 
-When Tidal is active (either the browser tab or the Windows desktop app), FreeMiD sends the following data to external services to resolve album artwork:
+When a TIDAL desktop or Apple Music desktop session is active (Windows, or macOS for Apple Music), FreeMiD sends the following data to external services to resolve album artwork, since the desktop APIs used for those sessions do not supply artwork directly:
 
 | Data | Sent to | Purpose |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ No account identifiers, IP-attributable tokens, or personally identifiable infor
 
 ## How data flows
 
-**Browser-based services (YouTube, YouTube Music, Tidal web):**
+**Browser-based services (YouTube, YouTube Music, TIDAL web, Apple Music web):**
 
 ```text
 Browser tab
@@ -72,12 +72,13 @@ Browser tab
                            └─ Discord desktop app
 ```
 
-**Tidal desktop app (Windows only):**
+**Desktop apps (TIDAL and Apple Music on Windows; Apple Music also on macOS):**
 
 ```text
-Tidal desktop app
-  └─ Windows SMTC API (System Media Transport Controls)
-       └─ FreeMiD native host binary (event-driven, no polling)
+TIDAL / Apple Music desktop app
+  └─ Windows: SMTC API (System Media Transport Controls, event-driven, no polling)
+     macOS (Apple Music only): osascript query to Music.app (on extension poll)
+       └─ FreeMiD native host binary
             └─ Chrome native messaging pipe → Background service worker
                  ├─ iTunes Search API  (artist + title → art URL, primary)
                  ├─ MusicBrainz API  (artist + title → release ID, fallback)
@@ -85,7 +86,7 @@ Tidal desktop app
                  └─ Chrome native messaging pipe → native host → Discord IPC socket
 ```
 
-FreeMiD does not send your activity metadata to FreeMiD-operated servers. Outbound network requests that may occur include GitHub release/version checks and downloads, iTunes Search API / MusicBrainz / Cover Art Archive requests for Tidal artwork, and Discord network traffic handled by the Discord desktop app.
+FreeMiD does not send your activity metadata to FreeMiD-operated servers. Outbound network requests that may occur include GitHub release/version checks and downloads, iTunes Search API / MusicBrainz / Cover Art Archive requests for TIDAL/Apple Music desktop artwork, and Discord network traffic handled by the Discord desktop app.
 
 ---
 
@@ -112,7 +113,7 @@ FreeMiD may contact **GitHub** endpoints (for example `api.github.com` and relea
 
 FreeMiD's source code is hosted on **GitHub**. GitHub may collect data when you visit the repository or download a release. Refer to [GitHub's Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement) and [GitHub's Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service) for details.
 
-When the Tidal desktop feature is active (Windows only, no Tidal browser tab open), FreeMiD contacts two additional services to resolve album artwork:
+When a TIDAL or Apple Music desktop feature is active (Windows, or macOS for Apple Music; no corresponding browser tab open), FreeMiD contacts two additional services to resolve album artwork:
 
 - **iTunes Search API** (`itunes.apple.com`), operated by Apple Inc. — receives the artist name and track title as a search query to resolve album artwork. Refer to the [Apple Privacy Policy](https://www.apple.com/legal/privacy/) for details.
 - **MusicBrainz** (`musicbrainz.org`), operated by the MetaBrainz Foundation — receives the artist name and track title as a search query (fallback when iTunes returns no suitable result). Refer to the [MetaBrainz Privacy Policy](https://metabrainz.org/privacy) for details.

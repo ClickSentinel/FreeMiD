@@ -16,6 +16,7 @@ These are uploaded in the Discord Developer Portal for the FreeMiD application a
 - `youtube-logo-1024` - YouTube service icon
 - `ytmusic-logo-1024` - YouTube Music service icon
 - `tidal-logo-1024` - TIDAL service icon
+- `applemusic-logo-1024` - Apple Music service icon
 
 ## Extension-local preview assets
 
@@ -24,6 +25,7 @@ These PNGs ship with the extension and are used by the popup service-logo previe
 - `extension/public/icons/youtube-logo-1024.png`
 - `extension/public/icons/ytmusic-logo-1024.png`
 - `extension/public/icons/tidal-logo-1024.png`
+- `extension/public/icons/applemusic-logo-1024.png`
 
 ## Notes
 
