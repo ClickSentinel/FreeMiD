@@ -3,7 +3,7 @@
 **Project:** FreeMiD  
 **Maintainer:** FreeMiD team  
 **Effective date:** 2026-05-30  
-**Last updated:** 2026-05-30
+**Last updated:** 2026-07-16
 
 ---
 
@@ -15,7 +15,7 @@ By installing or using FreeMiD (the "Software"), you agree to these Terms of Ser
 
 ## 2. What FreeMiD is
 
-FreeMiD is a free, open-source browser extension that displays Discord Rich Presence based on what you are currently watching or listening to in supported web services (currently YouTube Music, YouTube, and TIDAL). It is provided at no cost and without any paywalled features.
+FreeMiD is a free, open-source browser extension that displays Discord Rich Presence based on what you are currently watching or listening to in supported web services (currently YouTube Music, YouTube, TIDAL, and Apple Music). It is provided at no cost and without any paywalled features.
 
 FreeMiD is licensed under the **GNU General Public License v3.0 or later**. The full licence text is available in the [LICENSE](./LICENSE) file and at [gnu.org/licenses/gpl-3.0](https://www.gnu.org/licenses/gpl-3.0.txt).
 
@@ -23,7 +23,7 @@ FreeMiD is licensed under the **GNU General Public License v3.0 or later**. The 
 
 ## 3. Eligibility
 
-You must be at least 13 years of age to use FreeMiD. By using FreeMiD you represent that you meet this requirement. You must also comply with Discord's [Terms of Service](https://discord.com/terms) and the terms of any web service whose content FreeMiD reads (e.g. YouTube, YouTube Music, TIDAL). FreeMiD is not affiliated with, endorsed by, or partnered with any of those services.
+You must be at least 13 years of age to use FreeMiD. By using FreeMiD you represent that you meet this requirement. You must also comply with Discord's [Terms of Service](https://discord.com/terms) and the terms of any web service whose content FreeMiD reads (e.g. YouTube, YouTube Music, TIDAL, Apple Music). FreeMiD is not affiliated with, endorsed by, or partnered with any of those services.
 
 ---
 
@@ -66,9 +66,9 @@ To the fullest extent permitted by applicable law, The FreeMiD team shall not be
 FreeMiD interacts with:
 
 - **Discord** — to display Rich Presence via Discord's API
-- **YouTube / YouTube Music / TIDAL** — to read publicly visible page metadata in your browser tab
+- **YouTube / YouTube Music / TIDAL / Apple Music** — to read publicly visible page metadata in your browser tab, or (for TIDAL and Apple Music desktop apps) OS media APIs
 
-"Discord", "YouTube", and "TIDAL" are trademarks of their respective owners. FreeMiD is independent and not endorsed by these services.
+"Discord", "YouTube", "TIDAL", and "Apple Music" are trademarks of their respective owners. FreeMiD is independent and not endorsed by these services.
 
 The FreeMiD team has no control over, and accepts no responsibility for, the availability, accuracy, or policies of these third-party services.
 
