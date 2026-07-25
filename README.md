@@ -7,6 +7,9 @@
 
 A fully free, open-source Discord Rich Presence bridge for web browsing — no subscription, no paywalled features, no telemetry.
 
+<img width="346" height="490" alt="image" src="https://github.com/user-attachments/assets/1e1e7df3-0512-4160-a313-607d5c13956d" />
+<img width="462" height="253" alt="image" src="https://github.com/user-attachments/assets/da353147-a260-44f7-acc4-cddf5f8ff7e4" />
+
 ---
 
 ## Installation
