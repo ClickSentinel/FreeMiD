@@ -66,9 +66,14 @@ function getVideoId(): string | undefined {
     if (id) return id;
   }
 
-  // 2. ytimg.com thumbnail URL contains the video ID — swapped per track
+  // 2. ytimg.com thumbnail URL contains the video ID — swapped per track.
+  //    Every selector here MUST be scoped to the player bar. A bare
+  //    `#song-image img` also matches track-list rows on an album page, and
+  //    since those re-render as you scroll it returned a different track's id
+  //    on each tick — nine spurious track changes in 1.6 s, cycling through
+  //    the album. A stale id is one wrong artwork; an unstable one is chaos.
   const imgs = document.querySelectorAll<HTMLImageElement>(
-    '#song-image img, ytmusic-player-bar img#img, ytmusic-player-bar img, ytmusic-player img',
+    'ytmusic-player-bar #song-image img, ytmusic-player-bar img#img, ytmusic-player-bar img',
   );
   for (const img of imgs) {
     const src = img.src || img.getAttribute('src') || '';
@@ -76,7 +81,7 @@ function getVideoId(): string | undefined {
     if (m) return m[1];
   }
 
-  // 3. Embedded player title link
+  // 3. Embedded player title link — one per page, so it cannot cross-match
   const ytpLink = document.querySelector<HTMLAnchorElement>('a.ytp-title-link');
   if (ytpLink?.href) {
     const id =
@@ -86,7 +91,8 @@ function getVideoId(): string | undefined {
   }
 
   // 4. ?v= in the page URL — lags playback, so last resort only. Covers the
-  //    initial load, where it is the only source that exists yet.
+  //    initial load, where it is the only source that exists yet. Stale but
+  //    stable, which is the right trade for a fallback.
   const urlId = new URLSearchParams(window.location.search).get('v');
   if (urlId) return urlId;
 

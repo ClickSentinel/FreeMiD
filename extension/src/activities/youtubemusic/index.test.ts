@@ -154,6 +154,34 @@ describe('YouTube Music activity', () => {
     );
   });
 
+  it('ignores track-list thumbnails on an album page', async () => {
+    // An album page renders a #song-image per row. An unscoped selector picked
+    // whichever happened to be first in the DOM, and since those re-render on
+    // scroll the id changed every tick — nine spurious track changes in 1.6 s.
+    window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+    setMediaSession('playing', { title: 'Now Playing', artist: 'Artist Name' });
+    document.body.innerHTML = `
+      <div id="contents">
+        <div id="song-image"><img src="https://i.ytimg.com/vi/otherTrack1/mq.jpg" /></div>
+        <div id="song-image"><img src="https://i.ytimg.com/vi/otherTrack2/mq.jpg" /></div>
+      </div>
+      <ytmusic-player-bar>
+        <img id="img" src="https://i.ytimg.com/vi/nowPlaying1/mqdefault.jpg" />
+        <div class="time-info">0:10 / 3:00</div>
+      </ytmusic-player-bar>
+      <video class="video-stream"></video>
+    `;
+
+    await loadModule();
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.setActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        largeImageKey: 'https://i.ytimg.com/vi/nowPlaying1/mqdefault.jpg',
+      }),
+    );
+  });
+
   it('falls back to the URL when the player bar has no link yet', async () => {
     // Initial page load: the bar has not rendered, and the URL is all we have.
     window.history.replaceState({}, '', '/watch?v=abcdefghijk');
