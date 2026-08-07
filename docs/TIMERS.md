@@ -216,6 +216,44 @@ Three conditions stacked, and only the third remains:
 
 ---
 
+## Debugging a live trace
+
+Settings → **Debug logging** → enable, then reload any music tab so its content
+script picks up the flag. Reproduce, then **Copy log** or **Download**.
+
+Entries from the page, the service worker and the popup land in one ordered
+buffer owned by the background, persisted to `chrome.storage.local` so a
+service-worker teardown mid-trace does not lose it. Off by default; when
+disabled each call site costs one boolean check.
+
+Instrumented today: the background throttle path and the content-script
+timer/observer paths. A healthy track change reads roughly:
+
+```text
++0.000s  ytmusic   track-change        {"trackId":"...","album":null}
++0.001s  presence  schedule-trigger    {"delays":[300,1000]}
++0.002s  presence  set-activity        {"details":"New Song","album":null}
++0.003s  bg        recv                {"siteId":"youtubemusic",...}
++0.004s  bg        sent                {"details":"New Song","dur":214}
++0.304s  presence  tick                {"source":"settle:300ms"}
++0.305s  presence  set-activity        {"details":"New Song","album":"The Album"}
++0.306s  bg        throttle-defer      {"inMs":4698,"replacedPending":false}
++5.004s  bg        flush
++5.005s  bg        sent                {"album":"The Album",...}
+```
+
+What to look for when a skip felt slow:
+
+| Line | Means |
+| --- | --- |
+| `observer-reattach` | The player-bar node was replaced — the bug this work fixed, now recovering. |
+| `tick {"source":"interval"}` as the *first* line of a track change | The observer missed it; the 5 s backstop caught it instead. |
+| `throttle-defer` with a large `inMs` | Working as designed — Discord's rate limit, not a bug. |
+| `identity-suppressed` | The video id moved before the title; bounded by `IDENTITY_SETTLE_MS`. |
+| `send-failed` | The native messaging port broke. Dedup state is *not* committed, so the retry will go out. |
+| `dedup-skip {"cancelledPendingFlush":true}` | An A→B→A payload flip cancelled a queued update. |
+| `worker-start` mid-trace | The service worker was torn down and restarted. |
+
 ## Invariants
 
 Asserted in `timing.test.ts` — see the test for the authoritative list.

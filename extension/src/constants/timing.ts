@@ -124,6 +124,15 @@ export const UPDATE_CHECK_PERIOD_MINUTES = 1_440;
 /** Non-Windows: periodic quiet reconnect to pick up an externally-installed host. */
 export const HOST_VERSION_CHECK_PERIOD_MINUTES = 30;
 
+// ── Debug logging ────────────────────────────────────────────────────────────
+
+/**
+ * Debounce before persisting the debug ring buffer to chrome.storage.local.
+ * Long enough to batch a burst of entries, short enough that a service-worker
+ * teardown right after an interesting event still captures it.
+ */
+export const DEBUG_FLUSH_DEBOUNCE_MS = 1_000;
+
 // ── Popup ────────────────────────────────────────────────────────────────────
 
 /** Re-render of the "connected for" label. */

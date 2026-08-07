@@ -3,6 +3,7 @@ import {
   IDENTITY_SETTLE_MS,
   METADATA_SETTLE_DELAYS_MS,
 } from '../../constants/timing';
+import { debugLog } from '../../debug/log';
 import { Presence } from '../../presence/Presence';
 import { PlaybackAnchor } from '../../utils/PlaybackAnchor';
 import { parseClock } from '../../utils/parseClock';
@@ -167,6 +168,12 @@ presence.on('UpdateData', () => {
   const trackId = videoId || `${title}::${artist || ''}`;
 
   if (trackId !== lastTrackId) {
+    debugLog('ytmusic', 'track-change', {
+      trackId,
+      title,
+      artist,
+      album: ms?.metadata?.album,
+    });
     lastTrackId = trackId;
     trackSeenAt = Date.now();
     // Auto-advance does not fire a `play` event — YouTube Music never pauses
@@ -184,7 +191,15 @@ presence.on('UpdateData', () => {
     videoId !== lastVideoId &&
     title === lastTitle &&
     Date.now() - (trackSeenAt ?? 0) < IDENTITY_SETTLE_MS;
-  if (identityInconsistent) return;
+  if (identityInconsistent) {
+    debugLog('ytmusic', 'identity-suppressed', {
+      videoId,
+      lastVideoId,
+      title,
+      sinceChangeMs: Date.now() - (trackSeenAt ?? 0),
+    });
+    return;
+  }
 
   lastVideoId = videoId;
   lastTitle = title;

@@ -11,6 +11,7 @@
  */
 
 import { ACTIVITY_TICK_MS } from '../constants/timing';
+import { debugLog, initDebugFlag } from '../debug/log';
 
 export interface PresenceData {
   /** Override the Discord Application ID for per-activity artwork */
@@ -46,6 +47,9 @@ interface PresenceConfig {
    */
   updateIntervalMs?: number;
 }
+
+/** What drove the in-flight tick, for debug attribution. */
+let tickSource = 'interval';
 
 export class Presence {
   private readonly clientId: string;
@@ -97,6 +101,8 @@ export class Presence {
     // script world, so we can use it to stop the previous interval before
     // starting a new one — preventing two instances from racing each other
     // with conflicting anchor state.
+    void initDebugFlag();
+
     const GUARD_KEY = '__freemid_presence_interval';
     const prevId = (globalThis as Record<string, unknown>)[GUARD_KEY] as
       | ReturnType<typeof setInterval>
@@ -113,6 +119,8 @@ export class Presence {
         (globalThis as Record<string, unknown>)[GUARD_KEY] = undefined;
         return;
       }
+      debugLog('presence', 'tick', { source: tickSource });
+      tickSource = 'interval';
       void Promise.resolve(callback());
     };
 
@@ -125,6 +133,10 @@ export class Presence {
   /** Push presence data to Discord via the background service worker */
   setActivity(data: PresenceData): void {
     if (!this.isContextValid()) return;
+    debugLog('presence', 'set-activity', {
+      details: data.details,
+      album: data.largeImageText,
+    });
 
     const activity = {
       application_id: data.applicationId ?? this.clientId,
@@ -171,7 +183,8 @@ export class Presence {
    * interval tick. Used by event-driven observers (MutationObserver, play/pause
    * events) in activity scripts to push updates as soon as the DOM changes.
    */
-  triggerUpdate(): void {
+  triggerUpdate(source = 'trigger'): void {
+    tickSource = source;
     this.scheduledCallback?.();
   }
 
@@ -183,8 +196,9 @@ export class Presence {
    */
   scheduleTrigger(...delays: number[]): void {
     this.clearPendingTriggers();
+    debugLog('presence', 'schedule-trigger', { delays });
     this.pendingTriggerTimers = delays.map((d) =>
-      setTimeout(() => this.triggerUpdate(), d),
+      setTimeout(() => this.triggerUpdate(`settle:${d}ms`), d),
     );
   }
 
@@ -230,9 +244,18 @@ export class Presence {
     let elementObserver: MutationObserver | null = null;
 
     const connect = (el: Element): void => {
+      debugLog(
+        'presence',
+        observed === null ? 'observer-attach' : 'observer-reattach',
+        {
+          selector,
+        },
+      );
       elementObserver?.disconnect();
       observed = el;
-      elementObserver = new MutationObserver(() => this.triggerUpdate());
+      elementObserver = new MutationObserver(() =>
+        this.triggerUpdate('observer'),
+      );
       elementObserver.observe(el, {
         characterData: true,
         childList: true,
@@ -256,7 +279,7 @@ export class Presence {
       connect(found);
       // The swap itself usually *is* the state change we care about, and the
       // mutation that carried it landed before we were attached.
-      this.triggerUpdate();
+      this.triggerUpdate('observer-reattach');
     });
     rewatch.observe(document.body, { childList: true, subtree: true });
 

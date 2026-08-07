@@ -23,6 +23,19 @@ import {
   UPDATE_TIMING,
 } from '../constants/timing';
 import {
+  appendDebugEntry,
+  clearDebugEntries,
+  getDebugEntries,
+  initDebugBuffer,
+} from '../debug/buffer';
+import {
+  DEBUG_MESSAGE_TYPE,
+  type DebugEntry,
+  debugLog,
+  initDebugFlag,
+  isDebugEnabled,
+} from '../debug/log';
+import {
   compareVersions,
   isHostSelfUpdateSupported,
   isUpdateAvailableForHost,
@@ -800,9 +813,32 @@ function pollDesktopMediaForApp(appId: string): void {
  */
 function sendActivityToHost(activity: object, activityJson: string): void {
   const sent = sendToHost({ type: 'SET_ACTIVITY', activity });
-  if (!sent) return;
+  if (!sent) {
+    debugLog('bg', 'send-failed', { error: lastError });
+    return;
+  }
   lastActivitySentAt = Date.now();
   lastSentActivityJson = activityJson;
+  debugLog('bg', 'sent', activitySummary(activity));
+}
+
+/** Compact, JSON-safe view of a payload for the debug log. */
+function activitySummary(activity: object): Record<string, unknown> {
+  const a = activity as {
+    details?: string;
+    state?: string;
+    timestamps?: { start?: number; end?: number };
+    assets?: { large_text?: string };
+  };
+  return {
+    details: a.details,
+    state: a.state,
+    album: a.assets?.large_text,
+    dur:
+      a.timestamps?.start !== undefined && a.timestamps?.end !== undefined
+        ? a.timestamps.end - a.timestamps.start
+        : undefined,
+  };
 }
 
 function flushPendingActivity(): void {
@@ -812,8 +848,12 @@ function flushPendingActivity(): void {
   if (activity === null) return;
 
   const activityJson = JSON.stringify(activity);
-  if (activityJson === lastSentActivityJson) return;
+  if (activityJson === lastSentActivityJson) {
+    debugLog('bg', 'flush-deduped');
+    return;
+  }
 
+  debugLog('bg', 'flush');
   sendActivityToHost(activity, activityJson);
 }
 
@@ -822,17 +862,27 @@ function flushPendingActivity(): void {
  * Pass siteId to enforce per-site enable/disable and pause state.
  */
 export function setActivity(activity: object, siteId?: string): void {
-  if (paused) return;
+  debugLog('bg', 'recv', { siteId, ...activitySummary(activity) });
+  if (paused) {
+    debugLog('bg', 'reject-paused');
+    return;
+  }
   // Desktop presence keys (e.g. 'tidal-desktop') share their web activity's
   // site toggle rather than having their own.
   const toggleKey =
     siteId !== undefined
       ? (DESKTOP_PRESENCE_TO_TOGGLE[siteId] ?? siteId)
       : siteId;
-  if (toggleKey !== undefined && !enabledSites[toggleKey]) return;
+  if (toggleKey !== undefined && !enabledSites[toggleKey]) {
+    debugLog('bg', 'reject-site-disabled', { toggleKey });
+    return;
+  }
   // Lock model: first playing source claims the lock; others are blocked until
   // the holder voluntarily releases via releasePresence().
-  if (presenceHolder !== null && presenceHolder !== siteId) return;
+  if (presenceHolder !== null && presenceHolder !== siteId) {
+    debugLog('bg', 'reject-lock-held', { holder: presenceHolder, siteId });
+    return;
+  }
   if (siteId !== undefined) presenceHolder = siteId;
 
   const a = activity as {
@@ -907,6 +957,9 @@ export function setActivity(activity: object, siteId?: string): void {
   // previously-sent state (A→B→A), cancel that flush — it would send stale data.
   const activityJson = JSON.stringify(activity);
   if (activityJson === lastSentActivityJson) {
+    debugLog('bg', 'dedup-skip', {
+      cancelledPendingFlush: pendingActivityFlushTimer !== null,
+    });
     if (pendingActivityFlushTimer !== null) {
       clearTimeout(pendingActivityFlushTimer);
       pendingActivityFlushTimer = null;
@@ -921,6 +974,10 @@ export function setActivity(activity: object, siteId?: string): void {
   const elapsed = Date.now() - lastActivitySentAt;
   if (elapsed < DISCORD_MIN_INTERVAL_MS) {
     pendingActivityPayload = activity;
+    debugLog('bg', 'throttle-defer', {
+      inMs: DISCORD_MIN_INTERVAL_MS - elapsed,
+      replacedPending: pendingActivityFlushTimer !== null,
+    });
     if (pendingActivityFlushTimer === null) {
       pendingActivityFlushTimer = setTimeout(
         flushPendingActivity,
@@ -1134,6 +1191,34 @@ chrome.runtime.onMessage.addListener(
       }
       broadcastStatus();
       return;
+    }
+
+    if (msg.type === DEBUG_MESSAGE_TYPE) {
+      // Forwarded from a content script or the popup. The flag is checked in
+      // the sending context, so anything arriving here is already wanted.
+      const entry = msg.entry as DebugEntry | undefined;
+      // Re-check locally: a content script that missed the disable broadcast
+      // could otherwise keep filling the buffer after the user turned it off.
+      if (isDebugEnabled() && entry && typeof entry.t === 'number') {
+        appendDebugEntry(entry);
+      }
+      return;
+    }
+
+    if (msg.type === 'GET_DEBUG_LOG') {
+      sendResponse({
+        entries: getDebugEntries(),
+        hostVersion,
+        hostRuntimeOs,
+        hostRuntimeArch,
+      });
+      return true;
+    }
+
+    if (msg.type === 'CLEAR_DEBUG_LOG') {
+      clearDebugEntries();
+      sendResponse({ ok: true });
+      return true;
     }
 
     if (msg.type === 'GET_STATUS') {
@@ -1367,7 +1452,12 @@ const stateLoaded: Promise<void> = chrome.storage.local
 void Promise.all([
   stateLoaded,
   chrome.storage.session.get(SESSION_KEYS.pendingReconnect),
+  initDebugBuffer(),
+  initDebugFlag(),
 ]).then(([, session]) => {
+  debugLog('bg', 'worker-start', {
+    version: chrome.runtime.getManifest().version,
+  });
   connectNativeHost();
   // Restore a pending post-update reconnect if the SW was suspended before
   // the reconnect timer fired. startApplyVerification will send PINGs and
