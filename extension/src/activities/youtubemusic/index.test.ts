@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IDENTITY_SETTLE_MS } from '../../constants/timing';
+import { SNAPSHOT_SETTLE_MS } from '../../constants/timing';
 
 type PresenceInstance = {
   on: ReturnType<typeof vi.fn>;
@@ -174,7 +174,10 @@ describe('YouTube Music activity', () => {
     expect(presenceInstance.scheduleTrigger).toHaveBeenCalledWith(300, 1000);
   });
 
-  it('suppresses a snapshot whose video id advanced before the title did', async () => {
+  it("withholds a snapshot still carrying the previous track's duration", async () => {
+    // The player bar repaints after the title, so the first snapshot of a new
+    // track reads the old duration. Sending it would give Discord a
+    // wrong-length progress bar for a full throttle interval.
     window.history.replaceState({}, '', '/watch?v=abcdefghijk');
     setMediaSession('playing', { title: 'First', artist: 'Artist Name' });
     document.body.innerHTML = `
@@ -188,22 +191,50 @@ describe('YouTube Music activity', () => {
     capturedUpdateHandler?.();
     presenceInstance.setActivity.mockClear();
 
-    // URL advances; mediaSession still reports the previous track's title.
-    // Sending here would pair the new artwork with the old title.
+    // New track, but the bar still shows the previous track's 3:00.
     window.history.replaceState({}, '', '/watch?v=zyxwvutsrqp');
+    setMediaSession('playing', { title: 'Second', artist: 'Artist Name' });
     capturedUpdateHandler?.();
 
     expect(presenceInstance.setActivity).not.toHaveBeenCalled();
   });
 
-  it('sends anyway once the identity settle window expires', async () => {
+  it('sends as soon as the player bar repaints', async () => {
+    window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+    setMediaSession('playing', { title: 'First', artist: 'Artist Name' });
+    document.body.innerHTML = `
+      <ytmusic-player-bar>
+        <div class="time-info">0:10 / 3:00</div>
+      </ytmusic-player-bar>
+      <video class="video-stream"></video>
+    `;
+
+    await loadModule();
+    capturedUpdateHandler?.();
+    presenceInstance.setActivity.mockClear();
+
+    window.history.replaceState({}, '', '/watch?v=zyxwvutsrqp');
+    setMediaSession('playing', { title: 'Second', artist: 'Artist Name' });
+    capturedUpdateHandler?.();
+    expect(presenceInstance.setActivity).not.toHaveBeenCalled();
+
+    // Bar catches up — the refinement tick now carries the right duration.
+    const timeInfo = document.querySelector('.time-info') as HTMLElement;
+    timeInfo.textContent = '0:02 / 4:43';
+    capturedUpdateHandler?.();
+
+    const activity = presenceInstance.setActivity.mock.calls[0]?.[0] as {
+      startTimestamp?: number;
+      endTimestamp?: number;
+    };
+    expect(activity.endTimestamp! - activity.startTimestamp!).toBe(283);
+  });
+
+  it('sends anyway once the settle window expires, stale bar or not', async () => {
     vi.useFakeTimers();
     try {
       window.history.replaceState({}, '', '/watch?v=abcdefghijk');
-      setMediaSession('playing', {
-        title: 'First',
-        artist: 'Artist Name',
-      });
+      setMediaSession('playing', { title: 'First', artist: 'Artist Name' });
       document.body.innerHTML = `
         <ytmusic-player-bar>
           <div class="time-info">0:10 / 3:00</div>
@@ -216,16 +247,73 @@ describe('YouTube Music activity', () => {
       presenceInstance.setActivity.mockClear();
 
       window.history.replaceState({}, '', '/watch?v=zyxwvutsrqp');
+      setMediaSession('playing', { title: 'Second', artist: 'Artist Name' });
       capturedUpdateHandler?.();
       expect(presenceInstance.setActivity).not.toHaveBeenCalled();
 
-      // Never stall presence indefinitely on a title that never catches up.
-      vi.advanceTimersByTime(IDENTITY_SETTLE_MS + 1);
+      // Never stall presence on a bar that never repaints.
+      vi.advanceTimersByTime(SNAPSHOT_SETTLE_MS + 1);
       capturedUpdateHandler?.();
       expect(presenceInstance.setActivity).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('releases a genuinely-equal duration after the window rather than stalling', async () => {
+    // Two consecutive tracks can legitimately share a duration, which is
+    // indistinguishable from a stale bar. The cost must stay bounded.
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+      setMediaSession('playing', { title: 'First', artist: 'A' });
+      document.body.innerHTML = `
+        <ytmusic-player-bar>
+          <div class="time-info">0:10 / 3:00</div>
+        </ytmusic-player-bar>
+        <video class="video-stream"></video>
+      `;
+
+      await loadModule();
+      capturedUpdateHandler?.();
+      presenceInstance.setActivity.mockClear();
+
+      window.history.replaceState({}, '', '/watch?v=zyxwvutsrqp');
+      setMediaSession('playing', { title: 'Second', artist: 'A' });
+      capturedUpdateHandler?.();
+      expect(presenceInstance.setActivity).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(SNAPSHOT_SETTLE_MS + 1);
+      capturedUpdateHandler?.();
+
+      expect(presenceInstance.setActivity).toHaveBeenCalledWith(
+        expect.objectContaining({ details: 'Second' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not withhold repeat ticks on a settled track', async () => {
+    // Once a track is settled its duration equals what we last sent, which
+    // must not be mistaken for a bar that has not repainted.
+    window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+    setMediaSession('playing', { title: 'Track', artist: 'A' });
+    document.body.innerHTML = `
+      <ytmusic-player-bar>
+        <div class="time-info">0:10 / 3:00</div>
+      </ytmusic-player-bar>
+      <video class="video-stream"></video>
+    `;
+
+    await loadModule();
+    capturedUpdateHandler?.();
+    presenceInstance.setActivity.mockClear();
+
+    capturedUpdateHandler?.();
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.setActivity).toHaveBeenCalledTimes(2);
   });
 
   it('clears presence data on pause transition without stopping updates', async () => {

@@ -4,11 +4,11 @@ import {
   ACTIVITY_TICK_MS,
   DISCORD_MIN_INTERVAL_MS,
   HOST_IDLE_TIMEOUT_MS,
-  IDENTITY_SETTLE_MS,
   KEEPALIVE_PERIOD_MINUTES,
   KEEPALIVE_PERIOD_MS,
   METADATA_SETTLE_DELAYS_MS,
   RECONNECT_BUTTON_COOLDOWN_MS,
+  SNAPSHOT_SETTLE_MS,
   UPDATE_TIMING,
 } from './timing';
 
@@ -27,18 +27,18 @@ describe('timing invariants', () => {
     expect(KEEPALIVE_PERIOD_MS).toBeLessThan(HOST_IDLE_TIMEOUT_MS);
   });
 
-  it('lets a suppressed identity tick be followed by a settle refinement', () => {
-    // A snapshot held back for incoherent identity must be re-pushed by a
-    // scheduled refinement rather than waiting for the next full tick.
+  it('lets a withheld snapshot be released by a settle refinement', () => {
+    // A snapshot held back for a stale field must be re-pushed by a scheduled
+    // refinement rather than waiting for the next full tick.
     const lastSettle = Math.max(...METADATA_SETTLE_DELAYS_MS);
-    expect(IDENTITY_SETTLE_MS).toBeLessThan(lastSettle);
+    expect(SNAPSHOT_SETTLE_MS).toBeLessThan(lastSettle);
     expect(lastSettle).toBeLessThan(ACTIVITY_TICK_MS);
   });
 
   it('bounds worst-case track-change latency by tick + throttle', () => {
-    // The identity gate must never be the dominant term: it is bounded well
+    // The snapshot gate must never be the dominant term: it is bounded well
     // under the throttle, so deferral is owned by the background alone.
-    expect(IDENTITY_SETTLE_MS).toBeLessThan(DISCORD_MIN_INTERVAL_MS);
+    expect(SNAPSHOT_SETTLE_MS).toBeLessThan(DISCORD_MIN_INTERVAL_MS);
     expect(ACTIVITY_TICK_MS + DISCORD_MIN_INTERVAL_MS).toBeLessThanOrEqual(
       10_000,
     );

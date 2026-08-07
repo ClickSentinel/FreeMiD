@@ -35,18 +35,26 @@ export const ACTIVITY_TICK_MS = 5_000;
 export const METADATA_SETTLE_DELAYS_MS = [300, 1_000] as const;
 
 /**
- * How long an activity may suppress a payload whose identity fields disagree.
+ * How long an activity may withhold a snapshot whose scraped fields have not
+ * all caught up with a track change.
  *
- * On YouTube Music the video ID (URL / DOM) and the track title
- * (`mediaSession.metadata`) update on separate ticks. Sending during that gap
- * would push the new track's artwork alongside the previous track's title.
- * Snapshots are held for at most this long waiting for the two to agree, after
- * which we send anyway rather than stall presence indefinitely.
+ * The player bar repaints ~250 ms after the title does, so a snapshot taken the
+ * instant the title changes still carries the *previous* track's duration.
+ * Sending it gives Discord a progress bar of the wrong length — and because
+ * that send consumes the throttle budget, the correction is then stuck behind
+ * DISCORD_MIN_INTERVAL_MS, leaving the wrong bar up for a full 5 s.
  *
- * Must stay well below the first entry of METADATA_SETTLE_DELAYS_MS' successor
- * so a suppressed tick is always followed by a scheduled refinement.
+ * Withholding for a moment is the cheaper error: 250 ms of the previous track
+ * is imperceptible, 5 s of a wrong progress bar is not.
+ *
+ * Only fields that are *wrong* justify this — never merely missing ones. The
+ * album name arrives late too, but it is just the artwork tooltip, so it rides
+ * along on a later refinement instead of holding the title back.
+ *
+ * Must stay below the last METADATA_SETTLE_DELAYS_MS entry so a withheld tick
+ * is always followed by a scheduled refinement rather than the next full tick.
  */
-export const IDENTITY_SETTLE_MS = 400;
+export const SNAPSHOT_SETTLE_MS = 400;
 
 // ── Background service worker ────────────────────────────────────────────────
 

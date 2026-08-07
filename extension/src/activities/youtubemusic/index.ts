@@ -1,7 +1,7 @@
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
 import {
-  IDENTITY_SETTLE_MS,
   METADATA_SETTLE_DELAYS_MS,
+  SNAPSHOT_SETTLE_MS,
 } from '../../constants/timing';
 import { debugLog } from '../../debug/log';
 import { Presence } from '../../presence/Presence';
@@ -16,8 +16,12 @@ const anchor = new PlaybackAnchor();
 let lastPausedState: boolean | undefined;
 let lastTrackId: string | undefined;
 let trackSeenAt: number | undefined;
-let lastVideoId: string | undefined;
-let lastTitle: string | undefined;
+/** Duration of the track we last built a payload for. */
+let lastDuration: number | undefined;
+/** Duration carried by the track we just left, to spot a bar that has not repainted. */
+let previousDuration: number | undefined;
+/** True between a track change and the first snapshot that gets through. */
+let awaitingBarRepaint = false;
 
 function getPlayerBarTimes(): { current?: number; duration?: number } {
   // Try several selectors — YouTube Music has changed its DOM structure over time.
@@ -176,33 +180,42 @@ presence.on('UpdateData', () => {
     });
     lastTrackId = trackId;
     trackSeenAt = Date.now();
+    // Remember what the bar read for the track we are leaving: while it still
+    // reads that, it has not repainted for the new one.
+    previousDuration = lastDuration;
+    awaitingBarRepaint = true;
     // Auto-advance does not fire a `play` event — YouTube Music never pauses
     // the media element between queued tracks — so the track change itself has
     // to schedule the refinement passes that a play event would have.
     presence.scheduleTrigger(...METADATA_SETTLE_DELAYS_MS);
   }
 
-  // The video ID (URL / DOM) and the title (mediaSession) update on separate
-  // ticks. Sending mid-transition would pair the new track's artwork with the
-  // previous track's title, so hold the snapshot briefly until they agree.
-  // The scheduled refinements above re-run this well within the settle window.
-  const identityInconsistent =
-    videoId !== undefined &&
-    videoId !== lastVideoId &&
-    title === lastTitle &&
-    Date.now() - (trackSeenAt ?? 0) < IDENTITY_SETTLE_MS;
-  if (identityInconsistent) {
-    debugLog('ytmusic', 'identity-suppressed', {
-      videoId,
-      lastVideoId,
-      title,
-      sinceChangeMs: Date.now() - (trackSeenAt ?? 0),
+  // The title changes before the player bar repaints, so a snapshot taken the
+  // instant we notice a new track still reads the *previous* track's duration.
+  // Sending that gives Discord a wrong-length progress bar, and since the send
+  // consumes the throttle budget the correction waits a full interval behind
+  // it. Hold the snapshot until the bar catches up.
+  //
+  // Scoped to the window after a track change and cleared as soon as one
+  // snapshot gets through: on a settled track `duration` naturally equals what
+  // we last sent, and comparing against that would withhold every tick.
+  const sinceTrackChangeMs = Date.now() - (trackSeenAt ?? 0);
+  const barStillShowsPreviousTrack =
+    awaitingBarRepaint &&
+    duration > 0 &&
+    duration === previousDuration &&
+    sinceTrackChangeMs < SNAPSHOT_SETTLE_MS;
+  if (barStillShowsPreviousTrack) {
+    debugLog('ytmusic', 'stale-duration-withheld', {
+      duration,
+      sinceTrackChangeMs,
     });
     return;
   }
 
-  lastVideoId = videoId;
-  lastTitle = title;
+  // Either the bar repainted or the window expired — stop second-guessing it.
+  awaitingBarRepaint = false;
+  lastDuration = duration;
 
   const { timestamps } = anchor.update(trackId, current, duration, paused);
 

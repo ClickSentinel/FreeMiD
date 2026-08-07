@@ -42,16 +42,24 @@ export function appendDebugEntry(entry: DebugEntry): void {
 
 /** Rehydrate from storage and start receiving entries. Background only. */
 export async function initDebugBuffer(): Promise<void> {
+  // Claim the sink before awaiting: the flag may resolve first and flush its
+  // pre-init queue, and without a sink those entries would go out over runtime
+  // messaging — from the background to itself.
+  setDebugSink(appendDebugEntry);
+
   try {
     const stored = await chrome.storage.local.get(STORAGE_KEYS.debugLog);
     const restored = stored[STORAGE_KEYS.debugLog];
     if (Array.isArray(restored)) {
-      entries = (restored as DebugEntry[]).slice(-DEBUG_MAX_ENTRIES);
+      // Prepend rather than replace: anything appended while the read was in
+      // flight is newer than what was persisted, and must survive rehydration.
+      entries = [...(restored as DebugEntry[]), ...entries].slice(
+        -DEBUG_MAX_ENTRIES,
+      );
     }
   } catch {
-    // Start with an empty buffer if storage is unavailable.
+    // Keep whatever has accumulated if storage is unavailable.
   }
-  setDebugSink(appendDebugEntry);
 }
 
 export function getDebugEntries(): DebugEntry[] {

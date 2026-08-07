@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  clearDebugSink,
+  __resetDebugForTest,
   DEBUG_MESSAGE_TYPE,
+  type DebugEntry,
   debugLog,
   isDebugEnabled,
   setDebugEnabled,
@@ -10,8 +11,7 @@ import {
 } from './log';
 
 afterEach(() => {
-  setDebugEnabled(false);
-  clearDebugSink();
+  __resetDebugForTest();
   delete (globalThis as Record<string, unknown>).chrome;
 });
 
@@ -88,6 +88,62 @@ describe('debugLog', () => {
 
     // A logging call must never be able to break presence.
     expect(() => debugLog('ytmusic', 'track-change')).not.toThrow();
+  });
+
+  it('holds entries recorded before the flag resolves, then releases them', () => {
+    // Activities wire up observers synchronously at injection, before the
+    // storage read settles. Those entries describe the setup we most want to
+    // inspect, so they must not be dropped for arriving early.
+    const sink = vi.fn();
+    setDebugSink(sink);
+
+    debugLog('presence', 'observer-attach');
+    expect(sink).not.toHaveBeenCalled();
+
+    setDebugEnabled(true);
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink.mock.calls[0]?.[0]).toMatchObject({
+      scope: 'presence',
+      event: 'observer-attach',
+    });
+  });
+
+  it('preserves original timestamps when releasing held entries', () => {
+    const sink = vi.fn();
+    setDebugSink(sink);
+
+    const before = Date.now();
+    debugLog('presence', 'observer-attach');
+    const after = Date.now();
+
+    setDebugEnabled(true);
+
+    // A released entry must carry when it happened, not when it was released.
+    const released = sink.mock.calls[0]?.[0] as DebugEntry;
+    expect(released.t).toBeGreaterThanOrEqual(before);
+    expect(released.t).toBeLessThanOrEqual(after);
+  });
+
+  it('discards held entries when the flag resolves to off', () => {
+    const sink = vi.fn();
+    setDebugSink(sink);
+
+    debugLog('presence', 'observer-attach');
+    setDebugEnabled(false);
+
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it('bounds the pre-init queue so a context that never resolves cannot leak', () => {
+    const sink = vi.fn();
+    setDebugSink(sink);
+
+    for (let i = 0; i < 500; i += 1) debugLog('presence', 'tick', { i });
+    setDebugEnabled(true);
+
+    expect(sink.mock.calls.length).toBeLessThanOrEqual(50);
+    expect(sink.mock.calls.length).toBeGreaterThan(0);
   });
 
   it('swallows a rejected sendMessage', async () => {

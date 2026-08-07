@@ -25,9 +25,17 @@ cannot see each other's state. When both deferred, their waits *serialized* — 
 background cost 6.5 s. With deferral owned in one place they overlap, and the
 cost is just the throttle.
 
-The one exception is deliberately bounded: an activity may hold a snapshot whose
-*identity fields disagree* (see `IDENTITY_SETTLE_MS` below), because sending
-that snapshot would be actively wrong rather than merely incomplete.
+The one exception is deliberately bounded: an activity may hold a snapshot that
+would be *wrong* rather than merely incomplete (see `SNAPSHOT_SETTLE_MS`).
+YouTube Music's player bar repaints ~250 ms after the title, so the first
+snapshot of a new track still reads the previous track's duration — and sending
+it does double damage, because the bad send consumes the throttle budget and
+strands the correction behind a full interval. Measured on a real trace: 5.0 s
+of a wrong-length Discord progress bar, twice in a row.
+
+A *missing* field never justifies withholding. The album name also arrives late,
+but it is only the artwork tooltip, so it rides along on a later refinement
+instead of holding the title back.
 
 ---
 
@@ -39,7 +47,7 @@ Runs inside the page, one instance per injected tab.
 | --- | --- | --- | --- |
 | UpdateData tick | `ACTIVITY_TICK_MS` | `5 s` | Backstop poll — **all four activities**, no overrides. |
 | Settle refinements | `METADATA_SETTLE_DELAYS_MS` | `300 ms`, `1000 ms` | Re-read and re-push after a track change or `play`. 300 ms for `mediaSession.metadata`, 1 s for the player-bar duration. |
-| Identity settle | `IDENTITY_SETTLE_MS` | `400 ms` | Max time an activity may suppress a snapshot whose identity fields disagree. |
+| Snapshot settle | `SNAPSHOT_SETTLE_MS` | `400 ms` | Max time an activity may withhold a snapshot carrying a field that is *wrong*, not merely missing. |
 | `watchSelector` observer | — | event-driven | Primary track-change signal. Re-attaches when the observed node is replaced. |
 
 ### Per-activity event wiring
@@ -187,7 +195,7 @@ track changes in page
       └─ (c) backstop: next UpdateData tick ..................  ≤ 5 000 ms
                     │
                     ▼
-      identity coherent? (video id vs title) ................. ≤   400 ms
+      player bar repainted? (duration vs previous track) ..... ≤   400 ms
                     │
                     ▼
       background setActivity() → dedup → throttle ............ ≤ 5 000 ms
@@ -249,7 +257,7 @@ What to look for when a skip felt slow:
 | `observer-reattach` | The player-bar node was replaced — the bug this work fixed, now recovering. |
 | `tick {"source":"interval"}` as the *first* line of a track change | The observer missed it; the 5 s backstop caught it instead. |
 | `throttle-defer` with a large `inMs` | Working as designed — Discord's rate limit, not a bug. |
-| `identity-suppressed` | The video id moved before the title; bounded by `IDENTITY_SETTLE_MS`. |
+| `stale-duration-withheld` | The player bar had not repainted; bounded by `SNAPSHOT_SETTLE_MS`. |
 | `send-failed` | The native messaging port broke. Dedup state is *not* committed, so the retry will go out. |
 | `dedup-skip {"cancelledPendingFlush":true}` | An A→B→A payload flip cancelled a queued update. |
 | `worker-start` mid-trace | The service worker was torn down and restarted. |
@@ -260,10 +268,10 @@ Asserted in `timing.test.ts` — see the test for the authoritative list.
 
 - `DISCORD_MIN_INTERVAL_MS` ≥ 4 s. Discord drops, not queues, the excess.
 - Keepalive ≥ Chrome's 30 s alarm floor and < the host's 45 s idle timeout.
-- `IDENTITY_SETTLE_MS` < the last settle delay < `ACTIVITY_TICK_MS`, so a
-  suppressed tick is always followed by a scheduled refinement rather than
+- `SNAPSHOT_SETTLE_MS` < the last settle delay < `ACTIVITY_TICK_MS`, so a
+  withheld tick is always followed by a scheduled refinement rather than
   waiting for the next full tick.
-- `IDENTITY_SETTLE_MS` < `DISCORD_MIN_INTERVAL_MS` — the content script's one
+- `SNAPSHOT_SETTLE_MS` < `DISCORD_MIN_INTERVAL_MS` — the content script's one
   remaining wait must never dominate the background's.
 - Windows ≥ other at every `UPDATE_TIMING` stage.
 - The popup's reconnect lockout ≥ the background's reconnect cooldown.
