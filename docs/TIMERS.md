@@ -3,8 +3,31 @@
 Every timer in FreeMiD, what it guards, and how they compose into the
 end-to-end latency between "the song changed" and "Discord shows it".
 
-Read this before changing any interval — several of them are load-bearing
-against Discord's rate limit or Chrome's MV3 service-worker lifecycle.
+**All extension timing values live in
+[`extension/src/constants/timing.ts`](../extension/src/constants/timing.ts).**
+Nothing else should define one. The relationships between them are asserted in
+`timing.test.ts` (and `test/timing-drift.test.ts` for the Rust mirror), so
+changing a value there tells you what else has to move.
+
+---
+
+## The one rule
+
+**Only the background service worker defers a presence update.**
+
+Activity content scripts push their best current snapshot as soon as they have
+one and never hold anything back waiting for a field to arrive. The background's
+throttle is the single rate limiter in the pipeline.
+
+This matters because the two layers run in different JavaScript contexts and
+cannot see each other's state. When both deferred, their waits *serialized* — a
+1.5 s metadata wait in the content script followed by a 5 s throttle in the
+background cost 6.5 s. With deferral owned in one place they overlap, and the
+cost is just the throttle.
+
+The one exception is deliberately bounded: an activity may hold a snapshot whose
+*identity fields disagree* (see `IDENTITY_SETTLE_MS` below), because sending
+that snapshot would be actively wrong rather than merely incomplete.
 
 ---
 
@@ -12,33 +35,45 @@ against Discord's rate limit or Chrome's MV3 service-worker lifecycle.
 
 Runs inside the page, one instance per injected tab.
 
-| Timer | Location | Value | Purpose |
+| Timer | Constant | Value | Purpose |
 | --- | --- | --- | --- |
-| `UpdateData` tick | [Presence.ts:115](../extension/src/presence/Presence.ts#L115) | **10 s default** | Regular poll of page state. Overridden to **5 s** by YouTube and Tidal; YouTube Music and Apple Music use the 10 s default. |
-| `scheduleTrigger` | [Presence.ts:178-183](../extension/src/presence/Presence.ts#L178-L183) | YTM: `300 ms, 1000 ms`<br>YouTube/Tidal: `300 ms` | Fired on the `play` event to let `mediaSession.metadata` (300 ms) and the player-bar time-info (1000 ms) settle. Cancels any previously scheduled triggers so rapid skips don't interleave. |
-| `watchSelector` MutationObserver | [Presence.ts:218-249](../extension/src/presence/Presence.ts#L218-L249) | event-driven | Immediate track-change detection by observing the player-bar title node. |
-| `albumPollTimer` | [youtubemusic/index.ts:201](../extension/src/activities/youtubemusic/index.ts#L201) | `50 ms` poll, `1500 ms` hard cutoff | Waits for `mediaSession.metadata.album` to populate. **Blocks `setActivity()` entirely while it runs** (early `return` at line 213). |
+| UpdateData tick | `ACTIVITY_TICK_MS` | `5 s` | Backstop poll — **all four activities**, no overrides. |
+| Settle refinements | `METADATA_SETTLE_DELAYS_MS` | `300 ms`, `1000 ms` | Re-read and re-push after a track change or `play`. 300 ms for `mediaSession.metadata`, 1 s for the player-bar duration. |
+| Identity settle | `IDENTITY_SETTLE_MS` | `400 ms` | Max time an activity may suppress a snapshot whose identity fields disagree. |
+| `watchSelector` observer | — | event-driven | Primary track-change signal. Re-attaches when the observed node is replaced. |
 
 ### Per-activity event wiring
 
-| Activity | Interval | `play` | `pause` | Other DOM events | Observer target |
-| --- | --- | --- | --- | --- | --- |
-| youtubemusic | 10 s | `scheduleTrigger(300, 1000)` | immediate | — | player-bar title |
-| youtube | 5 s | `scheduleTrigger(300)` | immediate | `loadedmetadata` | title + player bar |
-| tidal | 5 s | `scheduleTrigger(300)` | immediate | — | `[data-test="footer-track-title"]` |
-| applemusic | 10 s | immediate | immediate | — | `.player-bar` (attributes) |
+| Activity | `play` | `pause` | Other | Observer target |
+| --- | --- | --- | --- | --- |
+| youtubemusic | settle | immediate | `loadedmetadata` + **on track change** | player-bar title |
+| youtube | settle | immediate | `loadedmetadata` | title + player bar |
+| tidal | settle | immediate | — | `[data-test="footer-track-title"]` |
+| applemusic | immediate | immediate | — | `.player-bar` (attributes) |
 
-Note that **YouTube Music is the only activity with no `loadedmetadata`
-listener**, and it is one of two on the slower 10 s tick.
+YouTube Music arms the settle refinements **from the update handler on track
+change**, not only from `play`. Its `<video>` element never pauses between
+queued tracks, so auto-advance fires no `play` event at all — without that path,
+the only signal would be the observer.
+
+### `watchSelector` re-attachment
+
+The body-level `MutationObserver` runs for the whole life of the activity, not
+just until the element first appears. SPAs like YouTube Music re-render the
+player bar and replace the observed node; the observer was previously left
+watching a detached element and silently stopped reporting track changes,
+leaving the 10 s tick as the only update path. That was the main source of
+"sometimes it updates instantly, sometimes it takes ages".
+
+The body observer's callback runs on every `childList` mutation in the page, so
+it short-circuits on `observed?.isConnected` before doing a selector query.
 
 ### `PlaybackAnchor`
 
-[PlaybackAnchor.ts](../extension/src/utils/PlaybackAnchor.ts) holds no timer of
-its own — it converts a scraped position into wall-clock Discord
-`start`/`end` timestamps.
+[PlaybackAnchor.ts](../extension/src/utils/PlaybackAnchor.ts) holds no timer —
+it converts a scraped position into wall-clock Discord `start`/`end` stamps.
 
-- Re-anchors when `trackKey` changes, or when observed position drifts **> 3 s**
-  from expected (a seek).
+- Re-anchors on `trackKey` change, or on **> 3 s** drift from expected (a seek).
 - Shifts the anchor forward by the paused duration on resume.
 - `current === undefined` skips the drift check rather than re-anchoring to 0.
 
@@ -46,53 +81,79 @@ its own — it converts a scraped position into wall-clock Discord
 
 ## 2. Background service worker
 
-| Timer / constant | Value | Purpose |
+| Constant | Value | Purpose |
 | --- | --- | --- |
-| `DISCORD_MIN_INTERVAL_MS` | `5000 ms` | Minimum gap between `SET_ACTIVITY` calls (4 per 20 s, safely under Discord's ~5 per 20 s limit). Excess updates are coalesced into a single trailing flush. |
-| `activityBroadcastTimer` | `1100 ms` | Debounces the **popup** status broadcast on a title change so the 300 ms and 1000 ms triggers collapse into one UI update. Same-track updates broadcast immediately. Does not affect Discord. |
-| `freemid-keepalive` alarm | `periodInMinutes: 0.4` → **effectively 30 s** | PINGs the host to keep the port healthy and the worker alive. Chrome clamps periodic alarms to a 30 s floor, so the requested 24 s is not what actually runs. |
-| `freemid-update-check` alarm | 2 min delay, then 1440 min | Daily GitHub latest-release check. |
-| `freemid-host-version-check` alarm | 30 min | Non-Windows only: quiet reconnect to pick up an externally-installed host binary. |
-| `APPLY_VERIFY_INTERVAL_MS` | `1000 ms` | Poll the host version after an update until it matches the target. |
-| `APPLY_VERIFY_TIMEOUT_MS` | `130 s` Win / `30 s` other | Give-up deadline for the above. |
-| `UPDATE_REQUEST_TIMEOUT_MS` | `12 s` Win / `8 s` other | Host must acknowledge `UPDATE` within this or the flow fails with manual-install guidance. |
-| `POST_UPDATE_RECONNECT_DELAY_MS` | `5 s` Win / `150 ms` other | Delay before reconnecting so Chrome respawns the replaced binary. |
-| `DISCONNECT_RECONNECT_DELAY_MS` | `5 s` Win / `400 ms` other | Delay before reconnecting after a disconnect during an in-flight update. |
-| `RECONNECT_REQUEST_COOLDOWN_MS` | `15 s` Win / `8 s` other | Rate-limits user-initiated reconnects. |
-| `settleTimeoutMs` | `12 s` Win / `4 s` other | How long a reconnect attempt may stay "in progress" before being finalized. |
-| `manualRetryDelayMs` × `manualMaxAttempts` | `700 ms × 12` Win / `300 ms × 6` other | Reconnect probe schedule (≈8.4 s Win / ≈1.8 s other of total probing). |
+| `DISCORD_MIN_INTERVAL_MS` | `5 s` | The only rate limiter. Discord allows ~5 `SET_ACTIVITY` per 20 s and *drops* the excess; 5 s gives 4 per 20 s. |
+| `POPUP_BROADCAST_DEBOUNCE_MS` | `1.1 s` | Collapses the settle refinements into one popup update. Cosmetic — never gates Discord. |
+| `KEEPALIVE_PERIOD_MINUTES` | `0.5` (= 30 s) | PING to keep the port healthy. Chrome clamps periodic alarms to a 30 s floor, so this is the fastest available. |
+| `APPLY_VERIFY_INTERVAL_MS` | `1 s` | Host-version poll while verifying an applied update. |
+| `UPDATE_CHECK_*_MINUTES` | 2 delay / 1440 period | Daily GitHub release check. |
+| `HOST_VERSION_CHECK_PERIOD_MINUTES` | `30` | Non-Windows quiet reconnect to pick up an externally-installed host. |
+
+`UPDATE_TIMING` holds the per-platform update/reconnect schedule. Windows gets
+consistently longer windows at every stage — the binary swap goes through
+`freemid-apply.exe` and Chrome is slower to relaunch the host:
+
+| Field | Windows | Other |
+| --- | --- | --- |
+| `applyVerifyTimeoutMs` | 130 s | 30 s |
+| `updateRequestTimeoutMs` | 12 s | 8 s |
+| `postUpdateReconnectDelayMs` | 5 s | 150 ms |
+| `disconnectReconnectDelayMs` | 5 s | 400 ms |
+| `reconnectRequestCooldownMs` | 15 s | 8 s |
+| `settleTimeoutMs` | 12 s | 4 s |
+| `manualRetryDelayMs` × `manualMaxAttempts` | 700 ms × 12 | 300 ms × 6 |
 
 ### The throttle state machine
 
-`setActivity()` ([background/index.ts:808](../extension/src/background/index.ts#L808)):
+`setActivity()` in [background/index.ts](../extension/src/background/index.ts):
 
 1. Reject if `paused`, the site toggle is off, or another source holds
    `presenceHolder`.
-2. **Dedup** — if the payload is byte-identical to `lastSentActivityJson`,
-   drop it, and cancel any pending flush (the A→B→A case).
-3. **Throttle** — if `< 5 s` since `lastActivitySentAt`, stash the payload in
-   `pendingActivityPayload` and arm `pendingActivityFlushTimer` for the
-   remainder. An already-armed timer is *not* rescheduled; its payload is
-   simply replaced, so the flush fires at its originally scheduled time.
+2. **Dedup** — byte-identical to `lastSentActivityJson` → drop, and cancel any
+   pending flush (the A→B→A case).
+3. **Throttle** — inside the 5 s window → stash in `pendingActivityPayload` and
+   arm the flush timer for the remainder. An already-armed timer is *not*
+   rescheduled; its payload is replaced, so it fires at its original time.
 4. Otherwise send immediately.
 
+Dedup state is committed **only when the send succeeds**. `sendToHost()` returns
+false on a broken port; recording the payload anyway would mark something that
+never arrived as "already sent", so every identical retry after the port
+recovered would be skipped and presence would stay stale until the track
+changed.
+
 `cancelPendingActivityFlush()` resets `lastActivitySentAt = 0`, so a clear or
-lock release opens the throttle window immediately — the first update after a
+lock release opens the window immediately — the first update after a
 pause/resume or track release is never throttled.
+
+### Service-worker teardown
+
+`pendingActivityFlushTimer` is a plain `setTimeout`. It neither keeps an MV3
+worker alive nor survives its teardown, so a queued update can be lost if the
+worker dies inside the throttle window.
+
+This is recovered rather than prevented. A content script `sendMessage` wakes a
+suspended worker, and the restarted worker has `lastSentActivityJson === null`,
+so the next tick is never deduped and always sends. `ACTIVITY_TICK_MS` bounds
+that recovery at 5 s — equal to the throttle it replaces, which is why
+persisting the pending payload to `chrome.storage.session` was not worth the
+extra state. In practice the window barely opens: the content script messages
+every 5 s, and each one resets the worker's ~30 s idle timer.
 
 ---
 
 ## 3. Popup
 
-| Timer | Value | Purpose |
+| Constant | Value | Purpose |
 | --- | --- | --- |
-| `uptimeInterval` | `10 s` | Re-renders the "connected for" label. |
-| `timelineInterval` | `1 s` | Advances the song progress bar. |
-| `reconnectPollTimer` | `700 ms` | Polls status while a manual reconnect is in flight. |
-| `RECONNECT_UI_GRACE_MS` | `15 s` | Window during which a disconnect is treated as expected rather than an error. |
-| `RECONNECT_BUTTON_COOLDOWN_MS` | `15 s` | Button lockout after a reconnect click. |
-| `DISCORD_CHECK_DELAY_MS` | `10 s` (override: `VITE_DISCORD_CHECK_DELAY_MS`) | Delay before revealing the "Discord not found" help panel. |
-| `HOST_CHECK_DELAY_MS` | `2 s` | Delay before revealing the "native host not installed" help panel. |
+| `POPUP_UPTIME_TICK_MS` | `10 s` | "Connected for" label. |
+| `POPUP_TIMELINE_TICK_MS` | `1 s` | Song progress bar. |
+| `POPUP_RECONNECT_POLL_MS` | `700 ms` | Status poll while a manual reconnect is in flight. |
+| `RECONNECT_UI_GRACE_MS` | `15 s` | Window where a disconnect is expected, not an error. |
+| `RECONNECT_BUTTON_COOLDOWN_MS` | `15 s` | Button lockout. Must be ≥ the background's cooldown or the button re-enables while requests are still rejected. |
+| `DISCORD_CHECK_DELAY_MS` | `10 s` | Delay before the "Discord not found" panel. Override: `VITE_DISCORD_CHECK_DELAY_MS`. |
+| `HOST_CHECK_DELAY_MS` | `2 s` | Delay before the "native host not installed" panel. |
 
 ---
 
@@ -100,83 +161,74 @@ pause/resume or track release is never throttled.
 
 | Timer | Location | Value | Purpose |
 | --- | --- | --- | --- |
-| `HOST_IDLE_TIMEOUT_MS` | [main.rs:44](../native-host/src/main.rs#L44) | `45 s`, checked on a `10 s` loop | Safety backstop if Chrome leaks the process. Effective exit window is 45–55 s. Reset on every inbound message, so the 30 s keepalive PING holds it open. |
-| Discord IPC read/write timeout | [discord_ipc.rs:272-273](../native-host/src/discord_ipc.rs#L272-L273) | `5 s` | Unix socket only. Windows named pipes use Discord's own pipe timeout. |
-| SMTC watcher shutdown poll | [smtc.rs:368](../native-host/src/smtc.rs#L368) | `100 ms` | Keeps the COM MTA thread alive; polls the shutdown flag. |
-| `wait_for_shutdown` | [smtc.rs:33](../native-host/src/smtc.rs#L33) | `600 ms` | Bounded wait for the watcher thread to leave the MTA before `ExitProcess`. |
-| SMTC session-read deadlines | [smtc.rs:70, 318](../native-host/src/smtc.rs#L70) | `5 s` | Bound async WinRT session/property reads. |
+| `HOST_IDLE_TIMEOUT_MS` | [main.rs:44](../native-host/src/main.rs#L44) | `45 s`, checked on a `10 s` loop | Backstop if Chrome leaks the process. Effective exit window 45–55 s. Reset by every inbound message, so the 30 s keepalive holds it open. |
+| Discord IPC r/w timeout | [discord_ipc.rs:272](../native-host/src/discord_ipc.rs#L272) | `5 s` | Unix socket only; Windows pipes use Discord's own timeout. |
+| SMTC shutdown poll | [smtc.rs:368](../native-host/src/smtc.rs#L368) | `100 ms` | Keeps the COM MTA thread alive. |
+| `wait_for_shutdown` | [smtc.rs:33](../native-host/src/smtc.rs#L33) | `600 ms` | Bounded wait for the MTA thread before `ExitProcess`. |
+| SMTC session reads | [smtc.rs:70, 318](../native-host/src/smtc.rs#L70) | `5 s` | Bound async WinRT property reads. |
 
-The keepalive interaction matters: the host's 45 s idle timeout is sized
-against the extension's 30 s keepalive PING. Raising the keepalive period above
-45 s would start killing healthy hosts.
+`HOST_IDLE_TIMEOUT_MS` is mirrored in `constants/timing.ts` so the keepalive can
+be checked against it. `test/timing-drift.test.ts` parses the Rust source and
+fails if the two diverge.
 
 ---
 
-## 5. End-to-end latency budget: YouTube Music track change
+## 5. End-to-end latency: YouTube Music track change
 
-This is the path a "Next" press or an auto-advance takes.
-
-```
+```text
 track changes in page
       │
-      ├─ (a) title MutationObserver fires ......................  ~0 ms
-      │      └─ but only if the observed node is still the live one
+      ├─ (a) title MutationObserver fires .....................  ~0 ms
+      │      re-attaches if the node was replaced
       │
-      ├─ (b) no `play` event on auto-advance ................... scheduleTrigger(300,1000) does NOT run
+      ├─ (b) track change arms settle refinements ............. 300 ms / 1000 ms
+      │      (covers auto-advance, which fires no `play`)
       │
-      └─ (c) otherwise: next UpdateData tick .................. up to 10 000 ms
+      └─ (c) backstop: next UpdateData tick ..................  ≤ 5 000 ms
                     │
                     ▼
-      album gate: mediaSession.metadata.album not yet set
-      → early return, 50 ms poll until album or cutoff ......... up to  1 500 ms
+      identity coherent? (video id vs title) ................. ≤   400 ms
                     │
                     ▼
-      background setActivity()
-      → dedup, then 5 s throttle .............................. up to  5 000 ms
+      background setActivity() → dedup → throttle ............ ≤ 5 000 ms
                     │
                     ▼
-      sendToHost → native host → Discord IPC .................. ~ tens of ms
+      native host → Discord IPC .............................. ~tens of ms
 ```
 
-**Best case** (observer alive, album already populated, throttle window open):
-well under 100 ms.
+**Typical** (observer live, throttle window open): well under 100 ms.
+**Worst** (observer missed the change, throttle just consumed): ~10.4 s.
 
-**Worst case** (observer detached, album slow, throttle just consumed):
-10 000 + 1 500 + 5 000 ≈ **16.5 s**.
+The album name is no longer in this path at all. It arrives with the 300 ms
+refinement and is coalesced by the throttle; it is only the artwork tooltip, and
+withholding the title and artist for it was costing up to 1.5 s on every skip.
 
-And if the MV3 service worker is torn down between the throttle deferral and
-the flush, `pendingActivityFlushTimer` dies with it — the queued update is lost
-entirely and nothing is sent until the next content-script tick produces a
-payload again.
+### What used to make this variable
 
-### Why the same skip can be fast once and slow the next time
+Three conditions stacked, and only the third remains:
 
-The variance comes from three independent conditions, not from any single
-timer:
-
-1. **Whether the title MutationObserver is still attached.** `watchSelector`
-   binds to whichever node matches at injection time and never re-attaches if
-   that node is later replaced. Once detached, (a) is gone and every update
-   waits for (c).
-2. **Where the change lands in the 5 s throttle window.** A skip 4.9 s after
-   the last send is nearly free; one 0.1 s after pays almost the full 5 s.
-3. **Whether the scraped payload momentarily reverts.** `trackId` prefers
-   `videoId` (from the URL, updates immediately) while title/artist/album come
-   from `mediaSession` (updates later). During that gap the payload can flip
-   back to the previously-sent value, which cancels the pending flush at
-   [index.ts:893-900](../extension/src/background/index.ts#L893-L900) and
-   restarts the wait on the next tick.
+1. ~~The observer silently detached on SPA re-render~~ — fixed by re-attachment.
+2. ~~The album gate blocked the send for up to 1.5 s~~ — removed; the throttle
+   already enforces the rate limit, so the gate only added latency.
+3. **Where the change lands in the 5 s throttle window.** A skip 4.9 s after the
+   last send is nearly free; one 0.1 s after pays almost the full 5 s. This is
+   inherent to respecting Discord's rate limit.
 
 ---
 
-## Invariants to preserve when changing these
+## Invariants
 
-- `DISCORD_MIN_INTERVAL_MS` must stay ≥ 4 s. Discord rate-limits
-  `SET_ACTIVITY` to roughly 5 per 20 s and drops — not queues — the excess.
-- The keepalive alarm period must stay below `HOST_IDLE_TIMEOUT_MS` (45 s),
-  and cannot go below Chrome's 30 s alarm floor. The usable range is 30–45 s.
-- The album cutoff (1500 ms) must stay above the `scheduleTrigger` 1000 ms
-  mark, or the gate can reopen after the settle trigger has already fired.
-- `PlaybackAnchor`'s 3 s drift threshold must stay above the worst-case
-  scrape jitter, or normal playback will re-anchor continuously and Discord's
-  progress bar will visibly stutter.
+Asserted in `timing.test.ts` — see the test for the authoritative list.
+
+- `DISCORD_MIN_INTERVAL_MS` ≥ 4 s. Discord drops, not queues, the excess.
+- Keepalive ≥ Chrome's 30 s alarm floor and < the host's 45 s idle timeout.
+- `IDENTITY_SETTLE_MS` < the last settle delay < `ACTIVITY_TICK_MS`, so a
+  suppressed tick is always followed by a scheduled refinement rather than
+  waiting for the next full tick.
+- `IDENTITY_SETTLE_MS` < `DISCORD_MIN_INTERVAL_MS` — the content script's one
+  remaining wait must never dominate the background's.
+- Windows ≥ other at every `UPDATE_TIMING` stage.
+- The popup's reconnect lockout ≥ the background's reconnect cooldown.
+- The manual reconnect probe schedule fits inside its settle timeout.
+- `PlaybackAnchor`'s 3 s drift threshold stays above worst-case scrape jitter,
+  or normal playback re-anchors continuously and the progress bar stutters.

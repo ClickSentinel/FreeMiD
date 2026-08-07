@@ -13,6 +13,16 @@
 import { GITHUB_REPO } from '../constants/github';
 import { SESSION_KEYS, STORAGE_KEYS } from '../constants/storageKeys';
 import {
+  APPLY_VERIFY_INTERVAL_MS,
+  DISCORD_MIN_INTERVAL_MS,
+  HOST_VERSION_CHECK_PERIOD_MINUTES,
+  KEEPALIVE_PERIOD_MINUTES,
+  POPUP_BROADCAST_DEBOUNCE_MS,
+  UPDATE_CHECK_DELAY_MINUTES,
+  UPDATE_CHECK_PERIOD_MINUTES,
+  UPDATE_TIMING,
+} from '../constants/timing';
+import {
   compareVersions,
   isHostSelfUpdateSupported,
   isUpdateAvailableForHost,
@@ -100,10 +110,10 @@ let suspendInProgress = false;
 let reconnectCooldownUntilMs = 0;
 let presenceHolder: string | null = null; // sourceId that currently holds the Discord presence lock
 let lastSentActivityJson: string | null = null; // last payload sent to Discord; skip if identical
-// Discord rate-limits SET_ACTIVITY to ~5 per 20 s. We enforce a 5 s minimum
-// between sends (4/20 s) to stay safely below it. Rapid song skips schedule a
-// trailing flush so the final settled song always reaches Discord.
-const DISCORD_MIN_INTERVAL_MS = 5_000;
+// This worker is the only place that defers a presence update. Activities push
+// their best current snapshot as soon as they have one and never hold anything
+// back, so the throttle below is the single rate limiter in the pipeline —
+// see DISCORD_MIN_INTERVAL_MS in constants/timing.ts and docs/TIMERS.md.
 let lastActivitySentAt = 0;
 let pendingActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingActivityPayload: object | null = null;
@@ -176,23 +186,16 @@ function lookupArtworkCached(
   return pending;
 }
 
-const APPLY_VERIFY_INTERVAL_MS = 1000;
-const APPLY_VERIFY_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 130000 : 30000;
-const UPDATE_REQUEST_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 12000 : 8000;
-const POST_UPDATE_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 150;
-const DISCONNECT_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 400;
-const RECONNECT_REQUEST_COOLDOWN_MS = IS_WINDOWS_PLATFORM ? 15000 : 8000;
-const RECONNECT_CONFIG = IS_WINDOWS_PLATFORM
-  ? {
-      settleTimeoutMs: 12000,
-      manualRetryDelayMs: 700,
-      manualMaxAttempts: 12,
-    }
-  : {
-      settleTimeoutMs: 4000,
-      manualRetryDelayMs: 300,
-      manualMaxAttempts: 6,
-    };
+const RECONNECT_CONFIG =
+  UPDATE_TIMING[IS_WINDOWS_PLATFORM ? 'windows' : 'other'];
+const APPLY_VERIFY_TIMEOUT_MS = RECONNECT_CONFIG.applyVerifyTimeoutMs;
+const UPDATE_REQUEST_TIMEOUT_MS = RECONNECT_CONFIG.updateRequestTimeoutMs;
+const POST_UPDATE_RECONNECT_DELAY_MS =
+  RECONNECT_CONFIG.postUpdateReconnectDelayMs;
+const DISCONNECT_RECONNECT_DELAY_MS =
+  RECONNECT_CONFIG.disconnectReconnectDelayMs;
+const RECONNECT_REQUEST_COOLDOWN_MS =
+  RECONNECT_CONFIG.reconnectRequestCooldownMs;
 
 function clearApplyVerification(): void {
   if (disconnectReconnectTimer) {
@@ -336,7 +339,7 @@ function resetHostConnection(error?: string): void {
   // Release the desktop presence lock on disconnect: the native host process
   // is gone so no further DESKTOP_MEDIA events will arrive to release it
   // voluntarily, and the lock would otherwise block browser activities until
-  // the watcher re-pushes state after reconnect (~24 s via keepalive alarm).
+  // the watcher re-pushes state after reconnect (one keepalive alarm period).
   if (presenceHolder !== null && presenceHolder in DESKTOP_PRESENCE_TO_TOGGLE) {
     presenceHolder = null;
   }
@@ -787,6 +790,21 @@ function pollDesktopMediaForApp(appId: string): void {
 
 // ── Activity helpers ──────────────────────────────────────────────────────────
 
+/**
+ * Send a payload to Discord and record it for dedup — but only record it if the
+ * send actually left the extension. sendToHost() returns false on a broken port
+ * (and tears the connection down); committing dedup state anyway would mark a
+ * payload that never arrived as "already sent", so every identical retry after
+ * the port recovers would be skipped and presence would stay stale until the
+ * track changed.
+ */
+function sendActivityToHost(activity: object, activityJson: string): void {
+  const sent = sendToHost({ type: 'SET_ACTIVITY', activity });
+  if (!sent) return;
+  lastActivitySentAt = Date.now();
+  lastSentActivityJson = activityJson;
+}
+
 function flushPendingActivity(): void {
   pendingActivityFlushTimer = null;
   const activity = pendingActivityPayload;
@@ -796,9 +814,7 @@ function flushPendingActivity(): void {
   const activityJson = JSON.stringify(activity);
   if (activityJson === lastSentActivityJson) return;
 
-  lastActivitySentAt = Date.now();
-  lastSentActivityJson = activityJson;
-  sendToHost({ type: 'SET_ACTIVITY', activity });
+  sendActivityToHost(activity, activityJson);
 }
 
 /**
@@ -866,9 +882,9 @@ export function setActivity(activity: object, siteId?: string): void {
     : null;
 
   // Notify the popup when visible metadata changes. On a track change, debounce
-  // by 1100 ms so the 300 ms and 1000 ms UpdateData triggers consolidate into
-  // one broadcast — by 1000 ms mediaSession.album and barTimes are both settled.
-  // Same-track updates (seek, timestamp tick) broadcast immediately.
+  // past the last METADATA_SETTLE_DELAYS_MS refinement so they consolidate into
+  // one broadcast instead of three. Same-track updates (seek, timestamp tick)
+  // broadcast immediately. This is popup-only — it never gates Discord.
   if (JSON.stringify(nextActivity) !== JSON.stringify(lastActivity)) {
     const titleChanged = nextActivity?.title !== lastActivity?.title;
     lastActivity = nextActivity;
@@ -880,7 +896,7 @@ export function setActivity(activity: object, siteId?: string): void {
       activityBroadcastTimer = setTimeout(() => {
         activityBroadcastTimer = null;
         broadcastStatus();
-      }, 1100);
+      }, POPUP_BROADCAST_DEBOUNCE_MS);
     } else {
       broadcastStatus();
     }
@@ -920,9 +936,7 @@ export function setActivity(activity: object, siteId?: string): void {
     pendingActivityFlushTimer = null;
     pendingActivityPayload = null;
   }
-  lastActivitySentAt = Date.now();
-  lastSentActivityJson = activityJson;
-  sendToHost({ type: 'SET_ACTIVITY', activity });
+  sendActivityToHost(activity, activityJson);
 }
 
 function cancelPendingActivityFlush(): void {
@@ -1115,7 +1129,7 @@ chrome.runtime.onMessage.addListener(
       } else {
         // Site was just re-enabled — immediately poll SMTC (if it's a known
         // desktop app) so presence restores without waiting for the next
-        // keepalive cycle (~24 s).
+        // keepalive cycle.
         pollDesktopMediaForApp(siteId);
       }
       broadcastStatus();
@@ -1137,7 +1151,7 @@ chrome.runtime.onMessage.addListener(
         }
         // Trigger an immediate desktop media poll for each known desktop app
         // when the popup opens, so there is no need to wait for the next
-        // keepalive alarm (~24 s).
+        // keepalive alarm.
         for (const appId of Object.keys(DESKTOP_APPS)) {
           pollDesktopMediaForApp(appId);
         }
@@ -1205,8 +1219,12 @@ chrome.runtime.onMessage.addListener(
   },
 );
 
-// Keep the service worker alive and the native host port healthy.
-chrome.alarms.create('freemid-keepalive', { periodInMinutes: 0.4 });
+// Keep the service worker alive and the native host port healthy. Chrome clamps
+// periodic alarms to a 30 s floor, so this is the fastest cadence available —
+// and it must stay under the host's 45 s idle timeout (see constants/timing.ts).
+chrome.alarms.create('freemid-keepalive', {
+  periodInMinutes: KEEPALIVE_PERIOD_MINUTES,
+});
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'freemid-keepalive') {
     // Keep an existing host port healthy, but do not auto-spawn a new host.
@@ -1376,8 +1394,8 @@ void Promise.all([
   chrome.alarms.get('freemid-update-check', (existing) => {
     if (!existing) {
       chrome.alarms.create('freemid-update-check', {
-        delayInMinutes: 2,
-        periodInMinutes: 1440,
+        delayInMinutes: UPDATE_CHECK_DELAY_MINUTES,
+        periodInMinutes: UPDATE_CHECK_PERIOD_MINUTES,
       });
     }
   });
@@ -1386,8 +1404,8 @@ void Promise.all([
   chrome.alarms.get('freemid-host-version-check', (existing) => {
     if (!existing) {
       chrome.alarms.create('freemid-host-version-check', {
-        delayInMinutes: 30,
-        periodInMinutes: 30,
+        delayInMinutes: HOST_VERSION_CHECK_PERIOD_MINUTES,
+        periodInMinutes: HOST_VERSION_CHECK_PERIOD_MINUTES,
       });
     }
   });

@@ -10,6 +10,8 @@
  * chrome.runtime.sendMessage.
  */
 
+import { ACTIVITY_TICK_MS } from '../constants/timing';
+
 export interface PresenceData {
   /** Override the Discord Application ID for per-activity artwork */
   applicationId?: string;
@@ -38,10 +40,11 @@ interface PresenceConfig {
   /** Discord Application (client) ID */
   clientId: string;
   /**
-   * How often (seconds) the UpdateData handler is called.
-   * Minimum 1 s. Default 10 s.
+   * How often (milliseconds) the UpdateData handler is called.
+   * Defaults to ACTIVITY_TICK_MS — activities should not override this without
+   * a reason, so that every site shares one cadence (see docs/TIMERS.md).
    */
-  updateInterval?: number;
+  updateIntervalMs?: number;
 }
 
 export class Presence {
@@ -51,9 +54,12 @@ export class Presence {
   private scheduledCallback: (() => void) | undefined;
   private pendingTriggerTimers: ReturnType<typeof setTimeout>[] = [];
 
-  constructor({ clientId, updateInterval = 10 }: PresenceConfig) {
+  constructor({
+    clientId,
+    updateIntervalMs = ACTIVITY_TICK_MS,
+  }: PresenceConfig) {
     this.clientId = clientId;
-    this.updateIntervalMs = Math.max(1, updateInterval) * 1000;
+    this.updateIntervalMs = Math.max(1_000, updateIntervalMs);
   }
 
   /**
@@ -220,32 +226,47 @@ export class Presence {
     signal: AbortSignal,
     options?: { observeAttributes?: boolean; attributeFilter?: string[] },
   ): void {
+    let observed: Element | null = null;
+    let elementObserver: MutationObserver | null = null;
+
     const connect = (el: Element): void => {
-      const obs = new MutationObserver(() => this.triggerUpdate());
-      obs.observe(el, {
+      elementObserver?.disconnect();
+      observed = el;
+      elementObserver = new MutationObserver(() => this.triggerUpdate());
+      elementObserver.observe(el, {
         characterData: true,
         childList: true,
         subtree: true,
         attributes: options?.observeAttributes,
         attributeFilter: options?.attributeFilter,
       });
-      signal.addEventListener('abort', () => obs.disconnect());
     };
 
+    // The body watcher runs for the whole life of the activity, not just until
+    // the element first appears. SPAs like YouTube Music re-render the player
+    // bar and replace the observed node; without re-attachment the observer is
+    // left watching a detached element and silently stops reporting track
+    // changes, leaving the periodic tick as the only update path.
+    const rewatch = new MutationObserver(() => {
+      // Fast path: a live node needs nothing. This runs on every childList
+      // mutation in the page, so it must stay cheaper than a selector query.
+      if (observed?.isConnected) return;
+      const found = document.querySelector(selector);
+      if (!found || found === observed) return;
+      connect(found);
+      // The swap itself usually *is* the state change we care about, and the
+      // mutation that carried it landed before we were attached.
+      this.triggerUpdate();
+    });
+    rewatch.observe(document.body, { childList: true, subtree: true });
+
+    signal.addEventListener('abort', () => {
+      rewatch.disconnect();
+      elementObserver?.disconnect();
+    });
+
     const el = document.querySelector(selector);
-    if (el) {
-      connect(el);
-    } else {
-      const watcher = new MutationObserver(() => {
-        const found = document.querySelector(selector);
-        if (found) {
-          watcher.disconnect();
-          connect(found);
-        }
-      });
-      watcher.observe(document.body, { childList: true, subtree: true });
-      signal.addEventListener('abort', () => watcher.disconnect());
-    }
+    if (el) connect(el);
   }
 
   /**

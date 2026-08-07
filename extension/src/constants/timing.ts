@@ -1,0 +1,142 @@
+/**
+ * Single source of truth for every timing constant in the extension.
+ *
+ * All values are milliseconds unless the name says otherwise. Several of these
+ * are load-bearing against external limits (Discord's rate limiter, Chrome's
+ * MV3 alarm floor, the native host's idle timeout) — timing.test.ts asserts the
+ * relationships between them, so change a value there and the test will tell
+ * you what else has to move.
+ *
+ * See docs/TIMERS.md for the full latency budget and rationale.
+ */
+
+// ── Content script (activity) layer ──────────────────────────────────────────
+
+/**
+ * How often every activity's UpdateData handler runs.
+ *
+ * This is a backstop, not the primary update path — track changes are meant to
+ * be caught by the player-bar MutationObserver (Presence.watchSelector). It
+ * also bounds recovery when the MV3 service worker is torn down mid-throttle:
+ * a message from a content script wakes the worker, and because the worker's
+ * dedup state does not survive suspension, the next tick always re-sends.
+ */
+export const ACTIVITY_TICK_MS = 5_000;
+
+/**
+ * Delays after a track change (or `play` event) at which the activity re-reads
+ * the page and pushes a refined payload.
+ *
+ * `mediaSession.metadata` settles ~300 ms in; the player-bar time-info (which
+ * carries the track duration) takes closer to 1 s. Both refinements are sent
+ * as normal updates — the background coalesces them, so a slow-arriving album
+ * name never delays the title and artist.
+ */
+export const METADATA_SETTLE_DELAYS_MS = [300, 1_000] as const;
+
+/**
+ * How long an activity may suppress a payload whose identity fields disagree.
+ *
+ * On YouTube Music the video ID (URL / DOM) and the track title
+ * (`mediaSession.metadata`) update on separate ticks. Sending during that gap
+ * would push the new track's artwork alongside the previous track's title.
+ * Snapshots are held for at most this long waiting for the two to agree, after
+ * which we send anyway rather than stall presence indefinitely.
+ *
+ * Must stay well below the first entry of METADATA_SETTLE_DELAYS_MS' successor
+ * so a suppressed tick is always followed by a scheduled refinement.
+ */
+export const IDENTITY_SETTLE_MS = 400;
+
+// ── Background service worker ────────────────────────────────────────────────
+
+/**
+ * Minimum gap between SET_ACTIVITY calls reaching Discord.
+ *
+ * Discord rate-limits presence updates to roughly 5 per 20 s and *drops* the
+ * excess rather than queueing it. 5 s gives us 4 per 20 s with headroom.
+ * This is the only rate limiter in the pipeline — activities send freely and
+ * the background coalesces.
+ */
+export const DISCORD_MIN_INTERVAL_MS = 5_000;
+
+/**
+ * Debounce before telling the popup that the visible track changed, so the
+ * settle refinements above collapse into one UI update instead of three.
+ * Purely cosmetic — it never delays what reaches Discord.
+ */
+export const POPUP_BROADCAST_DEBOUNCE_MS = 1_100;
+
+/**
+ * Keepalive PING period, in minutes, as passed to chrome.alarms.create.
+ *
+ * 0.5 is Chrome's floor for periodic alarms (since Chrome 120; it was 1 minute
+ * before that). Requesting less does not fire faster — it is silently clamped —
+ * so this is written as the real period rather than an aspirational one.
+ */
+export const KEEPALIVE_PERIOD_MINUTES = 0.5;
+export const KEEPALIVE_PERIOD_MS = KEEPALIVE_PERIOD_MINUTES * 60_000;
+
+/**
+ * The native host's idle timeout (native-host/src/main.rs HOST_IDLE_TIMEOUT_MS).
+ * Mirrored here so the keepalive period can be checked against it; the test
+ * parses the Rust source to make sure this copy has not drifted.
+ */
+export const HOST_IDLE_TIMEOUT_MS = 45_000;
+
+// ── Update / reconnect flow ──────────────────────────────────────────────────
+
+/**
+ * Windows needs consistently longer windows here: the binary swap goes through
+ * a helper process (freemid-apply.exe) and Chrome is slower to relaunch the
+ * host, so every stage of the update handshake is given more room.
+ */
+export const UPDATE_TIMING = {
+  windows: {
+    applyVerifyTimeoutMs: 130_000,
+    updateRequestTimeoutMs: 12_000,
+    postUpdateReconnectDelayMs: 5_000,
+    disconnectReconnectDelayMs: 5_000,
+    reconnectRequestCooldownMs: 15_000,
+    settleTimeoutMs: 12_000,
+    manualRetryDelayMs: 700,
+    manualMaxAttempts: 12,
+  },
+  other: {
+    applyVerifyTimeoutMs: 30_000,
+    updateRequestTimeoutMs: 8_000,
+    postUpdateReconnectDelayMs: 150,
+    disconnectReconnectDelayMs: 400,
+    reconnectRequestCooldownMs: 8_000,
+    settleTimeoutMs: 4_000,
+    manualRetryDelayMs: 300,
+    manualMaxAttempts: 6,
+  },
+} as const;
+
+/** How often to re-check the host version while verifying an applied update. */
+export const APPLY_VERIFY_INTERVAL_MS = 1_000;
+
+/** Daily GitHub latest-release check. */
+export const UPDATE_CHECK_DELAY_MINUTES = 2;
+export const UPDATE_CHECK_PERIOD_MINUTES = 1_440;
+
+/** Non-Windows: periodic quiet reconnect to pick up an externally-installed host. */
+export const HOST_VERSION_CHECK_PERIOD_MINUTES = 30;
+
+// ── Popup ────────────────────────────────────────────────────────────────────
+
+/** Re-render of the "connected for" label. */
+export const POPUP_UPTIME_TICK_MS = 10_000;
+/** Song progress bar advance. */
+export const POPUP_TIMELINE_TICK_MS = 1_000;
+/** Status poll cadence while a manual reconnect is in flight. */
+export const POPUP_RECONNECT_POLL_MS = 700;
+/** Window during which a disconnect is treated as expected, not an error. */
+export const RECONNECT_UI_GRACE_MS = 15_000;
+/** Reconnect button lockout after a click. */
+export const RECONNECT_BUTTON_COOLDOWN_MS = 15_000;
+/** Delay before revealing the "Discord not found" help panel. */
+export const DISCORD_CHECK_DELAY_MS = 10_000;
+/** Delay before revealing the "native host not installed" help panel. */
+export const HOST_CHECK_DELAY_MS = 2_000;

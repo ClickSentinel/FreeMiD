@@ -1,4 +1,8 @@
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
+import {
+  IDENTITY_SETTLE_MS,
+  METADATA_SETTLE_DELAYS_MS,
+} from '../../constants/timing';
 import { Presence } from '../../presence/Presence';
 import { PlaybackAnchor } from '../../utils/PlaybackAnchor';
 import { parseClock } from '../../utils/parseClock';
@@ -11,7 +15,8 @@ const anchor = new PlaybackAnchor();
 let lastPausedState: boolean | undefined;
 let lastTrackId: string | undefined;
 let trackSeenAt: number | undefined;
-let albumPollTimer: ReturnType<typeof setInterval> | null = null;
+let lastVideoId: string | undefined;
+let lastTitle: string | undefined;
 
 function getPlayerBarTimes(): { current?: number; duration?: number } {
   // Try several selectors — YouTube Music has changed its DOM structure over time.
@@ -130,10 +135,6 @@ presence.on('UpdateData', () => {
   }
 
   if (!title) {
-    if (albumPollTimer !== null) {
-      clearInterval(albumPollTimer);
-      albumPollTimer = null;
-    }
     // clearPresenceData (not clearActivity) keeps the interval and event
     // listeners active so presence can recover when a title appears.
     presence.clearPresenceData();
@@ -168,7 +169,25 @@ presence.on('UpdateData', () => {
   if (trackId !== lastTrackId) {
     lastTrackId = trackId;
     trackSeenAt = Date.now();
+    // Auto-advance does not fire a `play` event — YouTube Music never pauses
+    // the media element between queued tracks — so the track change itself has
+    // to schedule the refinement passes that a play event would have.
+    presence.scheduleTrigger(...METADATA_SETTLE_DELAYS_MS);
   }
+
+  // The video ID (URL / DOM) and the title (mediaSession) update on separate
+  // ticks. Sending mid-transition would pair the new track's artwork with the
+  // previous track's title, so hold the snapshot briefly until they agree.
+  // The scheduled refinements above re-run this well within the settle window.
+  const identityInconsistent =
+    videoId !== undefined &&
+    videoId !== lastVideoId &&
+    title === lastTitle &&
+    Date.now() - (trackSeenAt ?? 0) < IDENTITY_SETTLE_MS;
+  if (identityInconsistent) return;
+
+  lastVideoId = videoId;
+  lastTitle = title;
 
   const { timestamps } = anchor.update(trackId, current, duration, paused);
 
@@ -176,10 +195,6 @@ presence.on('UpdateData', () => {
   // clearPresenceData() sends a Discord clear without stopping the interval,
   // so the anchor keeps running and resume restores correctly.
   if (paused) {
-    if (albumPollTimer !== null) {
-      clearInterval(albumPollTimer);
-      albumPollTimer = null;
-    }
     if (lastPausedState === false) {
       presence.clearPresenceData();
     }
@@ -189,33 +204,13 @@ presence.on('UpdateData', () => {
 
   lastPausedState = false;
 
+  // YouTube Music populates mediaSession.metadata.album asynchronously, ~500–
+  // 1000 ms behind the title. We deliberately do NOT wait for it: the album is
+  // only the artwork tooltip, and withholding the whole payload for it delayed
+  // the title and artist by up to 1.5 s on every track change. The scheduled
+  // refinements re-send once it lands, and the background coalesces the pair —
+  // deferral is owned there alone, so the two waits overlap instead of adding.
   const album = ms?.metadata?.album || undefined;
-
-  // YouTube Music populates mediaSession.metadata.album asynchronously —
-  // typically 500–1000ms after a play event. Poll every 50ms until it
-  // appears (or 1500ms has elapsed as a hard cutoff) so Discord gets one
-  // complete update the moment the metadata settles rather than on the
-  // next regular 5s poll.
-  if (!album && Date.now() - (trackSeenAt ?? 0) < 1500) {
-    if (albumPollTimer === null) {
-      albumPollTimer = setInterval(() => {
-        const ready =
-          !!navigator.mediaSession?.metadata?.album ||
-          Date.now() - (trackSeenAt ?? 0) >= 1500;
-        if (ready) {
-          const t = albumPollTimer;
-          albumPollTimer = null;
-          if (t !== null) clearInterval(t);
-          presence.triggerUpdate();
-        }
-      }, 50);
-    }
-    return;
-  }
-  if (albumPollTimer !== null) {
-    clearInterval(albumPollTimer);
-    albumPollTimer = null;
-  }
 
   presence.setActivity({
     applicationId: import.meta.env.VITE_DISCORD_CLIENT_ID,
@@ -241,12 +236,17 @@ const signal = presence.freshSignal();
 const trigger = () => presence.triggerUpdate();
 
 // pause must fire immediately — critical for lock-release speed.
-// play schedules two triggers: 300 ms for mediaSession.metadata to settle
-// (song title / artist), 1000 ms for the player-bar time-info (duration).
-// scheduleTrigger cancels any pending timers from a previous play event so
-// rapid song skips never result in overlapping / interleaved callbacks.
+// play and loadedmetadata schedule the settle refinements: 300 ms for
+// mediaSession.metadata (title / artist / album), 1000 ms for the player-bar
+// time-info (duration). scheduleTrigger cancels any pending timers from a
+// previous event so rapid skips never interleave callbacks. The same schedule
+// is armed on track change in the handler above, which is what covers
+// auto-advance — YouTube Music fires no play event between queued tracks.
+const scheduleSettle = () =>
+  presence.scheduleTrigger(...METADATA_SETTLE_DELAYS_MS);
 document.addEventListener('pause', trigger, { capture: true, signal });
-document.addEventListener('play', () => presence.scheduleTrigger(300, 1000), {
+document.addEventListener('play', scheduleSettle, { capture: true, signal });
+document.addEventListener('loadedmetadata', scheduleSettle, {
   capture: true,
   signal,
 });

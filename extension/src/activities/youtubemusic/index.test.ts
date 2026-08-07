@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { IDENTITY_SETTLE_MS } from '../../constants/timing';
+
 type PresenceInstance = {
   on: ReturnType<typeof vi.fn>;
   setActivity: ReturnType<typeof vi.fn>;
@@ -124,6 +126,106 @@ describe('YouTube Music activity', () => {
       endTimestamp?: number;
     };
     expect(activity.endTimestamp! - activity.startTimestamp!).toBe(240);
+  });
+
+  it('sends immediately without waiting for the album to arrive', async () => {
+    // The album is only the artwork tooltip. Withholding the whole payload for
+    // it used to delay the title and artist by up to 1.5 s on every skip.
+    window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+    setMediaSession('playing', { title: 'Track Title', artist: 'Artist Name' });
+    document.body.innerHTML = `
+      <ytmusic-player-bar>
+        <div class="time-info">0:10 / 3:00</div>
+      </ytmusic-player-bar>
+      <video class="video-stream"></video>
+    `;
+
+    await loadModule();
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.setActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: 'Track Title',
+        largeImageText: undefined,
+      }),
+    );
+  });
+
+  it('schedules settle refinements on track change, covering auto-advance', async () => {
+    // YouTube Music fires no `play` event between queued tracks, so the track
+    // change itself has to arm the refinement passes.
+    window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+    setMediaSession('playing', { title: 'First', artist: 'Artist Name' });
+    document.body.innerHTML = `
+      <ytmusic-player-bar>
+        <div class="time-info">0:10 / 3:00</div>
+      </ytmusic-player-bar>
+      <video class="video-stream"></video>
+    `;
+
+    await loadModule();
+    capturedUpdateHandler?.();
+    presenceInstance.scheduleTrigger.mockClear();
+
+    window.history.replaceState({}, '', '/watch?v=zyxwvutsrqp');
+    setMediaSession('playing', { title: 'Second', artist: 'Artist Name' });
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.scheduleTrigger).toHaveBeenCalledWith(300, 1000);
+  });
+
+  it('suppresses a snapshot whose video id advanced before the title did', async () => {
+    window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+    setMediaSession('playing', { title: 'First', artist: 'Artist Name' });
+    document.body.innerHTML = `
+      <ytmusic-player-bar>
+        <div class="time-info">0:10 / 3:00</div>
+      </ytmusic-player-bar>
+      <video class="video-stream"></video>
+    `;
+
+    await loadModule();
+    capturedUpdateHandler?.();
+    presenceInstance.setActivity.mockClear();
+
+    // URL advances; mediaSession still reports the previous track's title.
+    // Sending here would pair the new artwork with the old title.
+    window.history.replaceState({}, '', '/watch?v=zyxwvutsrqp');
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.setActivity).not.toHaveBeenCalled();
+  });
+
+  it('sends anyway once the identity settle window expires', async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+      setMediaSession('playing', {
+        title: 'First',
+        artist: 'Artist Name',
+      });
+      document.body.innerHTML = `
+        <ytmusic-player-bar>
+          <div class="time-info">0:10 / 3:00</div>
+        </ytmusic-player-bar>
+        <video class="video-stream"></video>
+      `;
+
+      await loadModule();
+      capturedUpdateHandler?.();
+      presenceInstance.setActivity.mockClear();
+
+      window.history.replaceState({}, '', '/watch?v=zyxwvutsrqp');
+      capturedUpdateHandler?.();
+      expect(presenceInstance.setActivity).not.toHaveBeenCalled();
+
+      // Never stall presence indefinitely on a title that never catches up.
+      vi.advanceTimersByTime(IDENTITY_SETTLE_MS + 1);
+      capturedUpdateHandler?.();
+      expect(presenceInstance.setActivity).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('clears presence data on pause transition without stopping updates', async () => {
