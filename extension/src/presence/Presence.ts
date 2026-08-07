@@ -136,6 +136,9 @@ export class Presence {
     debugLog('presence', 'set-activity', {
       details: data.details,
       album: data.largeImageText,
+      // The artwork key carries the video id, which is what lets a trace show
+      // whether the id and the title actually belong to the same track.
+      art: data.largeImageKey,
     });
 
     const activity = {

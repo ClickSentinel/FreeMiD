@@ -258,6 +258,8 @@ What to look for when a skip felt slow:
 | `tick {"source":"interval"}` as the *first* line of a track change | The observer missed it; the 5 s backstop caught it instead. |
 | `throttle-defer` with a large `inMs` | Working as designed — Discord's rate limit, not a bug. |
 | `stale-duration-withheld` | The player bar had not repainted; bounded by `SNAPSHOT_SETTLE_MS`. |
+| the same `trackId` under two different titles | The video id is trailing playback — see the source-order note in `getVideoId()`. |
+| repeated `inject` / `observer-attach` | The activity script was re-injected; module state resets, so a spurious `track-change` follows. |
 | `send-failed` | The native messaging port broke. Dedup state is *not* committed, so the retry will go out. |
 | `dedup-skip {"cancelledPendingFlush":true}` | An A→B→A payload flip cancelled a queued update. |
 | `worker-start` mid-trace | The service worker was torn down and restarted. |

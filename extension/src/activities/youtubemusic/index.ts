@@ -43,30 +43,21 @@ function getPlayerBarTimes(): { current?: number; duration?: number } {
 }
 
 /**
- * Extract the YouTube video ID from URL or DOM.
- * Used as fallback when mediaSession artwork isn't a ytimg.com URL.
+ * Extract the YouTube video ID of the track that is *currently playing*.
+ *
+ * Source order matters, and is the opposite of what it looks like it should be.
+ * The URL's `?v=` identifies the page you navigated to, not what the queue has
+ * since advanced to — on a skip it keeps the old id for over a second. The
+ * player bar is rebuilt for each track, so its link and artwork track playback.
+ *
+ * Reading the URL first produced ids that trailed the title by ~1.4 s, which
+ * did more than mispair artwork: `trackId` is derived from this, so a stale id
+ * made `trackId !== lastTrackId` false and track changes went undetected
+ * entirely. Live DOM sources first; URL only as a fallback for the initial load
+ * before the player bar exists.
  */
 function getVideoId(): string | undefined {
-  // 1. ?v= in the current URL
-  const urlId = new URLSearchParams(window.location.search).get('v');
-  if (urlId) return urlId;
-
-  // 2. Embedded player title link — always present, always has v= param
-  const ytpLink = document.querySelector<HTMLAnchorElement>('a.ytp-title-link');
-  if (ytpLink?.href) {
-    const id =
-      new URLSearchParams(ytpLink.search).get('v') ??
-      ytpLink.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/)?.[1];
-    if (id) return id;
-  }
-
-  // 3. href.match on full page URL (covers direct song navigation)
-  const urlMatch = document.location.href.match(
-    /[?&]v=([a-zA-Z0-9_-]{11})/,
-  )?.[1];
-  if (urlMatch) return urlMatch;
-
-  // 4. Title link anchor inside player bar
+  // 1. Title link inside the player bar — rebuilt per track
   const titleLink = document.querySelector<HTMLAnchorElement>(
     'ytmusic-player-bar a[href*="watch?v="]',
   );
@@ -75,7 +66,7 @@ function getVideoId(): string | undefined {
     if (id) return id;
   }
 
-  // 5. ytimg.com thumbnail URL contains the video ID
+  // 2. ytimg.com thumbnail URL contains the video ID — swapped per track
   const imgs = document.querySelectorAll<HTMLImageElement>(
     '#song-image img, ytmusic-player-bar img#img, ytmusic-player-bar img, ytmusic-player img',
   );
@@ -85,7 +76,23 @@ function getVideoId(): string | undefined {
     if (m) return m[1];
   }
 
-  return undefined;
+  // 3. Embedded player title link
+  const ytpLink = document.querySelector<HTMLAnchorElement>('a.ytp-title-link');
+  if (ytpLink?.href) {
+    const id =
+      new URLSearchParams(ytpLink.search).get('v') ??
+      ytpLink.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/)?.[1];
+    if (id) return id;
+  }
+
+  // 4. ?v= in the page URL — lags playback, so last resort only. Covers the
+  //    initial load, where it is the only source that exists yet.
+  const urlId = new URLSearchParams(window.location.search).get('v');
+  if (urlId) return urlId;
+
+  return (
+    document.location.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/)?.[1] ?? undefined
+  );
 }
 
 /** Album art URL. Send full https:// URL — Discord RPC handles proxying. */
@@ -177,6 +184,7 @@ presence.on('UpdateData', () => {
       title,
       artist,
       album: ms?.metadata?.album,
+      duration,
     });
     lastTrackId = trackId;
     trackSeenAt = Date.now();

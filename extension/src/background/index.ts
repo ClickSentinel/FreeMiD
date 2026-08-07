@@ -1057,6 +1057,7 @@ async function handleTabNavigation(
   activeActivityTabs.set(tabId, meta.id);
 
   try {
+    debugLog('bg', 'inject', { tabId, activity: meta.id, forceInject });
     await chrome.scripting.executeScript({
       target: { tabId },
       files: [`activities/${meta.id}/index.js`],
@@ -1072,6 +1073,7 @@ async function handleTabNavigation(
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete' || !tab.url) return;
+  debugLog('bg', 'tab-complete', { tabId });
   // A completed navigation replaces the page context, so always re-inject
   // the activity script even if this tab is still on the same service.
   void handleTabNavigation(tabId, tab.url, { forceInject: true });

@@ -128,6 +128,53 @@ describe('YouTube Music activity', () => {
     expect(activity.endTimestamp! - activity.startTimestamp!).toBe(240);
   });
 
+  it('prefers the player bar over the URL for the video id', async () => {
+    // The URL keeps the id of the page you navigated to; the queue moves on
+    // without it. Reading the URL first paired the new title with the previous
+    // track's artwork, and — because trackId derives from this — hid the track
+    // change from the handler entirely.
+    window.history.replaceState({}, '', '/watch?v=staleoldid1');
+    setMediaSession('playing', { title: 'Current', artist: 'Artist Name' });
+    document.body.innerHTML = `
+      <ytmusic-player-bar>
+        <a href="https://music.youtube.com/watch?v=liveNewId01">Current</a>
+        <div class="time-info">0:10 / 3:00</div>
+      </ytmusic-player-bar>
+      <video class="video-stream"></video>
+    `;
+
+    await loadModule();
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.setActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        largeImageKey: 'https://i.ytimg.com/vi/liveNewId01/mqdefault.jpg',
+        largeImageUrl: 'https://music.youtube.com/watch?v=liveNewId01',
+      }),
+    );
+  });
+
+  it('falls back to the URL when the player bar has no link yet', async () => {
+    // Initial page load: the bar has not rendered, and the URL is all we have.
+    window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+    setMediaSession('playing', { title: 'Current', artist: 'Artist Name' });
+    document.body.innerHTML = `
+      <ytmusic-player-bar>
+        <div class="time-info">0:10 / 3:00</div>
+      </ytmusic-player-bar>
+      <video class="video-stream"></video>
+    `;
+
+    await loadModule();
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.setActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        largeImageKey: 'https://i.ytimg.com/vi/abcdefghijk/mqdefault.jpg',
+      }),
+    );
+  });
+
   it('sends immediately without waiting for the album to arrive', async () => {
     // The album is only the artwork tooltip. Withholding the whole payload for
     // it used to delay the title and artist by up to 1.5 s on every skip.
