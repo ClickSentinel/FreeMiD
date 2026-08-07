@@ -249,6 +249,68 @@ describe('YouTube Music activity', () => {
     expect(presenceInstance.scheduleTrigger).toHaveBeenCalledWith(300, 1000);
   });
 
+  it('withholds when the video id moves ahead of the title', async () => {
+    // Observed live: the player bar swapped its artwork ~600 ms before
+    // mediaSession updated the title, so a snapshot taken in between paired
+    // the new track's artwork with the previous track's name.
+    window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+    setMediaSession('playing', { title: 'First', artist: 'Artist Name' });
+    document.body.innerHTML = `
+      <ytmusic-player-bar>
+        <img id="img" src="https://i.ytimg.com/vi/firstTrack1/mqdefault.jpg" />
+        <div class="time-info">0:10 / 3:00</div>
+      </ytmusic-player-bar>
+      <video class="video-stream"></video>
+    `;
+
+    await loadModule();
+    capturedUpdateHandler?.();
+    presenceInstance.setActivity.mockClear();
+
+    // Artwork and duration swap together (both are player-bar DOM);
+    // mediaSession has not caught up. Only the identity check can catch this.
+    const img = document.querySelector('#img') as HTMLImageElement;
+    img.src = 'https://i.ytimg.com/vi/secondTrk01/mqdefault.jpg';
+    (document.querySelector('.time-info') as HTMLElement).textContent =
+      '0:01 / 1:10';
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.setActivity).not.toHaveBeenCalled();
+  });
+
+  it('sends once the title catches up with the video id', async () => {
+    window.history.replaceState({}, '', '/watch?v=abcdefghijk');
+    setMediaSession('playing', { title: 'First', artist: 'Artist Name' });
+    document.body.innerHTML = `
+      <ytmusic-player-bar>
+        <img id="img" src="https://i.ytimg.com/vi/firstTrack1/mqdefault.jpg" />
+        <div class="time-info">0:10 / 3:00</div>
+      </ytmusic-player-bar>
+      <video class="video-stream"></video>
+    `;
+
+    await loadModule();
+    capturedUpdateHandler?.();
+    presenceInstance.setActivity.mockClear();
+
+    const img = document.querySelector('#img') as HTMLImageElement;
+    img.src = 'https://i.ytimg.com/vi/secondTrk01/mqdefault.jpg';
+    (document.querySelector('.time-info') as HTMLElement).textContent =
+      '0:01 / 1:10';
+    capturedUpdateHandler?.();
+    expect(presenceInstance.setActivity).not.toHaveBeenCalled();
+
+    setMediaSession('playing', { title: 'Second', artist: 'Artist Name' });
+    capturedUpdateHandler?.();
+
+    expect(presenceInstance.setActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: 'Second',
+        largeImageKey: 'https://i.ytimg.com/vi/secondTrk01/mqdefault.jpg',
+      }),
+    );
+  });
+
   it("withholds a snapshot still carrying the previous track's duration", async () => {
     // The player bar repaints after the title, so the first snapshot of a new
     // track reads the old duration. Sending it would give Discord a

@@ -27,8 +27,9 @@ cost is just the throttle.
 
 The one exception is deliberately bounded: an activity may hold a snapshot that
 would be *wrong* rather than merely incomplete (see `SNAPSHOT_SETTLE_MS`).
-YouTube Music's player bar repaints ~250 ms after the title, so the first
-snapshot of a new track still reads the previous track's duration — and sending
+The fields identifying a track update independently and any can move first —
+observed live, the video id led the title by ~600 ms in one trace and trailed
+it by ~1.4 s in another, while the duration lagged both by ~250 ms — and sending
 it does double damage, because the bad send consumes the throttle budget and
 strands the correction behind a full interval. Measured on a real trace: 5.0 s
 of a wrong-length Discord progress bar, twice in a row.
@@ -273,7 +274,8 @@ What to look for when a skip felt slow:
 | `observer-reattach` | The player-bar node was replaced — the bug this work fixed, now recovering. |
 | `tick {"source":"interval"}` as the *first* line of a track change | The observer missed it; the 5 s backstop caught it instead. |
 | `throttle-defer` with a large `inMs` | Working as designed — Discord's rate limit, not a bug. |
-| `stale-duration-withheld` | The player bar had not repainted; bounded by `SNAPSHOT_SETTLE_MS`. |
+| `snapshot-withheld` `{reason:"identity"}` | The video id and the title disagree — one moved first. |
+| `snapshot-withheld` `{reason:"duration"}` | The player bar had not repainted. Both bounded by `SNAPSHOT_SETTLE_MS`. |
 | the same `trackId` under two different titles | The video id is trailing playback — see the source-order note in `getVideoId()`. |
 | repeated `inject` / `observer-attach` | The activity script was re-injected; module state resets, so a spurious `track-change` follows. |
 | `inject-skipped` | A completed navigation left the existing script alive — the re-injection it would have caused was avoided. |

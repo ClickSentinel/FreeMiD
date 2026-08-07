@@ -15,9 +15,12 @@ const presence = new Presence({
 const anchor = new PlaybackAnchor();
 let lastPausedState: boolean | undefined;
 let lastTrackId: string | undefined;
-let trackSeenAt: number | undefined;
-/** Duration of the track we last built a payload for. */
+/** Fields of the track we last built a payload for, to spot a half-updated DOM. */
+let lastVideoId: string | undefined;
+let lastTitle: string | undefined;
 let lastDuration: number | undefined;
+/** When the current snapshot first looked incoherent, to bound the wait. */
+let incoherentSince: number | undefined;
 /** Duration carried by the track we just left, to spot a bar that has not repainted. */
 let previousDuration: number | undefined;
 /** True between a track change and the first snapshot that gets through. */
@@ -193,7 +196,6 @@ presence.on('UpdateData', () => {
       duration,
     });
     lastTrackId = trackId;
-    trackSeenAt = Date.now();
     // Remember what the bar read for the track we are leaving: while it still
     // reads that, it has not repainted for the new one.
     previousDuration = lastDuration;
@@ -204,31 +206,45 @@ presence.on('UpdateData', () => {
     presence.scheduleTrigger(...METADATA_SETTLE_DELAYS_MS);
   }
 
-  // The title changes before the player bar repaints, so a snapshot taken the
-  // instant we notice a new track still reads the *previous* track's duration.
-  // Sending that gives Discord a wrong-length progress bar, and since the send
-  // consumes the throttle budget the correction waits a full interval behind
-  // it. Hold the snapshot until the bar catches up.
+  // The fields identifying a track — video id (player bar DOM), title
+  // (mediaSession) and duration (player bar text) — update independently, and
+  // any of them can move first. Observed in traces: the id led the title by
+  // ~600 ms in one direction and trailed it by ~1.4 s in the other, and the
+  // duration lagged both by ~250 ms.
   //
-  // Scoped to the window after a track change and cleared as soon as one
-  // snapshot gets through: on a settled track `duration` naturally equals what
-  // we last sent, and comparing against that would withhold every tick.
-  const sinceTrackChangeMs = Date.now() - (trackSeenAt ?? 0);
-  const barStillShowsPreviousTrack =
-    awaitingBarRepaint &&
-    duration > 0 &&
-    duration === previousDuration &&
-    sinceTrackChangeMs < SNAPSHOT_SETTLE_MS;
-  if (barStillShowsPreviousTrack) {
-    debugLog('ytmusic', 'stale-duration-withheld', {
-      duration,
-      sinceTrackChangeMs,
-    });
-    return;
+  // A payload built mid-transition pairs one track's artwork or progress bar
+  // with another track's title. That is wrong rather than merely incomplete,
+  // so it is withheld until the fields agree — bounded, because a source that
+  // never catches up must not stall presence forever.
+  const idChanged = videoId !== lastVideoId;
+  const titleChanged = title !== lastTitle;
+  // Exactly one identity source moved: they cannot both describe the same
+  // track yet. Neither moving is a settled track; both moving is a clean change.
+  const identityDisagrees = idChanged !== titleChanged;
+  // The bar still reads the duration of the track we just left.
+  const durationIsPrevious = duration > 0 && duration === previousDuration;
+
+  if (identityDisagrees || (awaitingBarRepaint && durationIsPrevious)) {
+    incoherentSince ??= Date.now();
+    const heldForMs = Date.now() - incoherentSince;
+    if (heldForMs < SNAPSHOT_SETTLE_MS) {
+      debugLog('ytmusic', 'snapshot-withheld', {
+        reason: identityDisagrees ? 'identity' : 'duration',
+        videoId,
+        title,
+        duration,
+        heldForMs,
+      });
+      return;
+    }
   }
 
-  // Either the bar repainted or the window expired — stop second-guessing it.
+  // Agreed, or held long enough — stop second-guessing and record the state
+  // that the next tick will compare against.
+  incoherentSince = undefined;
   awaitingBarRepaint = false;
+  lastVideoId = videoId;
+  lastTitle = title;
   lastDuration = duration;
 
   const { timestamps } = anchor.update(trackId, current, duration, paused);
