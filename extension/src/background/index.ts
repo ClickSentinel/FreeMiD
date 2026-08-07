@@ -13,6 +13,7 @@
 import { GITHUB_REPO } from '../constants/github';
 import { SESSION_KEYS, STORAGE_KEYS } from '../constants/storageKeys';
 import {
+  ACTIVITY_HEARTBEAT_STALE_MS,
   APPLY_VERIFY_INTERVAL_MS,
   DISCORD_MIN_INTERVAL_MS,
   HOST_VERSION_CHECK_PERIOD_MINUTES,
@@ -1034,6 +1035,33 @@ function releasePresence(sourceId: string): void {
 /** Map of tabId → activityId for tabs that currently have a script injected. */
 const activeActivityTabs = new Map<number, string>();
 
+/**
+ * Whether an activity script is still alive in this tab.
+ *
+ * The activity stamps a heartbeat on every tick, and an orphaned script stops
+ * ticking at Presence's context check — so a stale stamp means dead, and this
+ * cannot be fooled by a leftover marker from a reloaded extension. Probing is
+ * far cheaper than re-injecting the bundle it would otherwise duplicate.
+ */
+async function hasLiveActivityScript(tabId: number): Promise<boolean> {
+  try {
+    const [probe] = await chrome.scripting.executeScript({
+      target: { tabId },
+      args: [ACTIVITY_HEARTBEAT_STALE_MS],
+      func: (maxAgeMs: number) => {
+        const last = (globalThis as Record<string, unknown>)
+          .__freemid_last_tick;
+        return typeof last === 'number' && Date.now() - last < maxAgeMs;
+      },
+    });
+    return probe?.result === true;
+  } catch {
+    // Tab gone, or no permission to probe it. Assume dead and inject: failing
+    // toward a working presence is better than failing toward none.
+    return false;
+  }
+}
+
 async function handleTabNavigation(
   tabId: number,
   url: string,
@@ -1048,6 +1076,20 @@ async function handleTabNavigation(
 
   const forceInject = options?.forceInject === true;
   if (!forceInject && activeActivityTabs.get(tabId) === meta.id) return;
+
+  // A forced inject means Chrome reported a completed navigation — but on an
+  // SPA it reports that for history navigations too, where the page context and
+  // the running content script both survive. Re-injecting there is not just
+  // waste: it resets the activity's module state, firing a spurious
+  // track-change and discarding the bookkeeping that suppresses stale
+  // snapshots. Ask the page instead of guessing which 'complete' events count.
+  if (forceInject && (await hasLiveActivityScript(tabId))) {
+    debugLog('bg', 'inject-skipped', { tabId, activity: meta.id });
+    // Still record the tab: after a service-worker restart the map is empty
+    // even though the script is alive, and the presence lock depends on it.
+    activeActivityTabs.set(tabId, meta.id);
+    return;
+  }
 
   // A web activity always takes priority over its desktop counterpart —
   // release the desktop lock so the web content script can claim it.

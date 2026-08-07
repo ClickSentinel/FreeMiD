@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ACTIVITY_HEARTBEAT_STALE_MS,
   ACTIVITY_TICK_MS,
   DISCORD_MIN_INTERVAL_MS,
   HOST_IDLE_TIMEOUT_MS,
@@ -42,6 +43,12 @@ describe('timing invariants', () => {
     expect(ACTIVITY_TICK_MS + DISCORD_MIN_INTERVAL_MS).toBeLessThanOrEqual(
       10_000,
     );
+  });
+
+  it('gives a content script room to miss a tick before declaring it dead', () => {
+    // Below one tick the probe would call a healthy script dead on every
+    // navigation, reintroducing exactly the re-injection churn it prevents.
+    expect(ACTIVITY_HEARTBEAT_STALE_MS).toBeGreaterThan(ACTIVITY_TICK_MS * 2);
   });
 
   it('gives Windows at least as long as other platforms at every update stage', () => {

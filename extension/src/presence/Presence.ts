@@ -119,6 +119,9 @@ export class Presence {
         (globalThis as Record<string, unknown>)[GUARD_KEY] = undefined;
         return;
       }
+      // Heartbeat for the background's liveness probe: an orphaned script
+      // stops ticking at the context check above, so a stale stamp means dead.
+      (globalThis as Record<string, unknown>).__freemid_last_tick = Date.now();
       debugLog('presence', 'tick', { source: tickSource });
       tickSource = 'interval';
       void Promise.resolve(callback());

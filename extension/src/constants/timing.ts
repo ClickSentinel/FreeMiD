@@ -24,6 +24,15 @@
 export const ACTIVITY_TICK_MS = 5_000;
 
 /**
+ * How long a content script's heartbeat may go unstamped before the background
+ * treats it as dead and re-injects.
+ *
+ * Three ticks: tolerant of a missed tick or a busy page, but short enough that
+ * a genuinely dead script is replaced promptly.
+ */
+export const ACTIVITY_HEARTBEAT_STALE_MS = 3 * ACTIVITY_TICK_MS;
+
+/**
  * Delays after a track change (or `play` event) at which the activity re-reads
  * the page and pushes a refined payload.
  *

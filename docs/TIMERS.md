@@ -49,6 +49,22 @@ Runs inside the page, one instance per injected tab.
 | Settle refinements | `METADATA_SETTLE_DELAYS_MS` | `300 ms`, `1000 ms` | Re-read and re-push after a track change or `play`. 300 ms for `mediaSession.metadata`, 1 s for the player-bar duration. |
 | Snapshot settle | `SNAPSHOT_SETTLE_MS` | `400 ms` | Max time an activity may withhold a snapshot carrying a field that is *wrong*, not merely missing. |
 | `watchSelector` observer | — | event-driven | Primary track-change signal. Re-attaches when the observed node is replaced. |
+| Liveness heartbeat | `ACTIVITY_HEARTBEAT_STALE_MS` | `15 s` (3 ticks) | Stamped each tick on `globalThis`; the background probes it before re-injecting. |
+
+### Re-injection and the liveness probe
+
+Chrome reports `status: 'complete'` for an SPA's history navigations, not just
+document loads — a trace showed 15 injections in six minutes of navigating
+YouTube Music. Each one builds a fresh module scope, which resets `lastTrackId`
+and the previous-duration bookkeeping, firing a spurious `track-change` and
+disabling the stale-snapshot guard for that pass.
+
+Rather than guess which `complete` events replaced the page, the background
+probes it: activities stamp `__freemid_last_tick` every tick, and an orphaned
+script stops ticking at Presence's context check, so a stale stamp means dead.
+A leftover marker from a reloaded extension cannot produce a false positive.
+The probe fails toward injecting — a tab without presence is worse than a
+redundant injection.
 
 ### Per-activity event wiring
 
@@ -260,6 +276,7 @@ What to look for when a skip felt slow:
 | `stale-duration-withheld` | The player bar had not repainted; bounded by `SNAPSHOT_SETTLE_MS`. |
 | the same `trackId` under two different titles | The video id is trailing playback — see the source-order note in `getVideoId()`. |
 | repeated `inject` / `observer-attach` | The activity script was re-injected; module state resets, so a spurious `track-change` follows. |
+| `inject-skipped` | A completed navigation left the existing script alive — the re-injection it would have caused was avoided. |
 | `send-failed` | The native messaging port broke. Dedup state is *not* committed, so the retry will go out. |
 | `dedup-skip {"cancelledPendingFlush":true}` | An A→B→A payload flip cancelled a queued update. |
 | `worker-start` mid-trace | The service worker was torn down and restarted. |
