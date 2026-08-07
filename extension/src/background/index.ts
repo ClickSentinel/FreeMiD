@@ -15,7 +15,6 @@ import { SESSION_KEYS, STORAGE_KEYS } from '../constants/storageKeys';
 import {
   ACTIVITY_HEARTBEAT_STALE_MS,
   APPLY_VERIFY_INTERVAL_MS,
-  DISCORD_MIN_INTERVAL_MS,
   HOST_VERSION_CHECK_PERIOD_MINUTES,
   KEEPALIVE_PERIOD_MINUTES,
   POPUP_BROADCAST_DEBOUNCE_MS,
@@ -36,6 +35,7 @@ import {
   initDebugFlag,
   isDebugEnabled,
 } from '../debug/log';
+import { ActivityThrottle, activitySummary } from './activityThrottle';
 import {
   compareVersions,
   isHostSelfUpdateSupported,
@@ -123,14 +123,10 @@ let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
 let reconnectCooldownUntilMs = 0;
 let presenceHolder: string | null = null; // sourceId that currently holds the Discord presence lock
-let lastSentActivityJson: string | null = null; // last payload sent to Discord; skip if identical
 // This worker is the only place that defers a presence update. Activities push
 // their best current snapshot as soon as they have one and never hold anything
 // back, so the throttle below is the single rate limiter in the pipeline —
 // see DISCORD_MIN_INTERVAL_MS in constants/timing.ts and docs/TIMERS.md.
-let lastActivitySentAt = 0;
-let pendingActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingActivityPayload: object | null = null;
 let activityBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
 // Desktop apps reachable via the native host's SMTC bridge (see
 // native-host/src/smtc.rs KNOWN_APPS — the `app` id here must match).
@@ -804,59 +800,10 @@ function pollDesktopMediaForApp(appId: string): void {
 
 // ── Activity helpers ──────────────────────────────────────────────────────────
 
-/**
- * Send a payload to Discord and record it for dedup — but only record it if the
- * send actually left the extension. sendToHost() returns false on a broken port
- * (and tears the connection down); committing dedup state anyway would mark a
- * payload that never arrived as "already sent", so every identical retry after
- * the port recovers would be skipped and presence would stay stale until the
- * track changed.
- */
-function sendActivityToHost(activity: object, activityJson: string): void {
-  const sent = sendToHost({ type: 'SET_ACTIVITY', activity });
-  if (!sent) {
-    debugLog('bg', 'send-failed', { error: lastError });
-    return;
-  }
-  lastActivitySentAt = Date.now();
-  lastSentActivityJson = activityJson;
-  debugLog('bg', 'sent', activitySummary(activity));
-}
-
-/** Compact, JSON-safe view of a payload for the debug log. */
-function activitySummary(activity: object): Record<string, unknown> {
-  const a = activity as {
-    details?: string;
-    state?: string;
-    timestamps?: { start?: number; end?: number };
-    assets?: { large_text?: string };
-  };
-  return {
-    details: a.details,
-    state: a.state,
-    album: a.assets?.large_text,
-    dur:
-      a.timestamps?.start !== undefined && a.timestamps?.end !== undefined
-        ? a.timestamps.end - a.timestamps.start
-        : undefined,
-  };
-}
-
-function flushPendingActivity(): void {
-  pendingActivityFlushTimer = null;
-  const activity = pendingActivityPayload;
-  pendingActivityPayload = null;
-  if (activity === null) return;
-
-  const activityJson = JSON.stringify(activity);
-  if (activityJson === lastSentActivityJson) {
-    debugLog('bg', 'flush-deduped');
-    return;
-  }
-
-  debugLog('bg', 'flush');
-  sendActivityToHost(activity, activityJson);
-}
+const activityThrottle = new ActivityThrottle((activity) => {
+  const ok = sendToHost({ type: 'SET_ACTIVITY', activity });
+  return ok ? { ok } : { ok, error: lastError ?? undefined };
+});
 
 /**
  * Send Discord Rich Presence activity via the native host.
@@ -953,62 +900,15 @@ export function setActivity(activity: object, siteId?: string): void {
     }
   }
 
-  // Dedup: skip if nothing has changed since the last send.
-  // If a flush is pending with a different payload and we just returned to the
-  // previously-sent state (A→B→A), cancel that flush — it would send stale data.
-  const activityJson = JSON.stringify(activity);
-  if (activityJson === lastSentActivityJson) {
-    debugLog('bg', 'dedup-skip', {
-      cancelledPendingFlush: pendingActivityFlushTimer !== null,
-    });
-    if (pendingActivityFlushTimer !== null) {
-      clearTimeout(pendingActivityFlushTimer);
-      pendingActivityFlushTimer = null;
-      pendingActivityPayload = null;
-    }
-    return;
-  }
-
-  // Throttle: enforce DISCORD_MIN_INTERVAL_MS between Discord IPC calls.
-  // If a pending flush already exists, replace its payload with this newer one
-  // (the timer keeps running — it fires at the originally scheduled time).
-  const elapsed = Date.now() - lastActivitySentAt;
-  if (elapsed < DISCORD_MIN_INTERVAL_MS) {
-    pendingActivityPayload = activity;
-    debugLog('bg', 'throttle-defer', {
-      inMs: DISCORD_MIN_INTERVAL_MS - elapsed,
-      replacedPending: pendingActivityFlushTimer !== null,
-    });
-    if (pendingActivityFlushTimer === null) {
-      pendingActivityFlushTimer = setTimeout(
-        flushPendingActivity,
-        DISCORD_MIN_INTERVAL_MS - elapsed,
-      );
-    }
-    return;
-  }
-
-  // Enough time has passed — send immediately.
-  if (pendingActivityFlushTimer !== null) {
-    clearTimeout(pendingActivityFlushTimer);
-    pendingActivityFlushTimer = null;
-    pendingActivityPayload = null;
-  }
-  sendActivityToHost(activity, activityJson);
+  activityThrottle.push(activity);
 }
 
 function cancelPendingActivityFlush(): void {
-  if (pendingActivityFlushTimer !== null) {
-    clearTimeout(pendingActivityFlushTimer);
-    pendingActivityFlushTimer = null;
-  }
+  activityThrottle.reset();
   if (activityBroadcastTimer !== null) {
     clearTimeout(activityBroadcastTimer);
     activityBroadcastTimer = null;
   }
-  pendingActivityPayload = null;
-  lastSentActivityJson = null;
-  lastActivitySentAt = 0;
 }
 
 export function clearActivity(): void {
