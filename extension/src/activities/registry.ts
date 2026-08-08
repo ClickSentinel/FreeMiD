@@ -35,4 +35,9 @@ export const ACTIVITY_REGISTRY = {
     name: 'Apple Music',
     matches: ['*://music.apple.com/*'],
   },
+  soundcloud: {
+    id: 'soundcloud',
+    name: 'SoundCloud',
+    matches: ['*://soundcloud.com/*', '*://*.soundcloud.com/*'],
+  },
 } satisfies Record<string, ActivityMeta>;

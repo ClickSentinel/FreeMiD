@@ -67,6 +67,7 @@ const SITE_TOGGLES = [
   { elementId: 'toggle-ytm', siteId: 'youtubemusic' },
   { elementId: 'toggle-tidal', siteId: 'tidal' },
   { elementId: 'toggle-applemusic', siteId: 'applemusic' },
+  { elementId: 'toggle-soundcloud', siteId: 'soundcloud' },
 ] as const;
 const siteToggles = SITE_TOGGLES.map(({ elementId, siteId }) => ({
   siteId,

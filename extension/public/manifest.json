@@ -19,6 +19,8 @@
     "*://tidal.com/*",
     "*://listen.tidal.com/*",
     "*://music.apple.com/*",
+    "*://soundcloud.com/*",
+    "*://*.soundcloud.com/*",
     "https://api.github.com/*",
     "https://coverartarchive.org/*",
     "https://*.archive.org/*"
