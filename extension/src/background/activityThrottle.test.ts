@@ -182,6 +182,30 @@ describe('ActivityThrottle', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it('re-sends an unchanged payload after a reset, as a reconnect requires', () => {
+    // Discord loses all presence state when it restarts. The activity a page
+    // reports has not changed, so only forgetting what we believe was sent can
+    // restore it — otherwise a static payload (a long video, rather than a
+    // track that will change in a few minutes) stays suppressed indefinitely.
+    const { throttle, send } = makeThrottle();
+    throttle.push(track('A'));
+    expect(send).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(INTERVAL);
+    throttle.push(track('A'));
+    expect(
+      send,
+      'unchanged payload is deduped while connected',
+    ).toHaveBeenCalledTimes(1);
+
+    throttle.reset();
+    throttle.push(track('A'));
+    expect(
+      send,
+      'the same payload must go out again after a reset',
+    ).toHaveBeenCalledTimes(2);
+  });
+
   it('never exceeds the Discord rate limit under sustained pressure', () => {
     // The property the whole class exists for.
     const { throttle, send } = makeThrottle();

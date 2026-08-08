@@ -564,6 +564,15 @@ function connectNativeHost(): void {
         }
         if (discordConnected && !wasConnected) {
           discordConnectedSince = Date.now();
+          // Discord keeps no memory of what we sent before it went away, so
+          // the dedup state is now a lie: it would suppress the very update
+          // that restores presence. Forget it and let the next tick re-send.
+          //
+          // Music hides this — the next track changes the payload, dedup
+          // misses, and presence returns within a song. A long video's payload
+          // is static, so without this it stays blank until the video ends.
+          debugLog('bg', 'discord-reconnected-resend');
+          activityThrottle.reset();
         } else if (!discordConnected && wasConnected) {
           discordConnectedSince = null;
         }
