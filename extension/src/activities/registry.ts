@@ -12,6 +12,17 @@ export interface ActivityMeta {
   name: string;
   /** URL match patterns (supports * glob). No protocol needed. */
   matches: string[];
+  /**
+   * Request these origins at runtime instead of declaring them as required
+   * host permissions.
+   *
+   * Adding a required host permission to a published extension makes Chrome
+   * disable it for every existing user until they re-approve — disruptive for
+   * people who will never use the site. Optional permissions are requested
+   * from the popup when the user first enables the toggle, so nobody else is
+   * interrupted. See docs/PERMISSIONS.md.
+   */
+  optionalPermission?: boolean;
 }
 
 export const ACTIVITY_REGISTRY = {
@@ -39,5 +50,16 @@ export const ACTIVITY_REGISTRY = {
     id: 'soundcloud',
     name: 'SoundCloud',
     matches: ['*://soundcloud.com/*', '*://*.soundcloud.com/*'],
+    optionalPermission: true,
   },
 } satisfies Record<string, ActivityMeta>;
+
+/**
+ * The same registry as a uniform map.
+ *
+ * ACTIVITY_REGISTRY uses `satisfies` so each entry keeps its literal type,
+ * which is what lets tests assert on exact match patterns — but it also means
+ * an entry without `optionalPermission` has no such property to read. This view
+ * restores the shared shape for iteration and lookup.
+ */
+export const ACTIVITIES: Record<string, ActivityMeta> = ACTIVITY_REGISTRY;

@@ -1,0 +1,78 @@
+# Host permissions
+
+## Why some sites are optional
+
+FreeMiD is published on the Chrome Web Store. Adding a **required** host
+permission to a published extension makes Chrome **disable it for every
+existing user** until each of them manually re-approves the new permission
+list. No error, no warning to the developer — installs simply go quiet and
+support reports arrive later.
+
+That cost is unreasonable for a per-site feature: someone who only uses TIDAL
+should not have their extension disabled because SoundCloud support shipped.
+
+So sites added after the initial release declare their host access as
+**optional**, and the popup requests it the first time the user enables that
+site's toggle. Nobody else is interrupted, and the granted permission set stays
+honest about what is actually in use.
+
+## How it is wired
+
+| Piece | Responsibility |
+| --- | --- |
+| `activities/registry.ts` | `optionalPermission: true` on the activity |
+| `public/manifest.json` | origins listed under `optional_host_permissions`, **not** `host_permissions` |
+| `popup/helpers.ts` | `optionalOriginsFor(siteId)` reads the origins back off the registry |
+| `popup/index.ts` | requests them from the toggle's click handler |
+| `background/index.ts` | site defaults to disabled; `permissions.onRemoved` turns it back off |
+
+The request origins come from the registry's own `matches`, so the permission
+asked for and the URL pattern injected on cannot drift apart. There is a test
+asserting the manifest agrees with the registry in both directions.
+
+## The gesture constraint
+
+`chrome.permissions.request()` requires a user gesture, and **any `await`
+before it spends that gesture** — after which Chrome rejects the call outright,
+with an error that reads as though the permission were denied.
+
+So the request must be the first async boundary in the click handler:
+
+```ts
+btn.addEventListener('click', () => {
+  const origins = nowEnabled ? optionalOriginsFor(siteId) : undefined;
+  if (origins) {
+    chrome.permissions.request({ origins }).then(...);   // no await before this
+    return;
+  }
+  ...
+});
+```
+
+Reading DOM state synchronously beforehand is fine. Reading `chrome.storage`,
+awaiting a `sendMessage`, or checking `permissions.contains()` first is not.
+
+## Behaviour notes
+
+- **Declining** leaves the toggle untouched. The visual state is driven by the
+  background's status broadcast, so nothing needs reverting — the message is
+  simply never sent.
+- **Re-enabling** after a previous grant shows no prompt. `request()` resolves
+  `true` immediately when the permission is already held.
+- **Disabling the toggle does not revoke** the permission. The site toggle is a
+  presence switch, not a permission manager, and silently revoking would make
+  every re-enable prompt again. With the toggle off no injection happens
+  regardless, so the retained grant goes unused.
+- **Revoking from `chrome://extensions`** is handled: `permissions.onRemoved`
+  turns the matching site toggle off. Without that the toggle would read as on
+  while injection failed silently, which looks like a broken extension.
+
+## Adding another optional site
+
+1. `optionalPermission: true` on its registry entry
+2. origins under `optional_host_permissions` in the manifest
+3. default it to `false` in the background's `enabledSites`
+
+The tests in `popup/optionalPermissions.test.ts` fail if 1 and 2 disagree.
+Step 3 has no guard yet — a site defaulted to `true` without a granted
+permission would attempt injection and fail.

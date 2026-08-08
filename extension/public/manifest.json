@@ -12,6 +12,11 @@
     "notifications",
     "storage"
   ],
+  "optional_host_permissions": [
+    "*://soundcloud.com/*",
+    "*://*.soundcloud.com/*"
+  ],
+
   "host_permissions": [
     "*://www.youtube.com/*",
     "*://youtube.com/*",
@@ -19,8 +24,6 @@
     "*://tidal.com/*",
     "*://listen.tidal.com/*",
     "*://music.apple.com/*",
-    "*://soundcloud.com/*",
-    "*://*.soundcloud.com/*",
     "https://api.github.com/*",
     "https://coverartarchive.org/*",
     "https://*.archive.org/*"

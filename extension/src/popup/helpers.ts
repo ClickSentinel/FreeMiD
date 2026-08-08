@@ -1,3 +1,4 @@
+import { ACTIVITIES } from '../activities/registry';
 import { githubRepoUrl } from '../constants/github';
 import { PRESENCE_PREVIEW_ASSETS } from '../constants/presenceAssets';
 import { urlLike } from '../utils/urlLike';
@@ -46,4 +47,16 @@ export function fallbackLogoPath(act: ActivityPreview): string | null {
     return PRESENCE_PREVIEW_ASSETS.ytmusicLogo;
   if (service.includes('youtube')) return PRESENCE_PREVIEW_ASSETS.youtubeLogo;
   return null;
+}
+
+/**
+ * Origins a site needs granted at runtime, or undefined if its host access is
+ * already required at install time.
+ *
+ * Returning the registry's own match patterns keeps the permission request and
+ * the injection rule from drifting apart — they are the same list.
+ */
+export function optionalOriginsFor(siteId: string): string[] | undefined {
+  const meta = ACTIVITIES[siteId];
+  return meta?.optionalPermission ? [...meta.matches] : undefined;
 }

@@ -15,6 +15,7 @@ import {
   fallbackLogoPath,
   isUnsupportedPlatformUpdateError,
   isWindowsPlatform,
+  optionalOriginsFor,
   windowsSetupUrl,
 } from './helpers';
 
@@ -379,15 +380,37 @@ btnPause?.addEventListener('click', () => {
 
 // ── Site toggles ──────────────────────────────────────────────────────────────
 
+function applySiteEnabled(siteId: string, enabled: boolean): void {
+  void chrome.runtime.sendMessage({
+    type: 'SET_SITE_ENABLED',
+    siteId,
+    enabled,
+  });
+  updateServicesCount();
+}
+
 function wireSiteToggle(btn: HTMLButtonElement | null, siteId: string): void {
   btn?.addEventListener('click', () => {
     const nowEnabled = btn.getAttribute('aria-checked') !== 'true';
-    void chrome.runtime.sendMessage({
-      type: 'SET_SITE_ENABLED',
-      siteId,
-      enabled: nowEnabled,
-    });
-    updateServicesCount();
+    const origins = nowEnabled ? optionalOriginsFor(siteId) : undefined;
+
+    // Sites whose host access is optional are granted on first enable. This
+    // request has to be the first async boundary in the handler: it needs the
+    // click's user gesture, and awaiting anything beforehand spends it, after
+    // which Chrome rejects the call outright.
+    if (origins) {
+      chrome.permissions
+        .request({ origins })
+        .then((granted) => {
+          // Declined: leave the toggle alone. Nothing has changed yet — the
+          // visual state is driven by the background's broadcast, not here.
+          if (granted) applySiteEnabled(siteId, true);
+        })
+        .catch(() => {});
+      return;
+    }
+
+    applySiteEnabled(siteId, nowEnabled);
   });
 }
 for (const { el, siteId } of siteToggles) {

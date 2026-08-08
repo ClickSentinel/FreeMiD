@@ -10,6 +10,7 @@
  *  4. Clear status instantly when the active tab leaves a known domain.
  */
 
+import { ACTIVITIES } from '../activities/registry';
 import { GITHUB_REPO } from '../constants/github';
 import { SESSION_KEYS, STORAGE_KEYS } from '../constants/storageKeys';
 import {
@@ -88,7 +89,9 @@ let enabledSites: Record<string, boolean> = {
   youtubemusic: true,
   tidal: true,
   applemusic: true,
-  soundcloud: true,
+  // Host access for SoundCloud is optional and requested from the popup, so it
+  // cannot default on — there would be nothing granted to inject with.
+  soundcloud: false,
 };
 let hostVersion: string | null = null;
 let hostSelfUpdateSupported: boolean | null = null;
@@ -1274,6 +1277,26 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       requestReconnectNativeHost();
     }
   }
+});
+
+// A user can revoke an optional host permission from chrome://extensions at any
+// time. Without this the site toggle would stay on while injection silently
+// failed, which reads as the extension being broken.
+chrome.permissions.onRemoved.addListener((removed) => {
+  const origins = removed.origins ?? [];
+  if (origins.length === 0) return;
+  let changed = false;
+  for (const [siteId, meta] of Object.entries(ACTIVITIES)) {
+    if (!meta.optionalPermission) continue;
+    if (!meta.matches.some((m) => origins.includes(m))) continue;
+    if (enabledSites[siteId] === false) continue;
+    enabledSites[siteId] = false;
+    changed = true;
+    debugLog('bg', 'permission-revoked', { siteId });
+  }
+  if (!changed) return;
+  void chrome.storage.local.set({ [STORAGE_KEYS.enabledSites]: enabledSites });
+  broadcastStatus();
 });
 
 chrome.runtime.onSuspend.addListener(() => {

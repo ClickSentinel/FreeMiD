@@ -37,7 +37,7 @@ extension/              # Chrome MV3 extension (TypeScript + Vite)
     utils/               # parseClock and other small helpers
 install/                # install.sh / install.ps1 / uninstall scripts
 scripts/                # build-activities.mjs, local-update-e2e.sh, sync-version.sh
-docs/                   # Architecture docs and release checklists
+docs/                   # Architecture docs, TIMERS.md, PERMISSIONS.md, release checklists
 ```
 
 ## Build commands
