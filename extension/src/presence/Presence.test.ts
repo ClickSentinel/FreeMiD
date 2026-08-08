@@ -1,8 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  __resetDebugForTest,
+  setDebugEnabled,
+  setDebugSink,
+} from '../debug/log';
 import { Presence } from './Presence';
 
 type ChromeSendMessage = ReturnType<typeof vi.fn>;
+
+/**
+ * Abort the stored controller rather than just dropping the key. Deleting it
+ * leaves the previous suite's body-level MutationObserver connected to
+ * document.body, where it keeps firing into later tests.
+ */
+function abortStoredSignal(): void {
+  const key = '__freemid_events_abort';
+  (
+    (globalThis as Record<string, unknown>)[key] as AbortController | undefined
+  )?.abort();
+  delete (globalThis as Record<string, unknown>)[key];
+}
 
 function mockChrome(sendMessage: ChromeSendMessage, withId = true): void {
   Object.defineProperty(globalThis, 'chrome', {
@@ -87,11 +105,17 @@ describe('Presence', () => {
     const firstCallback = vi.fn();
     const secondCallback = vi.fn();
 
-    const first = new Presence({ clientId: 'client-123', updateInterval: 1 });
+    const first = new Presence({
+      clientId: 'client-123',
+      updateIntervalMs: 1_000,
+    });
     first.on('UpdateData', firstCallback);
     expect(firstCallback).toHaveBeenCalledTimes(1);
 
-    const second = new Presence({ clientId: 'client-123', updateInterval: 1 });
+    const second = new Presence({
+      clientId: 'client-123',
+      updateIntervalMs: 1_000,
+    });
     second.on('UpdateData', secondCallback);
     expect(secondCallback).toHaveBeenCalledTimes(1);
 
@@ -108,7 +132,7 @@ describe('Presence', () => {
     const callback = vi.fn();
     const presence = new Presence({
       clientId: 'client-123',
-      updateInterval: 1,
+      updateIntervalMs: 1_000,
     });
 
     presence.on('UpdateData', callback);
@@ -133,14 +157,17 @@ describe('Presence.scheduleTrigger', () => {
     vi.useRealTimers();
     delete (globalThis as Record<string, unknown>).chrome;
     delete (globalThis as Record<string, unknown>).__freemid_presence_interval;
-    delete (globalThis as Record<string, unknown>).__freemid_events_abort;
+    abortStoredSignal();
   });
 
   it('fires triggerUpdate after the given delay', () => {
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     mockChrome(sendMessage);
 
-    const presence = new Presence({ clientId: 'test', updateInterval: 60 });
+    const presence = new Presence({
+      clientId: 'test',
+      updateIntervalMs: 60_000,
+    });
     const callback = vi.fn();
     presence.on('UpdateData', callback);
     callback.mockClear();
@@ -156,7 +183,10 @@ describe('Presence.scheduleTrigger', () => {
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     mockChrome(sendMessage);
 
-    const presence = new Presence({ clientId: 'test', updateInterval: 60 });
+    const presence = new Presence({
+      clientId: 'test',
+      updateIntervalMs: 60_000,
+    });
     const callback = vi.fn();
     presence.on('UpdateData', callback);
     callback.mockClear();
@@ -173,7 +203,10 @@ describe('Presence.scheduleTrigger', () => {
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     mockChrome(sendMessage);
 
-    const presence = new Presence({ clientId: 'test', updateInterval: 60 });
+    const presence = new Presence({
+      clientId: 'test',
+      updateIntervalMs: 60_000,
+    });
     const callback = vi.fn();
     presence.on('UpdateData', callback);
     callback.mockClear();
@@ -198,7 +231,10 @@ describe('Presence.scheduleTrigger', () => {
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     mockChrome(sendMessage);
 
-    const presence = new Presence({ clientId: 'test', updateInterval: 60 });
+    const presence = new Presence({
+      clientId: 'test',
+      updateIntervalMs: 60_000,
+    });
     const callback = vi.fn();
     presence.on('UpdateData', callback);
     callback.mockClear();
@@ -212,9 +248,194 @@ describe('Presence.scheduleTrigger', () => {
   });
 });
 
+describe('Presence.watchSelector', () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    delete (globalThis as Record<string, unknown>).chrome;
+    delete (globalThis as Record<string, unknown>).__freemid_presence_interval;
+    abortStoredSignal();
+  });
+
+  function setup(): { presence: Presence; callback: ReturnType<typeof vi.fn> } {
+    mockChrome(vi.fn().mockResolvedValue(undefined));
+    const presence = new Presence({
+      clientId: 'test',
+      updateIntervalMs: 60_000,
+    });
+    const callback = vi.fn();
+    presence.on('UpdateData', callback);
+    presence.watchSelector('.title', presence.freshSignal());
+    callback.mockClear();
+    return { presence, callback };
+  }
+
+  it('reports mutations on a node present at attach time', async () => {
+    document.body.innerHTML =
+      '<div id="bar"><span class="title">A</span></div>';
+    const { presence, callback } = setup();
+
+    (document.querySelector('.title') as HTMLElement).textContent = 'B';
+    await flush();
+
+    expect(callback).toHaveBeenCalled();
+    presence.clearActivity();
+  });
+
+  it('re-attaches when the observed node is replaced by an SPA re-render', async () => {
+    document.body.innerHTML =
+      '<div id="bar"><span class="title">A</span></div>';
+    const { presence, callback } = setup();
+
+    // YouTube Music rebuilds the player bar: the observed node is discarded
+    // and a fresh one takes its place.
+    (document.getElementById('bar') as HTMLElement).innerHTML =
+      '<span class="title">B</span>';
+    await flush();
+    expect(callback).toHaveBeenCalled();
+    callback.mockClear();
+
+    // The replacement must now be the observed node — without re-attachment
+    // this mutation goes unreported and presence stalls until the next tick.
+    (document.querySelector('.title') as HTMLElement).textContent = 'C';
+    await flush();
+    expect(callback).toHaveBeenCalled();
+    presence.clearActivity();
+  });
+
+  it('attaches to a node that only appears after the activity loads', async () => {
+    document.body.innerHTML = '<div id="bar"></div>';
+    const { presence, callback } = setup();
+
+    (document.getElementById('bar') as HTMLElement).innerHTML =
+      '<span class="title">A</span>';
+    await flush();
+    callback.mockClear();
+
+    (document.querySelector('.title') as HTMLElement).textContent = 'B';
+    await flush();
+    expect(callback).toHaveBeenCalled();
+    presence.clearActivity();
+  });
+
+  it('stops observing once the signal is aborted', async () => {
+    document.body.innerHTML =
+      '<div id="bar"><span class="title">A</span></div>';
+    mockChrome(vi.fn().mockResolvedValue(undefined));
+    const presence = new Presence({
+      clientId: 'test',
+      updateIntervalMs: 60_000,
+    });
+    const callback = vi.fn();
+    presence.on('UpdateData', callback);
+    presence.watchSelector('.title', presence.freshSignal());
+    callback.mockClear();
+
+    // Re-injection aborts the previous signal.
+    presence.freshSignal();
+
+    (document.getElementById('bar') as HTMLElement).innerHTML =
+      '<span class="title">B</span>';
+    await flush();
+    (document.querySelector('.title') as HTMLElement).textContent = 'C';
+    await flush();
+
+    expect(callback).not.toHaveBeenCalled();
+    presence.clearActivity();
+  });
+});
+
+describe('Presence.watchSelector debug labelling', () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  let events: string[];
+
+  beforeEach(() => {
+    events = [];
+    setDebugSink((entry) => events.push(entry.event));
+    setDebugEnabled(true);
+  });
+
+  afterEach(() => {
+    __resetDebugForTest();
+    document.body.innerHTML = '';
+    delete (globalThis as Record<string, unknown>).chrome;
+    delete (globalThis as Record<string, unknown>).__freemid_presence_interval;
+    abortStoredSignal();
+  });
+
+  function start(): Presence {
+    // Presence.on() kicks off initDebugFlag(), which resolves the flag from
+    // storage — without a storage mock it throws, resolves to false, and
+    // silently disables the logging this suite is asserting on.
+    Object.defineProperty(globalThis, 'chrome', {
+      configurable: true,
+      value: {
+        runtime: {
+          id: 'test-extension',
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+        },
+        storage: {
+          local: { get: vi.fn().mockResolvedValue({ debugEnabled: true }) },
+          onChanged: { addListener: vi.fn() },
+        },
+      },
+    });
+    const presence = new Presence({
+      clientId: 'test',
+      updateIntervalMs: 60_000,
+    });
+    presence.on('UpdateData', vi.fn());
+    presence.watchSelector('.title', presence.freshSignal());
+    return presence;
+  }
+
+  it('reports attach when the element is present at injection', () => {
+    document.body.innerHTML =
+      '<div id="bar"><span class="title">A</span></div>';
+    const presence = start();
+
+    expect(events).toContain('observer-attach');
+    expect(events).not.toContain('observer-reattach');
+    presence.clearActivity();
+  });
+
+  it('reports attach-late when the element only appears afterwards', async () => {
+    document.body.innerHTML = '<div id="bar"></div>';
+    const presence = start();
+    events.length = 0;
+
+    (document.getElementById('bar') as HTMLElement).innerHTML =
+      '<span class="title">A</span>';
+    await flush();
+
+    // Not a re-render — the element simply had not rendered yet.
+    expect(events).toContain('observer-attach-late');
+    expect(events).not.toContain('observer-reattach');
+    presence.clearActivity();
+  });
+
+  it('reports reattach only when a live element is swapped out', async () => {
+    document.body.innerHTML =
+      '<div id="bar"><span class="title">A</span></div>';
+    const presence = start();
+    events.length = 0;
+
+    (document.getElementById('bar') as HTMLElement).innerHTML =
+      '<span class="title">B</span>';
+    await flush();
+
+    // This is the SPA re-render that used to kill track detection silently,
+    // and it must be distinguishable from the other two in a trace.
+    expect(events).toContain('observer-reattach');
+    expect(events).not.toContain('observer-attach-late');
+    presence.clearActivity();
+  });
+});
+
 describe('Presence.freshSignal', () => {
   afterEach(() => {
-    delete (globalThis as Record<string, unknown>).__freemid_events_abort;
+    abortStoredSignal();
   });
 
   it('returns a signal that is not yet aborted', () => {

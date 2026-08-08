@@ -79,6 +79,45 @@
         font-variant-numeric: tabular-nums;
       }
 
+      .debug-help {
+        color: var(--text-1);
+        font-size: 13px;
+        margin-bottom: 14px;
+      }
+      .debug-toggle {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 13px;
+        color: var(--text-0);
+        cursor: pointer;
+        margin-bottom: 14px;
+      }
+      .debug-toggle input { accent-color: var(--accent); cursor: pointer; }
+      .debug-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      .btn-debug {
+        border: 1px solid var(--border);
+        background: var(--bg-2);
+        color: var(--text-1);
+        font-size: 12px;
+        font-weight: 600;
+        padding: 7px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+      }
+      .btn-debug:hover:not(:disabled) {
+        background: var(--accent-soft);
+        color: var(--text-0);
+      }
+      .btn-debug:disabled { opacity: 0.45; cursor: default; }
+      .debug-status {
+        margin-top: 12px;
+        font-size: 12px;
+        color: var(--text-2);
+        font-variant-numeric: tabular-nums;
+      }
+
       .danger-zone { border-color: rgba(237, 66, 69, 0.35); }
       .danger-zone p {
         color: var(--text-1);
@@ -117,6 +156,32 @@
           <span class="about-row-label">Native host version</span>
           <span class="about-row-value" id="host-version">Not connected</span>
         </div>
+      </section>
+
+      <section class="debug">
+        <div class="section-label">Debug logging</div>
+        <p class="debug-help">
+          Records a timestamped trace from the page, the service worker and the
+          popup into one buffer, so a whole event can be exported at once
+          instead of collected from three separate consoles. Off by default;
+          leave it off unless you are chasing something.
+        </p>
+        <label class="debug-toggle">
+          <input type="checkbox" id="debug-enabled" />
+          <span>Enable debug logging</span>
+        </label>
+        <div class="debug-actions">
+          <button type="button" class="btn-debug" id="btn-debug-copy">
+            Copy log
+          </button>
+          <button type="button" class="btn-debug" id="btn-debug-download">
+            Download
+          </button>
+          <button type="button" class="btn-debug" id="btn-debug-clear">
+            Clear
+          </button>
+        </div>
+        <div class="debug-status" id="debug-status">No entries recorded.</div>
       </section>
 
       <section class="danger-zone">

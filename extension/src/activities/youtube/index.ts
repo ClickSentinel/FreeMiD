@@ -6,7 +6,6 @@ import { PlaybackAnchor } from '../../utils/PlaybackAnchor';
 // Create a free app at https://discord.com/developers/applications
 const presence = new Presence({
   clientId: import.meta.env.VITE_DISCORD_CLIENT_ID,
-  updateInterval: 5,
 });
 
 const anchor = new PlaybackAnchor();

@@ -10,6 +10,9 @@
  * chrome.runtime.sendMessage.
  */
 
+import { ACTIVITY_TICK_MS } from '../constants/timing';
+import { debugLog, initDebugFlag } from '../debug/log';
+
 export interface PresenceData {
   /** Override the Discord Application ID for per-activity artwork */
   applicationId?: string;
@@ -38,11 +41,15 @@ interface PresenceConfig {
   /** Discord Application (client) ID */
   clientId: string;
   /**
-   * How often (seconds) the UpdateData handler is called.
-   * Minimum 1 s. Default 10 s.
+   * How often (milliseconds) the UpdateData handler is called.
+   * Defaults to ACTIVITY_TICK_MS — activities should not override this without
+   * a reason, so that every site shares one cadence (see docs/TIMERS.md).
    */
-  updateInterval?: number;
+  updateIntervalMs?: number;
 }
+
+/** What drove the in-flight tick, for debug attribution. */
+let tickSource = 'interval';
 
 export class Presence {
   private readonly clientId: string;
@@ -51,9 +58,12 @@ export class Presence {
   private scheduledCallback: (() => void) | undefined;
   private pendingTriggerTimers: ReturnType<typeof setTimeout>[] = [];
 
-  constructor({ clientId, updateInterval = 10 }: PresenceConfig) {
+  constructor({
+    clientId,
+    updateIntervalMs = ACTIVITY_TICK_MS,
+  }: PresenceConfig) {
     this.clientId = clientId;
-    this.updateIntervalMs = Math.max(1, updateInterval) * 1000;
+    this.updateIntervalMs = Math.max(1_000, updateIntervalMs);
   }
 
   /**
@@ -91,6 +101,8 @@ export class Presence {
     // script world, so we can use it to stop the previous interval before
     // starting a new one — preventing two instances from racing each other
     // with conflicting anchor state.
+    void initDebugFlag();
+
     const GUARD_KEY = '__freemid_presence_interval';
     const prevId = (globalThis as Record<string, unknown>)[GUARD_KEY] as
       | ReturnType<typeof setInterval>
@@ -107,6 +119,11 @@ export class Presence {
         (globalThis as Record<string, unknown>)[GUARD_KEY] = undefined;
         return;
       }
+      // Heartbeat for the background's liveness probe: an orphaned script
+      // stops ticking at the context check above, so a stale stamp means dead.
+      (globalThis as Record<string, unknown>).__freemid_last_tick = Date.now();
+      debugLog('presence', 'tick', { source: tickSource });
+      tickSource = 'interval';
       void Promise.resolve(callback());
     };
 
@@ -119,6 +136,13 @@ export class Presence {
   /** Push presence data to Discord via the background service worker */
   setActivity(data: PresenceData): void {
     if (!this.isContextValid()) return;
+    debugLog('presence', 'set-activity', {
+      details: data.details,
+      album: data.largeImageText,
+      // The artwork key carries the video id, which is what lets a trace show
+      // whether the id and the title actually belong to the same track.
+      art: data.largeImageKey,
+    });
 
     const activity = {
       application_id: data.applicationId ?? this.clientId,
@@ -165,7 +189,8 @@ export class Presence {
    * interval tick. Used by event-driven observers (MutationObserver, play/pause
    * events) in activity scripts to push updates as soon as the DOM changes.
    */
-  triggerUpdate(): void {
+  triggerUpdate(source = 'trigger'): void {
+    tickSource = source;
     this.scheduledCallback?.();
   }
 
@@ -177,8 +202,9 @@ export class Presence {
    */
   scheduleTrigger(...delays: number[]): void {
     this.clearPendingTriggers();
+    debugLog('presence', 'schedule-trigger', { delays });
     this.pendingTriggerTimers = delays.map((d) =>
-      setTimeout(() => this.triggerUpdate(), d),
+      setTimeout(() => this.triggerUpdate(`settle:${d}ms`), d),
     );
   }
 
@@ -220,32 +246,61 @@ export class Presence {
     signal: AbortSignal,
     options?: { observeAttributes?: boolean; attributeFilter?: string[] },
   ): void {
-    const connect = (el: Element): void => {
-      const obs = new MutationObserver(() => this.triggerUpdate());
-      obs.observe(el, {
+    let observed: Element | null = null;
+    let elementObserver: MutationObserver | null = null;
+
+    /**
+     * Three distinguishable cases, and the trace has to tell them apart:
+     * `attach` is the element being there at injection, `attach-late` is it
+     * turning up afterwards, and `reattach` is it being swapped out from
+     * under a live observer — only the last is the SPA re-render that used to
+     * kill track detection silently.
+     */
+    const connect = (
+      el: Element,
+      reason: 'attach' | 'attach-late' | 'reattach',
+    ): void => {
+      debugLog('presence', `observer-${reason}`, { selector });
+      elementObserver?.disconnect();
+      observed = el;
+      elementObserver = new MutationObserver(() =>
+        this.triggerUpdate('observer'),
+      );
+      elementObserver.observe(el, {
         characterData: true,
         childList: true,
         subtree: true,
         attributes: options?.observeAttributes,
         attributeFilter: options?.attributeFilter,
       });
-      signal.addEventListener('abort', () => obs.disconnect());
     };
 
+    // The body watcher runs for the whole life of the activity, not just until
+    // the element first appears. SPAs like YouTube Music re-render the player
+    // bar and replace the observed node; without re-attachment the observer is
+    // left watching a detached element and silently stops reporting track
+    // changes, leaving the periodic tick as the only update path.
+    const rewatch = new MutationObserver(() => {
+      // Fast path: a live node needs nothing. This runs on every childList
+      // mutation in the page, so it must stay cheaper than a selector query.
+      if (observed?.isConnected) return;
+      const found = document.querySelector(selector);
+      if (!found || found === observed) return;
+      const reason = observed === null ? 'attach-late' : 'reattach';
+      connect(found, reason);
+      // The swap itself usually *is* the state change we care about, and the
+      // mutation that carried it landed before we were attached.
+      this.triggerUpdate(`observer-${reason}`);
+    });
+    rewatch.observe(document.body, { childList: true, subtree: true });
+
+    signal.addEventListener('abort', () => {
+      rewatch.disconnect();
+      elementObserver?.disconnect();
+    });
+
     const el = document.querySelector(selector);
-    if (el) {
-      connect(el);
-    } else {
-      const watcher = new MutationObserver(() => {
-        const found = document.querySelector(selector);
-        if (found) {
-          watcher.disconnect();
-          connect(found);
-        }
-      });
-      watcher.observe(document.body, { childList: true, subtree: true });
-      signal.addEventListener('abort', () => watcher.disconnect());
-    }
+    if (el) connect(el, 'attach');
   }
 
   /**
