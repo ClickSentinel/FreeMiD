@@ -6,6 +6,7 @@ describe('ACTIVITY_REGISTRY', () => {
   it('contains the expected activity IDs', () => {
     expect(Object.keys(ACTIVITY_REGISTRY).sort()).toEqual([
       'applemusic',
+      'soundcloud',
       'tidal',
       'youtube',
       'youtubemusic',
@@ -32,6 +33,15 @@ describe('ACTIVITY_REGISTRY', () => {
   it('keeps the expected Apple Music match pattern', () => {
     expect(ACTIVITY_REGISTRY.applemusic.matches).toEqual([
       '*://music.apple.com/*',
+    ]);
+  });
+
+  it('keeps the expected SoundCloud match patterns', () => {
+    // The subdomain pattern covers m.soundcloud.com and on.soundcloud.com,
+    // both of which serve the same player.
+    expect(ACTIVITY_REGISTRY.soundcloud.matches).toEqual([
+      '*://soundcloud.com/*',
+      '*://*.soundcloud.com/*',
     ]);
   });
 });

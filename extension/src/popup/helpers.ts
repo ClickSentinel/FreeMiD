@@ -38,6 +38,8 @@ export function fallbackLogoPath(act: ActivityPreview): string | null {
   const service =
     `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();
   if (service.includes('tidal')) return PRESENCE_PREVIEW_ASSETS.tidalLogo;
+  if (service.includes('soundcloud'))
+    return PRESENCE_PREVIEW_ASSETS.soundcloudLogo;
   if (service.includes('apple music'))
     return PRESENCE_PREVIEW_ASSETS.appleMusicLogo;
   if (service.includes('youtube music') || service.includes('yt music'))

@@ -9,6 +9,7 @@ describe('presence assets', () => {
       tidalLogo: 'tidal-logo-1024',
       ytmusicLogo: 'ytmusic-logo-1024',
       appleMusicLogo: 'applemusic-logo-1024',
+      soundcloudLogo: 'soundcloud-logo-1024',
     });
   });
 
@@ -18,6 +19,7 @@ describe('presence assets', () => {
       tidalLogo: 'icons/tidal-logo-1024.png',
       ytmusicLogo: 'icons/ytmusic-logo-1024.png',
       appleMusicLogo: 'icons/applemusic-logo-1024.png',
+      soundcloudLogo: 'icons/soundcloud-logo-1024.png',
     });
   });
 });

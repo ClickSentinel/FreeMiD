@@ -88,6 +88,7 @@ let enabledSites: Record<string, boolean> = {
   youtubemusic: true,
   tidal: true,
   applemusic: true,
+  soundcloud: true,
 };
 let hostVersion: string | null = null;
 let hostSelfUpdateSupported: boolean | null = null;
