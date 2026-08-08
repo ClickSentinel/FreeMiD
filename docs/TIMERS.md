@@ -271,7 +271,9 @@ What to look for when a skip felt slow:
 
 | Line | Means |
 | --- | --- |
-| `observer-reattach` | The player-bar node was replaced — the bug this work fixed, now recovering. |
+| `observer-attach` | The observed node was present when the activity injected. |
+| `observer-attach-late` | It only rendered afterwards; the body watcher picked it up. |
+| `observer-reattach` | A live node was swapped out — the SPA re-render that used to kill track detection silently. |
 | `tick {"source":"interval"}` as the *first* line of a track change | The observer missed it; the 5 s backstop caught it instead. |
 | `throttle-defer` with a large `inMs` | Working as designed — Discord's rate limit, not a bug. |
 | `snapshot-withheld` `{reason:"identity"}` | The video id and the title disagree — one moved first. |

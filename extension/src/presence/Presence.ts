@@ -249,14 +249,18 @@ export class Presence {
     let observed: Element | null = null;
     let elementObserver: MutationObserver | null = null;
 
-    const connect = (el: Element): void => {
-      debugLog(
-        'presence',
-        observed === null ? 'observer-attach' : 'observer-reattach',
-        {
-          selector,
-        },
-      );
+    /**
+     * Three distinguishable cases, and the trace has to tell them apart:
+     * `attach` is the element being there at injection, `attach-late` is it
+     * turning up afterwards, and `reattach` is it being swapped out from
+     * under a live observer — only the last is the SPA re-render that used to
+     * kill track detection silently.
+     */
+    const connect = (
+      el: Element,
+      reason: 'attach' | 'attach-late' | 'reattach',
+    ): void => {
+      debugLog('presence', `observer-${reason}`, { selector });
       elementObserver?.disconnect();
       observed = el;
       elementObserver = new MutationObserver(() =>
@@ -282,10 +286,11 @@ export class Presence {
       if (observed?.isConnected) return;
       const found = document.querySelector(selector);
       if (!found || found === observed) return;
-      connect(found);
+      const reason = observed === null ? 'attach-late' : 'reattach';
+      connect(found, reason);
       // The swap itself usually *is* the state change we care about, and the
       // mutation that carried it landed before we were attached.
-      this.triggerUpdate('observer-reattach');
+      this.triggerUpdate(`observer-${reason}`);
     });
     rewatch.observe(document.body, { childList: true, subtree: true });
 
@@ -295,7 +300,7 @@ export class Presence {
     });
 
     const el = document.querySelector(selector);
-    if (el) connect(el);
+    if (el) connect(el, 'attach');
   }
 
   /**
