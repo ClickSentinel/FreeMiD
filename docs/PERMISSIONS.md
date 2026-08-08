@@ -52,6 +52,26 @@ btn.addEventListener('click', () => {
 Reading DOM state synchronously beforehand is fine. Reading `chrome.storage`,
 awaiting a `sendMessage`, or checking `permissions.contains()` first is not.
 
+## What the user sees
+
+A site awaiting a grant renders as a **"Grant"** action rather than an off
+switch, and reverts to an ordinary toggle once granted.
+
+Without that it reads as a broken or beta feature — the row sits off while
+every neighbour sits on, and clicking it raises a Chrome dialog the user had no
+reason to expect. Naming the action makes the prompt something they asked for.
+
+The grant state is read with `permissions.contains()` when the popup opens.
+That is independent of the background status round-trip, since the answer lives
+in Chrome rather than in the worker. An unreadable permission state is treated
+as granted: showing a real toggle that does nothing is a smaller failure than
+hiding a working site behind a prompt that never resolves.
+
+The row also stops advertising itself as a switch while it is an action —
+`role="button"` and no `aria-checked`, so assistive tech does not read "off"
+for something that was never a switch. `setToggle()` skips these rows so the
+render loop cannot relabel them back.
+
 ## Behaviour notes
 
 - **Declining** leaves the toggle untouched. The visual state is driven by the

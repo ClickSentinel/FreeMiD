@@ -402,9 +402,12 @@ function wireSiteToggle(btn: HTMLButtonElement | null, siteId: string): void {
       chrome.permissions
         .request({ origins })
         .then((granted) => {
-          // Declined: leave the toggle alone. Nothing has changed yet — the
+          // Declined: leave the row alone. Nothing has changed yet — the
           // visual state is driven by the background's broadcast, not here.
-          if (granted) applySiteEnabled(siteId, true);
+          if (!granted) return;
+          applySiteEnabled(siteId, true);
+          // Turn the grant action back into an ordinary switch.
+          void refreshGrantAffordances();
         })
         .catch(() => {});
       return;
@@ -592,7 +595,58 @@ function setImageEl(el: HTMLImageElement, url: string | null): void {
 }
 
 function setToggle(btn: HTMLButtonElement | null, checked: boolean): void {
+  // A row still awaiting a permission grant is an action, not a switch — the
+  // render loop must not relabel it back into one.
+  if (btn?.classList.contains('needs-grant')) return;
   btn?.setAttribute('aria-checked', String(checked));
+}
+
+/**
+ * Show sites whose host access has not been granted yet as a "Grant" action
+ * rather than an off switch.
+ *
+ * Without this the row reads as a broken or beta feature: it sits off while
+ * every neighbour sits on, and clicking it raises a Chrome dialog the user had
+ * no reason to expect. Naming the action makes the prompt something they asked
+ * for.
+ */
+async function refreshGrantAffordances(): Promise<void> {
+  for (const { el, siteId } of siteToggles) {
+    const origins = optionalOriginsFor(siteId);
+    if (!el || !origins) continue;
+
+    let granted = false;
+    try {
+      granted = await chrome.permissions.contains({ origins });
+    } catch {
+      // Treat an unreadable permission state as granted: showing a real toggle
+      // that does nothing is a smaller failure than hiding a working site
+      // behind a grant prompt that never resolves.
+      granted = true;
+    }
+
+    el.classList.toggle('needs-grant', !granted);
+    if (granted) {
+      el.setAttribute('role', 'switch');
+      el.querySelector('.grant-label')?.remove();
+      el.title = el.dataset.toggleTitle ?? el.title;
+      continue;
+    }
+
+    // Announce it as the action it is, and drop the switch state so assistive
+    // tech does not read "off" for something that was never a switch.
+    el.setAttribute('role', 'button');
+    el.removeAttribute('aria-checked');
+    el.dataset.toggleTitle ??= el.title;
+    el.title = `Grant access so FreeMiD can read this site`;
+    if (!el.querySelector('.grant-label')) {
+      const labelEl = document.createElement('span');
+      labelEl.className = 'grant-label';
+      labelEl.textContent = 'Grant';
+      el.appendChild(labelEl);
+    }
+  }
+  updateServicesCount();
 }
 
 function finaliseFirstRender(): void {
@@ -986,3 +1040,6 @@ async function fetchStatus(retriesLeft = 4, intervalMs = 700): Promise<void> {
 }
 
 void fetchStatus();
+// Independent of the status round-trip: the grant state lives in Chrome, not
+// in the background worker, so there is nothing to wait for.
+void refreshGrantAffordances();
