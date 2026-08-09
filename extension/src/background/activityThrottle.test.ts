@@ -4,12 +4,18 @@ import { ActivityThrottle, activitySummary } from './activityThrottle';
 
 const INTERVAL = 5_000;
 
+const RESEND = 60_000;
+
 function makeThrottle(sends: object[] = []) {
   const send = vi.fn((activity: object) => {
     sends.push(activity);
     return { ok: true };
   });
-  return { throttle: new ActivityThrottle(send, INTERVAL), send, sends };
+  return {
+    throttle: new ActivityThrottle(send, INTERVAL, RESEND),
+    send,
+    sends,
+  };
 }
 
 const track = (title: string) => ({ details: title, state: 'by Someone' });
@@ -204,6 +210,51 @@ describe('ActivityThrottle', () => {
       send,
       'the same payload must go out again after a reset',
     ).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-sends an unchanged payload once the belief goes stale', () => {
+    // Nothing reports that Discord dropped our presence — it restarts, the host
+    // restarts, another RPC client writes over us. A static payload (a long
+    // video, not a track that changes in minutes) would otherwise never be
+    // sent again, which is exactly how presence went missing in practice.
+    const { throttle, send } = makeThrottle();
+    throttle.push(track('A'));
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // Well past the throttle, still inside the resend window: stays deduped.
+    vi.advanceTimersByTime(INTERVAL * 3);
+    throttle.push(track('A'));
+    expect(send).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(RESEND);
+    throttle.push(track('A'));
+    expect(send, 'a stale belief must be refreshed').toHaveBeenCalledTimes(2);
+  });
+
+  it('restarts the staleness window after each re-send', () => {
+    const { throttle, send } = makeThrottle();
+    throttle.push(track('A'));
+
+    vi.advanceTimersByTime(RESEND + 1);
+    throttle.push(track('A'));
+    expect(send).toHaveBeenCalledTimes(2);
+
+    // Immediately after, the refreshed belief holds again.
+    vi.advanceTimersByTime(INTERVAL * 2);
+    throttle.push(track('A'));
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps re-sends within the rate limit', () => {
+    // The periodic refresh must not become a second source of send pressure.
+    const { throttle, send } = makeThrottle();
+    for (let i = 0; i < 120; i += 1) {
+      throttle.push(track('A'));
+      vi.advanceTimersByTime(5_000); // 10 minutes of unchanged ticks
+    }
+    // 10 minutes at a 60 s refresh is ~10 sends, nowhere near 5 per 20 s.
+    expect(send.mock.calls.length).toBeLessThanOrEqual(12);
+    expect(send.mock.calls.length).toBeGreaterThan(1);
   });
 
   it('never exceeds the Discord rate limit under sustained pressure', () => {

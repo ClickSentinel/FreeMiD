@@ -93,6 +93,21 @@ export const TRACK_TRANSITION_HOLD_MS = 600;
 export const DISCORD_MIN_INTERVAL_MS = 5_000;
 
 /**
+ * How long an unchanged payload stays deduped before being sent again.
+ *
+ * Dedup assumes Discord still shows what we last sent, and nothing tells us
+ * when that stops being true: Discord restarting, the host restarting, or
+ * another RPC client writing presence for the same application all leave the
+ * belief stale with no event to react to. A static payload — a long video
+ * rather than a track that will change in a few minutes — then stays
+ * suppressed indefinitely.
+ *
+ * Re-sending on a slow cycle bounds recovery from any of those at one minute.
+ * Against Discord's ~5 per 20 s that costs effectively nothing.
+ */
+export const PRESENCE_RESEND_INTERVAL_MS = 60_000;
+
+/**
  * Debounce before telling the popup that the visible track changed, so the
  * settle refinements above collapse into one UI update instead of three.
  * Purely cosmetic — it never delays what reaches Discord.

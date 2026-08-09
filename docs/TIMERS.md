@@ -136,8 +136,14 @@ consistently longer windows at every stage — the binary swap goes through
 
 1. Reject if `paused`, the site toggle is off, or another source holds
    `presenceHolder`.
-2. **Dedup** — byte-identical to `lastSentActivityJson` → drop, and cancel any
-   pending flush (the A→B→A case).
+2. **Dedup** — byte-identical to `lastSentActivityJson` *and* sent within
+   `PRESENCE_RESEND_INTERVAL_MS` → drop, and cancel any pending flush (the
+   A→B→A case). Past that window the payload is re-sent even unchanged:
+   nothing reports that Discord has dropped our presence — it restarts, the
+   host restarts, another RPC client writes over the same application — so the
+   belief has to expire rather than be trusted indefinitely. A static payload
+   (a long video, not a track that changes in minutes) would otherwise stay
+   suppressed for as long as it plays.
 3. **Throttle** — inside the 5 s window → stash in `pendingActivityPayload` and
    arm the flush timer for the remainder. An already-armed timer is *not*
    rescheduled; its payload is replaced, so it fires at its original time.

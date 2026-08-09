@@ -8,7 +8,10 @@
  * (native port, listeners, alarms) that make it untestable in place.
  */
 
-import { DISCORD_MIN_INTERVAL_MS } from '../constants/timing';
+import {
+  DISCORD_MIN_INTERVAL_MS,
+  PRESENCE_RESEND_INTERVAL_MS,
+} from '../constants/timing';
 import { debugLog } from '../debug/log';
 
 /** Outcome of handing a payload to the native host. */
@@ -47,26 +50,36 @@ export class ActivityThrottle {
   constructor(
     private readonly send: SendActivity,
     private readonly minIntervalMs: number = DISCORD_MIN_INTERVAL_MS,
+    private readonly resendAfterMs: number = PRESENCE_RESEND_INTERVAL_MS,
   ) {}
 
   /** Offer a payload. It is sent now, coalesced into a pending flush, or dropped. */
   push(activity: object): void {
     const json = JSON.stringify(activity);
 
-    // Nothing changed since the last successful send. If a flush is pending
-    // with a different payload and we have just returned to the previously-sent
-    // state (A -> B -> A), that flush would deliver stale data — drop it too.
-    if (json === this.lastSentJson) {
+    const sinceSent = Date.now() - this.lastSentAt;
+    const unchanged = json === this.lastSentJson;
+
+    // Nothing changed since the last successful send — but only trust that
+    // while the belief is fresh. Nothing reports that Discord has dropped our
+    // presence: it restarts, the host restarts, another RPC client writes over
+    // us, and none of those produce an event. A static payload would otherwise
+    // stay suppressed forever, so it is re-sent on a slow cycle.
+    //
+    // Dropping the update also cancels any pending flush: if we have just
+    // returned to the previously-sent state (A -> B -> A), that flush would
+    // deliver stale data.
+    if (unchanged && sinceSent < this.resendAfterMs) {
       debugLog('bg', 'dedup-skip', {
         cancelledPendingFlush: this.pendingTimer !== null,
       });
       this.clearPending();
       return;
     }
+    if (unchanged) debugLog('bg', 'resend-stale', { sinceSentMs: sinceSent });
 
-    const elapsed = Date.now() - this.lastSentAt;
-    if (elapsed < this.minIntervalMs) {
-      const inMs = this.minIntervalMs - elapsed;
+    if (sinceSent < this.minIntervalMs) {
+      const inMs = this.minIntervalMs - sinceSent;
       this.pendingPayload = activity;
       debugLog('bg', 'throttle-defer', {
         inMs,

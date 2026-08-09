@@ -8,6 +8,7 @@ import {
   KEEPALIVE_PERIOD_MINUTES,
   KEEPALIVE_PERIOD_MS,
   METADATA_SETTLE_DELAYS_MS,
+  PRESENCE_RESEND_INTERVAL_MS,
   RECONNECT_BUTTON_COOLDOWN_MS,
   SNAPSHOT_SETTLE_MS,
   TRACK_TRANSITION_HOLD_MS,
@@ -34,6 +35,16 @@ describe('timing invariants', () => {
     ];
     expect(TRACK_TRANSITION_HOLD_MS).toBeGreaterThan(firstSettle);
     expect(TRACK_TRANSITION_HOLD_MS).toBeLessThan(lastSettle);
+  });
+
+  it('refreshes a stale presence belief without becoming send pressure', () => {
+    // Far enough above the throttle that the periodic refresh is negligible
+    // against Discord's limit, but short enough that recovery from a desync is
+    // measured in a minute rather than the length of a video.
+    expect(PRESENCE_RESEND_INTERVAL_MS).toBeGreaterThan(
+      DISCORD_MIN_INTERVAL_MS * 5,
+    );
+    expect(PRESENCE_RESEND_INTERVAL_MS).toBeLessThanOrEqual(120_000);
   });
 
   it('keeps the keepalive period inside the usable window', () => {
