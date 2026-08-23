@@ -6,7 +6,6 @@ import { urlLike } from '../../utils/urlLike';
 
 const presence = new Presence({
   clientId: import.meta.env.VITE_DISCORD_CLIENT_ID,
-  updateInterval: 5,
 });
 
 const anchor = new PlaybackAnchor();

@@ -95,7 +95,7 @@ CI also checks that the default extension ID in `install/install.sh`, `install/i
 
 **Data flow (content → Discord):**
 
-1. An activity content script (e.g. `src/activities/youtubemusic/index.ts`) runs inside the page. It constructs a `Presence` instance, registers an `UpdateData` handler (called every ~10 s), and calls `presence.setActivity()`.
+1. An activity content script (e.g. `src/activities/youtubemusic/index.ts`) runs inside the page. It constructs a `Presence` instance, registers an `UpdateData` handler (called every `ACTIVITY_TICK_MS`, plus on DOM/media events), and calls `presence.setActivity()`. Activities never defer a send — they push their best current snapshot and let the background coalesce. All timing values come from `src/constants/timing.ts`; see `docs/TIMERS.md`.
 2. `Presence.setActivity()` sends a `FREEMID_SET_ACTIVITY` message to the background service worker via `chrome.runtime.sendMessage`.
 3. The background service worker (`background/index.ts`) receives it and calls `sendToHost({ type: "SET_ACTIVITY", activity })` over the native messaging port.
 4. The Rust native host (`native-host/src/main.rs`) receives this on stdin, deserializes it, and calls `DiscordIpc::set_activity()`.

@@ -8,6 +8,8 @@ describe('STORAGE_KEYS', () => {
       paused: 'paused',
       enabledSites: 'enabledSites',
       latestVersion: 'latestVersion',
+      debugEnabled: 'debugEnabled',
+      debugLog: 'debugLog',
     });
   });
 });

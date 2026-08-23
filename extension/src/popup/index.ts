@@ -1,5 +1,14 @@
 import { compareVersions, isUpdateInProgress } from '../background/helpers';
 import { githubRepoUrl } from '../constants/github';
+import {
+  DISCORD_CHECK_DELAY_MS as DEFAULT_DISCORD_CHECK_DELAY_MS,
+  HOST_CHECK_DELAY_MS,
+  POPUP_RECONNECT_POLL_MS,
+  POPUP_TIMELINE_TICK_MS,
+  POPUP_UPTIME_TICK_MS,
+  RECONNECT_BUTTON_COOLDOWN_MS,
+  RECONNECT_UI_GRACE_MS,
+} from '../constants/timing';
 import { urlLike } from '../utils/urlLike';
 import {
   artistFromActivity,
@@ -113,8 +122,6 @@ let hasRevealedToggles = false;
 let reconnectGraceUntilMs: number | null = null;
 let reconnectSawDisconnect = false;
 let reconnectPollTimer: ReturnType<typeof setInterval> | null = null;
-const RECONNECT_UI_GRACE_MS = 15_000;
-const RECONNECT_BUTTON_COOLDOWN_MS = 15_000;
 let reconnectButtonUnlockAtMs = 0;
 
 // ── Uptime ────────────────────────────────────────────────────────────────────
@@ -135,14 +142,14 @@ const parsedDiscordCheckDelay = Number.parseInt(
 const DISCORD_CHECK_DELAY_MS =
   Number.isFinite(parsedDiscordCheckDelay) && parsedDiscordCheckDelay > 0
     ? parsedDiscordCheckDelay
-    : 10000;
+    : DEFAULT_DISCORD_CHECK_DELAY_MS;
 let discordCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let discordCheckShown = false;
 // Debounce before revealing "Native host not installed" help panel, matching
 // the Discord check pattern. Prevents a false flash during post-update reconnect
 // when lastError carries a stale Chrome port error but the host is about to
 // come back up.
-const HOST_CHECK_DELAY_MS = 2000;
+
 let hostCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let hostCheckShown = false;
 
@@ -164,7 +171,7 @@ function updateUptimeDisplay(): void {
 
 function startUptimeTick(): void {
   if (uptimeInterval) return;
-  uptimeInterval = setInterval(updateUptimeDisplay, 10_000);
+  uptimeInterval = setInterval(updateUptimeDisplay, POPUP_UPTIME_TICK_MS);
 }
 
 function stopUptimeTick(): void {
@@ -279,7 +286,7 @@ function updateTimelineDisplay(): void {
 
 function startTimelineTick(): void {
   if (timelineInterval) return;
-  timelineInterval = setInterval(updateTimelineDisplay, 1000);
+  timelineInterval = setInterval(updateTimelineDisplay, POPUP_TIMELINE_TICK_MS);
   updateTimelineDisplay();
 }
 
@@ -316,7 +323,7 @@ reconnectBtn?.addEventListener('click', async () => {
   if (!reconnectPollTimer) {
     reconnectPollTimer = setInterval(() => {
       void fetchStatus(0);
-    }, 700);
+    }, POPUP_RECONNECT_POLL_MS);
   }
 
   const res = (await chrome.runtime.sendMessage({ type: 'RECONNECT_HOST' })) as

@@ -13,6 +13,30 @@
 import { GITHUB_REPO } from '../constants/github';
 import { SESSION_KEYS, STORAGE_KEYS } from '../constants/storageKeys';
 import {
+  ACTIVITY_HEARTBEAT_STALE_MS,
+  APPLY_VERIFY_INTERVAL_MS,
+  HOST_VERSION_CHECK_PERIOD_MINUTES,
+  KEEPALIVE_PERIOD_MINUTES,
+  POPUP_BROADCAST_DEBOUNCE_MS,
+  UPDATE_CHECK_DELAY_MINUTES,
+  UPDATE_CHECK_PERIOD_MINUTES,
+  UPDATE_TIMING,
+} from '../constants/timing';
+import {
+  appendDebugEntry,
+  clearDebugEntries,
+  getDebugEntries,
+  initDebugBuffer,
+} from '../debug/buffer';
+import {
+  DEBUG_MESSAGE_TYPE,
+  type DebugEntry,
+  debugLog,
+  initDebugFlag,
+  isDebugEnabled,
+} from '../debug/log';
+import { ActivityThrottle, activitySummary } from './activityThrottle';
+import {
   compareVersions,
   isHostSelfUpdateSupported,
   isUpdateAvailableForHost,
@@ -99,14 +123,10 @@ let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
 let reconnectCooldownUntilMs = 0;
 let presenceHolder: string | null = null; // sourceId that currently holds the Discord presence lock
-let lastSentActivityJson: string | null = null; // last payload sent to Discord; skip if identical
-// Discord rate-limits SET_ACTIVITY to ~5 per 20 s. We enforce a 5 s minimum
-// between sends (4/20 s) to stay safely below it. Rapid song skips schedule a
-// trailing flush so the final settled song always reaches Discord.
-const DISCORD_MIN_INTERVAL_MS = 5_000;
-let lastActivitySentAt = 0;
-let pendingActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingActivityPayload: object | null = null;
+// This worker is the only place that defers a presence update. Activities push
+// their best current snapshot as soon as they have one and never hold anything
+// back, so the throttle below is the single rate limiter in the pipeline —
+// see DISCORD_MIN_INTERVAL_MS in constants/timing.ts and docs/TIMERS.md.
 let activityBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
 // Desktop apps reachable via the native host's SMTC bridge (see
 // native-host/src/smtc.rs KNOWN_APPS — the `app` id here must match).
@@ -176,23 +196,16 @@ function lookupArtworkCached(
   return pending;
 }
 
-const APPLY_VERIFY_INTERVAL_MS = 1000;
-const APPLY_VERIFY_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 130000 : 30000;
-const UPDATE_REQUEST_TIMEOUT_MS = IS_WINDOWS_PLATFORM ? 12000 : 8000;
-const POST_UPDATE_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 150;
-const DISCONNECT_RECONNECT_DELAY_MS = IS_WINDOWS_PLATFORM ? 5000 : 400;
-const RECONNECT_REQUEST_COOLDOWN_MS = IS_WINDOWS_PLATFORM ? 15000 : 8000;
-const RECONNECT_CONFIG = IS_WINDOWS_PLATFORM
-  ? {
-      settleTimeoutMs: 12000,
-      manualRetryDelayMs: 700,
-      manualMaxAttempts: 12,
-    }
-  : {
-      settleTimeoutMs: 4000,
-      manualRetryDelayMs: 300,
-      manualMaxAttempts: 6,
-    };
+const RECONNECT_CONFIG =
+  UPDATE_TIMING[IS_WINDOWS_PLATFORM ? 'windows' : 'other'];
+const APPLY_VERIFY_TIMEOUT_MS = RECONNECT_CONFIG.applyVerifyTimeoutMs;
+const UPDATE_REQUEST_TIMEOUT_MS = RECONNECT_CONFIG.updateRequestTimeoutMs;
+const POST_UPDATE_RECONNECT_DELAY_MS =
+  RECONNECT_CONFIG.postUpdateReconnectDelayMs;
+const DISCONNECT_RECONNECT_DELAY_MS =
+  RECONNECT_CONFIG.disconnectReconnectDelayMs;
+const RECONNECT_REQUEST_COOLDOWN_MS =
+  RECONNECT_CONFIG.reconnectRequestCooldownMs;
 
 function clearApplyVerification(): void {
   if (disconnectReconnectTimer) {
@@ -336,7 +349,7 @@ function resetHostConnection(error?: string): void {
   // Release the desktop presence lock on disconnect: the native host process
   // is gone so no further DESKTOP_MEDIA events will arrive to release it
   // voluntarily, and the lock would otherwise block browser activities until
-  // the watcher re-pushes state after reconnect (~24 s via keepalive alarm).
+  // the watcher re-pushes state after reconnect (one keepalive alarm period).
   if (presenceHolder !== null && presenceHolder in DESKTOP_PRESENCE_TO_TOGGLE) {
     presenceHolder = null;
   }
@@ -787,36 +800,37 @@ function pollDesktopMediaForApp(appId: string): void {
 
 // ── Activity helpers ──────────────────────────────────────────────────────────
 
-function flushPendingActivity(): void {
-  pendingActivityFlushTimer = null;
-  const activity = pendingActivityPayload;
-  pendingActivityPayload = null;
-  if (activity === null) return;
-
-  const activityJson = JSON.stringify(activity);
-  if (activityJson === lastSentActivityJson) return;
-
-  lastActivitySentAt = Date.now();
-  lastSentActivityJson = activityJson;
-  sendToHost({ type: 'SET_ACTIVITY', activity });
-}
+const activityThrottle = new ActivityThrottle((activity) => {
+  const ok = sendToHost({ type: 'SET_ACTIVITY', activity });
+  return ok ? { ok } : { ok, error: lastError ?? undefined };
+});
 
 /**
  * Send Discord Rich Presence activity via the native host.
  * Pass siteId to enforce per-site enable/disable and pause state.
  */
 export function setActivity(activity: object, siteId?: string): void {
-  if (paused) return;
+  debugLog('bg', 'recv', { siteId, ...activitySummary(activity) });
+  if (paused) {
+    debugLog('bg', 'reject-paused');
+    return;
+  }
   // Desktop presence keys (e.g. 'tidal-desktop') share their web activity's
   // site toggle rather than having their own.
   const toggleKey =
     siteId !== undefined
       ? (DESKTOP_PRESENCE_TO_TOGGLE[siteId] ?? siteId)
       : siteId;
-  if (toggleKey !== undefined && !enabledSites[toggleKey]) return;
+  if (toggleKey !== undefined && !enabledSites[toggleKey]) {
+    debugLog('bg', 'reject-site-disabled', { toggleKey });
+    return;
+  }
   // Lock model: first playing source claims the lock; others are blocked until
   // the holder voluntarily releases via releasePresence().
-  if (presenceHolder !== null && presenceHolder !== siteId) return;
+  if (presenceHolder !== null && presenceHolder !== siteId) {
+    debugLog('bg', 'reject-lock-held', { holder: presenceHolder, siteId });
+    return;
+  }
   if (siteId !== undefined) presenceHolder = siteId;
 
   const a = activity as {
@@ -866,9 +880,9 @@ export function setActivity(activity: object, siteId?: string): void {
     : null;
 
   // Notify the popup when visible metadata changes. On a track change, debounce
-  // by 1100 ms so the 300 ms and 1000 ms UpdateData triggers consolidate into
-  // one broadcast — by 1000 ms mediaSession.album and barTimes are both settled.
-  // Same-track updates (seek, timestamp tick) broadcast immediately.
+  // past the last METADATA_SETTLE_DELAYS_MS refinement so they consolidate into
+  // one broadcast instead of three. Same-track updates (seek, timestamp tick)
+  // broadcast immediately. This is popup-only — it never gates Discord.
   if (JSON.stringify(nextActivity) !== JSON.stringify(lastActivity)) {
     const titleChanged = nextActivity?.title !== lastActivity?.title;
     lastActivity = nextActivity;
@@ -880,63 +894,21 @@ export function setActivity(activity: object, siteId?: string): void {
       activityBroadcastTimer = setTimeout(() => {
         activityBroadcastTimer = null;
         broadcastStatus();
-      }, 1100);
+      }, POPUP_BROADCAST_DEBOUNCE_MS);
     } else {
       broadcastStatus();
     }
   }
 
-  // Dedup: skip if nothing has changed since the last send.
-  // If a flush is pending with a different payload and we just returned to the
-  // previously-sent state (A→B→A), cancel that flush — it would send stale data.
-  const activityJson = JSON.stringify(activity);
-  if (activityJson === lastSentActivityJson) {
-    if (pendingActivityFlushTimer !== null) {
-      clearTimeout(pendingActivityFlushTimer);
-      pendingActivityFlushTimer = null;
-      pendingActivityPayload = null;
-    }
-    return;
-  }
-
-  // Throttle: enforce DISCORD_MIN_INTERVAL_MS between Discord IPC calls.
-  // If a pending flush already exists, replace its payload with this newer one
-  // (the timer keeps running — it fires at the originally scheduled time).
-  const elapsed = Date.now() - lastActivitySentAt;
-  if (elapsed < DISCORD_MIN_INTERVAL_MS) {
-    pendingActivityPayload = activity;
-    if (pendingActivityFlushTimer === null) {
-      pendingActivityFlushTimer = setTimeout(
-        flushPendingActivity,
-        DISCORD_MIN_INTERVAL_MS - elapsed,
-      );
-    }
-    return;
-  }
-
-  // Enough time has passed — send immediately.
-  if (pendingActivityFlushTimer !== null) {
-    clearTimeout(pendingActivityFlushTimer);
-    pendingActivityFlushTimer = null;
-    pendingActivityPayload = null;
-  }
-  lastActivitySentAt = Date.now();
-  lastSentActivityJson = activityJson;
-  sendToHost({ type: 'SET_ACTIVITY', activity });
+  activityThrottle.push(activity);
 }
 
 function cancelPendingActivityFlush(): void {
-  if (pendingActivityFlushTimer !== null) {
-    clearTimeout(pendingActivityFlushTimer);
-    pendingActivityFlushTimer = null;
-  }
+  activityThrottle.reset();
   if (activityBroadcastTimer !== null) {
     clearTimeout(activityBroadcastTimer);
     activityBroadcastTimer = null;
   }
-  pendingActivityPayload = null;
-  lastSentActivityJson = null;
-  lastActivitySentAt = 0;
 }
 
 export function clearActivity(): void {
@@ -963,6 +935,33 @@ function releasePresence(sourceId: string): void {
 /** Map of tabId → activityId for tabs that currently have a script injected. */
 const activeActivityTabs = new Map<number, string>();
 
+/**
+ * Whether an activity script is still alive in this tab.
+ *
+ * The activity stamps a heartbeat on every tick, and an orphaned script stops
+ * ticking at Presence's context check — so a stale stamp means dead, and this
+ * cannot be fooled by a leftover marker from a reloaded extension. Probing is
+ * far cheaper than re-injecting the bundle it would otherwise duplicate.
+ */
+async function hasLiveActivityScript(tabId: number): Promise<boolean> {
+  try {
+    const [probe] = await chrome.scripting.executeScript({
+      target: { tabId },
+      args: [ACTIVITY_HEARTBEAT_STALE_MS],
+      func: (maxAgeMs: number) => {
+        const last = (globalThis as Record<string, unknown>)
+          .__freemid_last_tick;
+        return typeof last === 'number' && Date.now() - last < maxAgeMs;
+      },
+    });
+    return probe?.result === true;
+  } catch {
+    // Tab gone, or no permission to probe it. Assume dead and inject: failing
+    // toward a working presence is better than failing toward none.
+    return false;
+  }
+}
+
 async function handleTabNavigation(
   tabId: number,
   url: string,
@@ -978,6 +977,20 @@ async function handleTabNavigation(
   const forceInject = options?.forceInject === true;
   if (!forceInject && activeActivityTabs.get(tabId) === meta.id) return;
 
+  // A forced inject means Chrome reported a completed navigation — but on an
+  // SPA it reports that for history navigations too, where the page context and
+  // the running content script both survive. Re-injecting there is not just
+  // waste: it resets the activity's module state, firing a spurious
+  // track-change and discarding the bookkeeping that suppresses stale
+  // snapshots. Ask the page instead of guessing which 'complete' events count.
+  if (forceInject && (await hasLiveActivityScript(tabId))) {
+    debugLog('bg', 'inject-skipped', { tabId, activity: meta.id });
+    // Still record the tab: after a service-worker restart the map is empty
+    // even though the script is alive, and the presence lock depends on it.
+    activeActivityTabs.set(tabId, meta.id);
+    return;
+  }
+
   // A web activity always takes priority over its desktop counterpart —
   // release the desktop lock so the web content script can claim it.
   const desktopApp = DESKTOP_APPS[meta.id];
@@ -986,6 +999,7 @@ async function handleTabNavigation(
   activeActivityTabs.set(tabId, meta.id);
 
   try {
+    debugLog('bg', 'inject', { tabId, activity: meta.id, forceInject });
     await chrome.scripting.executeScript({
       target: { tabId },
       files: [`activities/${meta.id}/index.js`],
@@ -1001,6 +1015,7 @@ async function handleTabNavigation(
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete' || !tab.url) return;
+  debugLog('bg', 'tab-complete', { tabId });
   // A completed navigation replaces the page context, so always re-inject
   // the activity script even if this tab is still on the same service.
   void handleTabNavigation(tabId, tab.url, { forceInject: true });
@@ -1115,11 +1130,39 @@ chrome.runtime.onMessage.addListener(
       } else {
         // Site was just re-enabled — immediately poll SMTC (if it's a known
         // desktop app) so presence restores without waiting for the next
-        // keepalive cycle (~24 s).
+        // keepalive cycle.
         pollDesktopMediaForApp(siteId);
       }
       broadcastStatus();
       return;
+    }
+
+    if (msg.type === DEBUG_MESSAGE_TYPE) {
+      // Forwarded from a content script or the popup. The flag is checked in
+      // the sending context, so anything arriving here is already wanted.
+      const entry = msg.entry as DebugEntry | undefined;
+      // Re-check locally: a content script that missed the disable broadcast
+      // could otherwise keep filling the buffer after the user turned it off.
+      if (isDebugEnabled() && entry && typeof entry.t === 'number') {
+        appendDebugEntry(entry);
+      }
+      return;
+    }
+
+    if (msg.type === 'GET_DEBUG_LOG') {
+      sendResponse({
+        entries: getDebugEntries(),
+        hostVersion,
+        hostRuntimeOs,
+        hostRuntimeArch,
+      });
+      return true;
+    }
+
+    if (msg.type === 'CLEAR_DEBUG_LOG') {
+      clearDebugEntries();
+      sendResponse({ ok: true });
+      return true;
     }
 
     if (msg.type === 'GET_STATUS') {
@@ -1137,7 +1180,7 @@ chrome.runtime.onMessage.addListener(
         }
         // Trigger an immediate desktop media poll for each known desktop app
         // when the popup opens, so there is no need to wait for the next
-        // keepalive alarm (~24 s).
+        // keepalive alarm.
         for (const appId of Object.keys(DESKTOP_APPS)) {
           pollDesktopMediaForApp(appId);
         }
@@ -1205,8 +1248,12 @@ chrome.runtime.onMessage.addListener(
   },
 );
 
-// Keep the service worker alive and the native host port healthy.
-chrome.alarms.create('freemid-keepalive', { periodInMinutes: 0.4 });
+// Keep the service worker alive and the native host port healthy. Chrome clamps
+// periodic alarms to a 30 s floor, so this is the fastest cadence available —
+// and it must stay under the host's 45 s idle timeout (see constants/timing.ts).
+chrome.alarms.create('freemid-keepalive', {
+  periodInMinutes: KEEPALIVE_PERIOD_MINUTES,
+});
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'freemid-keepalive') {
     // Keep an existing host port healthy, but do not auto-spawn a new host.
@@ -1349,7 +1396,12 @@ const stateLoaded: Promise<void> = chrome.storage.local
 void Promise.all([
   stateLoaded,
   chrome.storage.session.get(SESSION_KEYS.pendingReconnect),
+  initDebugBuffer(),
+  initDebugFlag(),
 ]).then(([, session]) => {
+  debugLog('bg', 'worker-start', {
+    version: chrome.runtime.getManifest().version,
+  });
   connectNativeHost();
   // Restore a pending post-update reconnect if the SW was suspended before
   // the reconnect timer fired. startApplyVerification will send PINGs and
@@ -1376,8 +1428,8 @@ void Promise.all([
   chrome.alarms.get('freemid-update-check', (existing) => {
     if (!existing) {
       chrome.alarms.create('freemid-update-check', {
-        delayInMinutes: 2,
-        periodInMinutes: 1440,
+        delayInMinutes: UPDATE_CHECK_DELAY_MINUTES,
+        periodInMinutes: UPDATE_CHECK_PERIOD_MINUTES,
       });
     }
   });
@@ -1386,8 +1438,8 @@ void Promise.all([
   chrome.alarms.get('freemid-host-version-check', (existing) => {
     if (!existing) {
       chrome.alarms.create('freemid-host-version-check', {
-        delayInMinutes: 30,
-        periodInMinutes: 30,
+        delayInMinutes: HOST_VERSION_CHECK_PERIOD_MINUTES,
+        periodInMinutes: HOST_VERSION_CHECK_PERIOD_MINUTES,
       });
     }
   });
