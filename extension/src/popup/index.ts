@@ -630,6 +630,11 @@ async function refreshGrantAffordances(): Promise<void> {
       el.setAttribute('role', 'switch');
       el.querySelector('.grant-label')?.remove();
       el.title = el.dataset.toggleTitle ?? el.title;
+      // Put the switch state back. It was removed when the row became an
+      // action, and a role="switch" carrying no aria-checked is invalid: a
+      // screen reader has no state to announce. The next status broadcast
+      // supplies the real value, exactly as it does for every other row.
+      setToggle(el, latestStatus?.enabledSites?.[siteId] ?? false);
       continue;
     }
 
@@ -646,7 +651,11 @@ async function refreshGrantAffordances(): Promise<void> {
       el.appendChild(labelEl);
     }
   }
-  updateServicesCount();
+  // Only once the toggles carry real values. This resolves faster than the
+  // status round-trip, and counting before that would tally the markup's
+  // placeholder states into a count that is visible even while the toggles
+  // themselves are still hidden.
+  if (hasRevealedToggles) updateServicesCount();
 }
 
 function finaliseFirstRender(): void {

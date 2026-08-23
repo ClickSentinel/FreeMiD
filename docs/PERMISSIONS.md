@@ -24,7 +24,8 @@ honest about what is actually in use.
 | `public/manifest.json` | origins listed under `optional_host_permissions`, **not** `host_permissions` |
 | `popup/helpers.ts` | `optionalOriginsFor(siteId)` reads the origins back off the registry |
 | `popup/index.ts` | requests them from the toggle's click handler |
-| `background/index.ts` | site defaults to disabled; `permissions.onRemoved` turns it back off |
+| `background/optionalSites.ts` | the starting toggle state, and which sites no longer hold their origins |
+| `background/index.ts` | listens for `permissions.onRemoved` and applies the result |
 
 The request origins come from the registry's own `matches`, so the permission
 asked for and the URL pattern injected on cannot drift apart. There is a test
@@ -86,13 +87,17 @@ render loop cannot relabel them back.
 - **Revoking from `chrome://extensions`** is handled: `permissions.onRemoved`
   turns the matching site toggle off. Without that the toggle would read as on
   while injection failed silently, which looks like a broken extension.
+  The event is used only as a signal that *something* changed; which sites it
+  leaves unusable is read back with `permissions.contains()`. Comparing against
+  the origins the event carries would only work while a revoked origin is
+  reported in exactly the form it was requested.
 
 ## Adding another optional site
 
 1. `optionalPermission: true` on its registry entry
 2. origins under `optional_host_permissions` in the manifest
-3. default it to `false` in the background's `enabledSites`
+3. default it to `false` in `DEFAULT_ENABLED_SITES`
 
-The tests in `popup/optionalPermissions.test.ts` fail if 1 and 2 disagree.
-Step 3 has no guard yet — a site defaulted to `true` without a granted
-permission would attempt injection and fail.
+All three are guarded. `popup/optionalPermissions.test.ts` fails if 1 and 2
+disagree; `background/optionalSites.test.ts` fails if 3 is left on, which
+would have the site attempt injection with nothing granted.
