@@ -32,6 +32,36 @@ describe('popup helpers', () => {
     expect(fallbackLogoPath({ activityName: 'Unknown' })).toBeNull();
   });
 
+  it('lets the service label outrank a track that names another service', () => {
+    // smallImageText is written by FreeMiD; the artist and subtitle are
+    // whatever the track is called. A band called "Tidal Wave" on SoundCloud
+    // used to be served the TIDAL logo.
+    expect(
+      fallbackLogoPath({
+        smallImageText: 'SoundCloud',
+        activityName: 'Tidal Wave',
+        sub: 'by Tidal Wave',
+      }),
+    ).toBe('icons/soundcloud-logo-1024.png');
+    expect(
+      fallbackLogoPath({
+        smallImageText: 'TIDAL',
+        activityName: 'Apple Music Appreciation Society',
+      }),
+    ).toBe('icons/tidal-logo-1024.png');
+  });
+
+  it('still widens the search when no service label is carried', () => {
+    // Desktop presence omits smallImageText unless it also has artwork, so
+    // the artist and subtitle stay the only signal in that case.
+    expect(fallbackLogoPath({ activityName: 'TIDAL' })).toBe(
+      'icons/tidal-logo-1024.png',
+    );
+    expect(
+      fallbackLogoPath({ smallImageText: 'Unknown', sub: 'By YouTube' }),
+    ).toBe('icons/youtube-logo-1024.png');
+  });
+
   it('identifies unsupported-platform update errors', () => {
     expect(
       isUnsupportedPlatformUpdateError(

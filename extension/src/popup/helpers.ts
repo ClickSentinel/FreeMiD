@@ -35,17 +35,40 @@ export function isUnsupportedPlatformUpdateError(error?: string): boolean {
   );
 }
 
+/**
+ * Local service logo for a preview whose Discord asset art cannot be shown.
+ *
+ * `smallImageText` is written by FreeMiD itself and always names the service,
+ * so it is matched on its own first and settles the answer when present. Only
+ * when it is absent does the search widen to the artist and subtitle, which
+ * carry whatever the track is called: an artist named "Tidal Wave" playing on
+ * SoundCloud would otherwise be served the TIDAL logo.
+ *
+ * The widened pass still exists because desktop presence omits
+ * `smallImageText` whenever it has no artwork URL to pair it with (see
+ * `small_text` in background/index.ts).
+ */
 export function fallbackLogoPath(act: ActivityPreview): string | null {
-  const service =
-    `${act.smallImageText ?? ''} ${act.activityName ?? ''} ${act.sub ?? ''}`.toLowerCase();
-  if (service.includes('tidal')) return PRESENCE_PREVIEW_ASSETS.tidalLogo;
-  if (service.includes('soundcloud'))
-    return PRESENCE_PREVIEW_ASSETS.soundcloudLogo;
-  if (service.includes('apple music'))
-    return PRESENCE_PREVIEW_ASSETS.appleMusicLogo;
+  return (
+    logoForService(act.smallImageText ?? '') ??
+    logoForService(`${act.activityName ?? ''} ${act.sub ?? ''}`)
+  );
+}
+
+/**
+ * Longest service name first, so "YouTube Music" is never taken for
+ * "YouTube". The others share no substring with each other.
+ */
+function logoForService(text: string): string | null {
+  const service = text.toLowerCase();
   if (service.includes('youtube music') || service.includes('yt music'))
     return PRESENCE_PREVIEW_ASSETS.ytmusicLogo;
   if (service.includes('youtube')) return PRESENCE_PREVIEW_ASSETS.youtubeLogo;
+  if (service.includes('apple music'))
+    return PRESENCE_PREVIEW_ASSETS.appleMusicLogo;
+  if (service.includes('soundcloud'))
+    return PRESENCE_PREVIEW_ASSETS.soundcloudLogo;
+  if (service.includes('tidal')) return PRESENCE_PREVIEW_ASSETS.tidalLogo;
   return null;
 }
 
