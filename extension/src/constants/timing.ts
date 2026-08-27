@@ -65,6 +65,21 @@ export const METADATA_SETTLE_DELAYS_MS = [300, 1_000] as const;
  */
 export const SNAPSHOT_SETTLE_MS = 400;
 
+/**
+ * How long a track change may read as not-playing before that counts as a pause.
+ *
+ * Players report not-playing for a moment while the next track loads. Clearing
+ * there tears presence down and rebuilds it, which Discord shows as a flicker
+ * rather than a track updating in place.
+ *
+ * Bounded on both sides. Above the ~335 ms a transition was measured to take,
+ * with margin; and below the last METADATA_SETTLE_DELAYS_MS entry, so the
+ * refinement that fires after a track change is guaranteed to land outside the
+ * window and clear a track that really is paused. Without that lower bound the
+ * next check would be a full ACTIVITY_TICK_MS away.
+ */
+export const TRACK_TRANSITION_HOLD_MS = 600;
+
 // ── Background service worker ────────────────────────────────────────────────
 
 /**

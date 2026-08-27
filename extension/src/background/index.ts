@@ -47,6 +47,7 @@ import {
   matchActivity,
   preferredUpdateVersion,
 } from './helpers';
+import { DEFAULT_ENABLED_SITES, ungrantedOptionalSites } from './optionalSites';
 
 const NATIVE_HOST_NAME = 'com.clicksentinel.freemid';
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID?.trim() || '';
@@ -83,12 +84,8 @@ let lastActivity: {
   firstButtonLabel?: string;
 } | null = null;
 let discordConnectedSince: number | null = null;
-let enabledSites: Record<string, boolean> = {
-  youtube: true,
-  youtubemusic: true,
-  tidal: true,
-  applemusic: true,
-};
+// Copied, not aliased: this map is mutated in place as toggles change.
+let enabledSites: Record<string, boolean> = { ...DEFAULT_ENABLED_SITES };
 let hostVersion: string | null = null;
 let hostSelfUpdateSupported: boolean | null = null;
 let hostCapabilities: Set<string> = new Set();
@@ -1273,6 +1270,33 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       requestReconnectNativeHost();
     }
   }
+});
+
+/** Turn off any optional site that no longer holds the origins it injects on. */
+async function disableUngrantedOptionalSites(): Promise<void> {
+  const ungranted = await ungrantedOptionalSites((origins) =>
+    chrome.permissions.contains({ origins }),
+  );
+  let changed = false;
+  for (const siteId of ungranted) {
+    if (enabledSites[siteId] === false) continue;
+    enabledSites[siteId] = false;
+    changed = true;
+    debugLog('bg', 'permission-revoked', { siteId });
+  }
+  if (!changed) return;
+  void chrome.storage.local.set({ [STORAGE_KEYS.enabledSites]: enabledSites });
+  broadcastStatus();
+}
+
+// A user can revoke an optional host permission from chrome://extensions at any
+// time. Without this the site toggle would stay on while injection silently
+// failed, which reads as the extension being broken. The event only says
+// something was removed; which sites that leaves unusable is read back from
+// Chrome rather than inferred from the origins it carries.
+chrome.permissions.onRemoved.addListener((removed) => {
+  if ((removed.origins ?? []).length === 0) return;
+  void disableUngrantedOptionalSites();
 });
 
 chrome.runtime.onSuspend.addListener(() => {

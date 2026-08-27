@@ -30,14 +30,14 @@ extension/              # Chrome MV3 extension (TypeScript + Vite)
     background/index.ts  # Service worker: manages native port, tab injection, update flow
     background/helpers.ts# Artwork lookup (iTunes → MusicBrainz/CAA fallback), URL/version utils
     presence/Presence.ts # API class used by all activities; PresenceData supports largeImageUrl/smallImageUrl for URL-based art
-    activities/          # One subdirectory per supported site (youtube, youtubemusic, tidal, applemusic)
+    activities/          # One subdirectory per supported site (youtube, youtubemusic, tidal, applemusic, soundcloud)
     constants/           # presenceAssets.ts (Discord asset keys), storageKeys.ts, github.ts
     popup/index.ts       # Extension popup UI (status, per-site toggles, update/reconnect)
     popup/helpers.ts     # Popup-only helpers (artistFromActivity, fallbackLogoPath, urlLike)
     utils/               # parseClock and other small helpers
 install/                # install.sh / install.ps1 / uninstall scripts
 scripts/                # build-activities.mjs, local-update-e2e.sh, sync-version.sh
-docs/                   # Architecture docs and release checklists
+docs/                   # Architecture docs, TIMERS.md, PERMISSIONS.md, release checklists
 ```
 
 ## Build commands

@@ -3,6 +3,7 @@ export const PRESENCE_ASSET_KEYS = {
   tidalLogo: 'tidal-logo-1024',
   ytmusicLogo: 'ytmusic-logo-1024',
   appleMusicLogo: 'applemusic-logo-1024',
+  soundcloudLogo: 'soundcloud-logo-1024',
 } as const;
 
 export const PRESENCE_PREVIEW_ASSETS = {
@@ -10,4 +11,5 @@ export const PRESENCE_PREVIEW_ASSETS = {
   tidalLogo: 'icons/tidal-logo-1024.png',
   ytmusicLogo: 'icons/ytmusic-logo-1024.png',
   appleMusicLogo: 'icons/applemusic-logo-1024.png',
+  soundcloudLogo: 'icons/soundcloud-logo-1024.png',
 } as const;

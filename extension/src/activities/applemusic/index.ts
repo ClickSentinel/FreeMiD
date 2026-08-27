@@ -1,8 +1,8 @@
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
 import { Presence } from '../../presence/Presence';
+import { bestArtworkUrl } from '../../utils/bestArtworkUrl';
 import { PlaybackAnchor } from '../../utils/PlaybackAnchor';
 import { parseIsoDuration } from '../../utils/parseIsoDuration';
-import { urlLike } from '../../utils/urlLike';
 
 const presence = new Presence({
   clientId: import.meta.env.VITE_DISCORD_CLIENT_ID,
@@ -27,28 +27,6 @@ function isPlaying(): boolean {
     return false;
   }
   return navigator.mediaSession?.playbackState === 'playing';
-}
-
-// The Media Session spec does not guarantee `artwork` entries are ordered by
-// size, even though Apple currently supplies them ascending — parse each
-// entry's `sizes` string (e.g. "512x512") and pick the largest by area
-// instead of assuming array order. Also gate through urlLike(): `src` is
-// fully page-controlled and could in principle be any URL scheme.
-function bestArtworkUrl(
-  artwork: readonly MediaImage[] | undefined,
-): string | undefined {
-  if (!artwork || artwork.length === 0) return undefined;
-  let best: { src: string; area: number } | undefined;
-  for (const entry of artwork) {
-    if (!entry.src || !urlLike(entry.src)) continue;
-    const [w, h] = (entry.sizes ?? '').split('x').map(Number);
-    const area =
-      w != null && h != null && Number.isFinite(w) && Number.isFinite(h)
-        ? w * h
-        : 0;
-    if (!best || area > best.area) best = { src: entry.src, area };
-  }
-  return best?.src;
 }
 
 // The player bar's elapsed/remaining <time> elements carry real ISO 8601
