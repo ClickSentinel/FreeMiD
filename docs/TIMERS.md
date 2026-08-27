@@ -143,7 +143,9 @@ consistently longer windows at every stage — the binary swap goes through
    host restarts, another RPC client writes over the same application — so the
    belief has to expire rather than be trusted indefinitely. A static payload
    (a long video, not a track that changes in minutes) would otherwise stay
-   suppressed for as long as it plays.
+   suppressed for as long as it plays. The re-send rides on an update rather
+   than a timer, so the one-minute bound holds while an activity is still
+   pushing — which is the only time there is presence to restore.
 3. **Throttle** — inside the 5 s window → stash in `pendingActivityPayload` and
    arm the flush timer for the remainder. An already-armed timer is *not*
    rescheduled; its payload is replaced, so it fires at its original time.

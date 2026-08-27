@@ -104,6 +104,11 @@ export const DISCORD_MIN_INTERVAL_MS = 5_000;
  *
  * Re-sending on a slow cycle bounds recovery from any of those at one minute.
  * Against Discord's ~5 per 20 s that costs effectively nothing.
+ *
+ * The bound holds only while an activity is still pushing, since a re-send is
+ * triggered by an update rather than by a timer. Nothing reporting means there
+ * is no presence to restore, so that is the right scope — but it is not an
+ * unconditional guarantee.
  */
 export const PRESENCE_RESEND_INTERVAL_MS = 60_000;
 

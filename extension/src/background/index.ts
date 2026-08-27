@@ -84,6 +84,9 @@ let lastActivity: {
   firstButtonLabel?: string;
 } | null = null;
 let discordConnectedSince: number | null = null;
+// Distinguishes a reconnection from the first connection of this worker's life,
+// which discordConnectedSince alone cannot once it has been cleared.
+let hasEverConnected = false;
 // Copied, not aliased: this map is mutated in place as toggles change.
 let enabledSites: Record<string, boolean> = { ...DEFAULT_ENABLED_SITES };
 let hostVersion: string | null = null;
@@ -563,7 +566,14 @@ function connectNativeHost(): void {
           hostBinaryPath = m.binaryPath;
         }
         if (discordConnected && !wasConnected) {
+          // A first connection and a reconnection both land here, and the
+          // trace has to tell them apart: mislabelling one as the other sends
+          // the next person debugging this looking for a drop that never
+          // happened.
+          const reconnected =
+            discordConnectedSince !== null || hasEverConnected;
           discordConnectedSince = Date.now();
+          hasEverConnected = true;
           // Discord keeps no memory of what we sent before it went away, so
           // the dedup state is now a lie: it would suppress the very update
           // that restores presence. Forget it and let the next tick re-send.
@@ -571,7 +581,11 @@ function connectNativeHost(): void {
           // Music hides this — the next track changes the payload, dedup
           // misses, and presence returns within a song. A long video's payload
           // is static, so without this it stays blank until the video ends.
-          debugLog('bg', 'discord-reconnected-resend');
+          debugLog(
+            'bg',
+            reconnected ? 'discord-reconnected-resend' : 'discord-connected',
+          );
+          // A no-op on a first connection, since nothing has been sent yet.
           activityThrottle.reset();
         } else if (!discordConnected && wasConnected) {
           discordConnectedSince = null;
