@@ -1,5 +1,8 @@
 import { PRESENCE_ASSET_KEYS } from '../../constants/presenceAssets';
-import { METADATA_SETTLE_DELAYS_MS } from '../../constants/timing';
+import {
+  METADATA_SETTLE_DELAYS_MS,
+  TRACK_TRANSITION_HOLD_MS,
+} from '../../constants/timing';
 import { debugLog } from '../../debug/log';
 import { Presence } from '../../presence/Presence';
 import { bestArtworkUrl } from '../../utils/bestArtworkUrl';
@@ -13,6 +16,7 @@ const presence = new Presence({
 const anchor = new PlaybackAnchor();
 let lastTrackId: string | undefined;
 let lastPausedState: boolean | undefined;
+let trackChangedAt: number | undefined;
 
 /**
  * Read a clock out of a player-bar time node.
@@ -80,13 +84,30 @@ presence.on('UpdateData', () => {
       duration,
     });
     lastTrackId = trackId;
+    trackChangedAt = Date.now();
     presence.scheduleTrigger(...METADATA_SETTLE_DELAYS_MS);
   }
 
   const { timestamps } = anchor.update(trackId, current, duration, paused);
 
   if (paused) {
+    // SoundCloud reports not-playing for a moment while the next track loads.
+    // Clearing there tears presence down and rebuilds it a moment later, which
+    // shows in Discord as a flicker rather than a track change.
+    //
+    // Returning without touching lastPausedState matters: a track that really
+    // is paused still clears once the window closes, on the 1 s settle
+    // refinement or the next tick. Marking it paused here would suppress that
+    // clear permanently.
+    const sinceChangeMs =
+      Date.now() - (trackChangedAt ?? Number.NEGATIVE_INFINITY);
+    if (sinceChangeMs < TRACK_TRANSITION_HOLD_MS) {
+      debugLog('soundcloud', 'transition-hold', { sinceChangeMs });
+      return;
+    }
+
     if (lastPausedState === false) {
+      debugLog('soundcloud', 'pause-clear');
       presence.clearPresenceData();
     }
     lastPausedState = true;

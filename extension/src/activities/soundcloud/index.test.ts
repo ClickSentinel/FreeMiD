@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TRACK_TRANSITION_HOLD_MS } from '../../constants/timing';
+
 type PresenceInstance = {
   on: ReturnType<typeof vi.fn>;
   setActivity: ReturnType<typeof vi.fn>;
@@ -223,17 +225,109 @@ describe('SoundCloud activity', () => {
     } as Partial<MediaMetadata>);
     setPlayerBar({ playing: true });
 
-    await loadModule();
-    capturedUpdateHandler?.();
+    vi.useFakeTimers();
+    try {
+      await loadModule();
+      capturedUpdateHandler?.();
+      // Past the transition hold, so this reads as a pause and not as a track
+      // still loading.
+      vi.advanceTimersByTime(TRACK_TRANSITION_HOLD_MS + 1);
 
-    setMediaSession('paused', {
-      title: 'palm',
+      setMediaSession('paused', {
+        title: 'palm',
+        artist: 'Artist',
+      } as Partial<MediaMetadata>);
+      capturedUpdateHandler?.();
+
+      expect(presenceInstance.clearPresenceData).toHaveBeenCalledTimes(1);
+      expect(presenceInstance.clearActivity).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not tear presence down while a track change settles', async () => {
+    // SoundCloud reports not-playing for a moment as the next track loads.
+    // Clearing there showed in Discord as presence disappearing and coming
+    // back rather than a track updating in place.
+    setMediaSession('playing', {
+      title: 'First',
       artist: 'Artist',
     } as Partial<MediaMetadata>);
+    setPlayerBar({ permalink: '/artist/first' });
+
+    await loadModule();
+    capturedUpdateHandler?.();
+    presenceInstance.clearPresenceData.mockClear();
+
+    // New permalink, and the player briefly reports not-playing.
+    setMediaSession('paused', {
+      title: 'First',
+      artist: 'Artist',
+    } as Partial<MediaMetadata>);
+    setPlayerBar({ permalink: '/artist/second', playing: false });
     capturedUpdateHandler?.();
 
-    expect(presenceInstance.clearPresenceData).toHaveBeenCalledTimes(1);
-    expect(presenceInstance.clearActivity).not.toHaveBeenCalled();
+    expect(presenceInstance.clearPresenceData).not.toHaveBeenCalled();
+  });
+
+  it('still clears a track that is genuinely paused after the window', async () => {
+    vi.useFakeTimers();
+    try {
+      setMediaSession('playing', {
+        title: 'First',
+        artist: 'Artist',
+      } as Partial<MediaMetadata>);
+      setPlayerBar({ permalink: '/artist/first' });
+
+      await loadModule();
+      capturedUpdateHandler?.();
+      presenceInstance.clearPresenceData.mockClear();
+
+      setMediaSession('paused', {
+        title: 'First',
+        artist: 'Artist',
+      } as Partial<MediaMetadata>);
+      setPlayerBar({ permalink: '/artist/second', playing: false });
+      capturedUpdateHandler?.();
+      expect(presenceInstance.clearPresenceData).not.toHaveBeenCalled();
+
+      // The hold must not become a permanent suppression.
+      vi.advanceTimersByTime(2_000);
+      capturedUpdateHandler?.();
+
+      expect(presenceInstance.clearPresenceData).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears on a pause once the track has settled', async () => {
+    // The hold is scoped to a transition. Past it an ordinary pause clears on
+    // the very next tick, with nothing further to wait for.
+    vi.useFakeTimers();
+    try {
+      setMediaSession('playing', {
+        title: 'Track',
+        artist: 'Artist',
+      } as Partial<MediaMetadata>);
+      setPlayerBar({ permalink: '/artist/track' });
+
+      await loadModule();
+      capturedUpdateHandler?.();
+      presenceInstance.clearPresenceData.mockClear();
+      vi.advanceTimersByTime(TRACK_TRANSITION_HOLD_MS + 1);
+
+      setMediaSession('paused', {
+        title: 'Track',
+        artist: 'Artist',
+      } as Partial<MediaMetadata>);
+      capturedUpdateHandler?.();
+
+      expect(presenceInstance.clearPresenceData).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('schedules settle refinements on a track change', async () => {

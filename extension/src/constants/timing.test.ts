@@ -10,6 +10,7 @@ import {
   METADATA_SETTLE_DELAYS_MS,
   RECONNECT_BUTTON_COOLDOWN_MS,
   SNAPSHOT_SETTLE_MS,
+  TRACK_TRANSITION_HOLD_MS,
   UPDATE_TIMING,
 } from './timing';
 
@@ -19,6 +20,20 @@ describe('timing invariants', () => {
     // be exactly 5 per 20 s with no headroom; anything less is over the limit.
     expect(DISCORD_MIN_INTERVAL_MS).toBeGreaterThanOrEqual(4_000);
     expect(20_000 / DISCORD_MIN_INTERVAL_MS).toBeLessThanOrEqual(5);
+  });
+
+  it('keeps the transition hold inside its usable window', () => {
+    // Above the ~335 ms a transition was measured to take, or the flicker it
+    // exists to prevent comes back. Below the last settle delay, so the
+    // refinement after a track change lands outside the hold and clears a
+    // track that really is paused — otherwise the next check is a full tick
+    // away.
+    const [firstSettle, lastSettle] = [
+      Math.min(...METADATA_SETTLE_DELAYS_MS),
+      Math.max(...METADATA_SETTLE_DELAYS_MS),
+    ];
+    expect(TRACK_TRANSITION_HOLD_MS).toBeGreaterThan(firstSettle);
+    expect(TRACK_TRANSITION_HOLD_MS).toBeLessThan(lastSettle);
   });
 
   it('keeps the keepalive period inside the usable window', () => {

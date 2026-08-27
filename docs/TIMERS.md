@@ -48,6 +48,7 @@ Runs inside the page, one instance per injected tab.
 | --- | --- | --- | --- |
 | UpdateData tick | `ACTIVITY_TICK_MS` | `5 s` | Backstop poll — **all four activities**, no overrides. |
 | Settle refinements | `METADATA_SETTLE_DELAYS_MS` | `300 ms`, `1000 ms` | Re-read and re-push after a track change or `play`. 300 ms for `mediaSession.metadata`, 1 s for the player-bar duration. |
+| Transition hold | `TRACK_TRANSITION_HOLD_MS` | `600 ms` | How long a track change may read as not-playing before that counts as a pause. |
 | Snapshot settle | `SNAPSHOT_SETTLE_MS` | `400 ms` | Max time an activity may withhold a snapshot carrying a field that is *wrong*, not merely missing. |
 | `watchSelector` observer | — | event-driven | Primary track-change signal. Re-attaches when the observed node is replaced. |
 | Liveness heartbeat | `ACTIVITY_HEARTBEAT_STALE_MS` | `15 s` (3 ticks) | Stamped each tick on `globalThis`; the background probes it before re-injecting. |
