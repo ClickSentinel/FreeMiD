@@ -38,6 +38,7 @@ import {
 import { ActivityThrottle, activitySummary } from './activityThrottle';
 import {
   compareVersions,
+  discordConnectEvent,
   isHostSelfUpdateSupported,
   isUpdateAvailableForHost,
   isUpdateInProgress,
@@ -565,13 +566,12 @@ function connectNativeHost(): void {
         if (typeof m.binaryPath === 'string') {
           hostBinaryPath = m.binaryPath;
         }
-        if (discordConnected && !wasConnected) {
-          // A first connection and a reconnection both land here, and the
-          // trace has to tell them apart: mislabelling one as the other sends
-          // the next person debugging this looking for a drop that never
-          // happened.
-          const reconnected =
-            discordConnectedSince !== null || hasEverConnected;
+        const connectEvent = discordConnectEvent(
+          wasConnected,
+          discordConnected,
+          hasEverConnected,
+        );
+        if (connectEvent) {
           discordConnectedSince = Date.now();
           hasEverConnected = true;
           // Discord keeps no memory of what we sent before it went away, so
@@ -581,10 +581,7 @@ function connectNativeHost(): void {
           // Music hides this — the next track changes the payload, dedup
           // misses, and presence returns within a song. A long video's payload
           // is static, so without this it stays blank until the video ends.
-          debugLog(
-            'bg',
-            reconnected ? 'discord-reconnected-resend' : 'discord-connected',
-          );
+          debugLog('bg', connectEvent);
           // A no-op on a first connection, since nothing has been sent yet.
           activityThrottle.reset();
         } else if (!discordConnected && wasConnected) {

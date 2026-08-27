@@ -277,3 +277,30 @@ export function isHostSelfUpdateSupported(
       : minVersion;
   return compareVersions(hostVersion, effectiveMinVersion) >= 0;
 }
+
+/** Debug event naming a rising edge in the Discord connection. */
+export type DiscordConnectEvent =
+  | 'discord-connected'
+  | 'discord-reconnected-resend';
+
+/**
+ * Which event a change in the Discord connection deserves, or null when it is
+ * not a rising edge.
+ *
+ * A first connection and a return from a drop both arrive as false -> true, and
+ * a trace has to tell them apart: labelling the first as a reconnection sends
+ * the next person debugging presence looking for a disconnect that never
+ * happened.
+ *
+ * `everConnected` has to be tracked separately from the connected-since
+ * timestamp, which is cleared on disconnect and so reads identically in both
+ * cases.
+ */
+export function discordConnectEvent(
+  wasConnected: boolean,
+  isConnected: boolean,
+  everConnected: boolean,
+): DiscordConnectEvent | null {
+  if (!isConnected || wasConnected) return null;
+  return everConnected ? 'discord-reconnected-resend' : 'discord-connected';
+}
