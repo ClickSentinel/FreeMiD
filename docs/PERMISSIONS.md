@@ -91,6 +91,11 @@ render loop cannot relabel them back.
   leaves unusable is read back with `permissions.contains()`. Comparing against
   the origins the event carries would only work while a revoked origin is
   reported in exactly the form it was requested.
+- **The same check runs at startup.** The listener only covers a revocation the
+  worker is awake to see, and an MV3 worker is torn down constantly — an event
+  missed once would leave a site enabled with nothing granted, which is the
+  state the listener exists to prevent. Reconciling at boot makes "enabled
+  implies granted" an invariant rather than a hope.
 
 ## Adding another optional site
 
