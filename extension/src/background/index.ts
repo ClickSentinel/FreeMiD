@@ -124,6 +124,11 @@ let manualReconnectAttemptsRemaining = 0;
 let suspendInProgress = false;
 let reconnectCooldownUntilMs = 0;
 let presenceHolder: string | null = null; // sourceId that currently holds the Discord presence lock
+// Which tab claimed it, where a tab did. The lock is keyed by site, so without
+// this a second tab of the same site can release presence it never set — a
+// YouTube tab off a watch page clears on every tick, and would wipe what a
+// watching tab had put up. Null for desktop sources, which have no tab.
+let presenceHolderTabId: number | null = null;
 // This worker is the only place that defers a presence update. Activities push
 // their best current snapshot as soon as they have one and never hold anything
 // back, so the throttle below is the single rate limiter in the pipeline —
@@ -353,6 +358,7 @@ function resetHostConnection(error?: string): void {
   // the watcher re-pushes state after reconnect (one keepalive alarm period).
   if (presenceHolder !== null && presenceHolder in DESKTOP_PRESENCE_TO_TOGGLE) {
     presenceHolder = null;
+    presenceHolderTabId = null;
   }
 }
 
@@ -826,7 +832,11 @@ const activityThrottle = new ActivityThrottle((activity) => {
  * Send Discord Rich Presence activity via the native host.
  * Pass siteId to enforce per-site enable/disable and pause state.
  */
-export function setActivity(activity: object, siteId?: string): void {
+export function setActivity(
+  activity: object,
+  siteId?: string,
+  tabId?: number,
+): void {
   debugLog('bg', 'recv', { siteId, ...activitySummary(activity) });
   if (paused) {
     debugLog('bg', 'reject-paused');
@@ -848,7 +858,10 @@ export function setActivity(activity: object, siteId?: string): void {
     debugLog('bg', 'reject-lock-held', { holder: presenceHolder, siteId });
     return;
   }
-  if (siteId !== undefined) presenceHolder = siteId;
+  if (siteId !== undefined) {
+    presenceHolder = siteId;
+    presenceHolderTabId = tabId ?? null;
+  }
 
   const a = activity as {
     name?: string;
@@ -931,16 +944,36 @@ function cancelPendingActivityFlush(): void {
 export function clearActivity(): void {
   cancelPendingActivityFlush();
   presenceHolder = null;
+  presenceHolderTabId = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
   broadcastStatus();
 }
 
 // Release presence held by a specific source. No-op if another source holds it.
-function releasePresence(sourceId: string): void {
+function releasePresence(
+  sourceId: string,
+  opts: { fromTabId?: number } = {},
+): void {
   if (presenceHolder !== sourceId) return;
+  // A release attributed to a tab is honoured only from the tab holding the
+  // lock. Omitting fromTabId releases unconditionally, which is what a closing
+  // tab and a desktop source both want.
+  if (
+    opts.fromTabId !== undefined &&
+    presenceHolderTabId !== null &&
+    opts.fromTabId !== presenceHolderTabId
+  ) {
+    debugLog('bg', 'reject-release-other-tab', {
+      sourceId,
+      fromTabId: opts.fromTabId,
+      holderTabId: presenceHolderTabId,
+    });
+    return;
+  }
   cancelPendingActivityFlush();
   presenceHolder = null;
+  presenceHolderTabId = null;
   lastActivity = null;
   sendToHost({ type: 'CLEAR_ACTIVITY' });
   broadcastStatus();
@@ -1099,7 +1132,7 @@ chrome.runtime.onMessage.addListener(
         }
       }
 
-      setActivity(msg.data as object, siteId);
+      setActivity(msg.data as object, siteId, sender.tab?.id);
       return;
     }
 
@@ -1109,7 +1142,7 @@ chrome.runtime.onMessage.addListener(
           ? activeActivityTabs.get(sender.tab.id)
           : undefined;
       if (siteId !== undefined) {
-        releasePresence(siteId);
+        releasePresence(siteId, { fromTabId: sender.tab?.id });
       } else {
         clearActivity();
       }
@@ -1366,9 +1399,11 @@ function clearTabActivity(tabId: number): void {
   const siteId = activeActivityTabs.get(tabId);
   if (!siteId) return;
   activeActivityTabs.delete(tabId);
-  // Only release the lock if no other tab of the same site is still active.
+  // Release when the closing tab held the lock, or when it was the last tab of
+  // its site. Unconditional either way: the tab is gone, so there is nobody
+  // left to attribute the release to.
   const stillActive = [...activeActivityTabs.values()].includes(siteId);
-  if (!stillActive) releasePresence(siteId);
+  if (presenceHolderTabId === tabId || !stillActive) releasePresence(siteId);
 }
 
 // ── Version & update check ────────────────────────────────────────────────────
