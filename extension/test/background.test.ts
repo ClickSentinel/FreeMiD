@@ -25,11 +25,14 @@ const track = (title: string) => ({
 });
 
 /** Boot a fresh worker against a fresh mock. */
-async function boot(): Promise<ChromeMock> {
+async function boot(
+  opts: { storage?: Record<string, unknown>; hasOrigins?: boolean } = {},
+): Promise<ChromeMock> {
   vi.resetModules();
-  const mock = installChromeMock();
+  const mock = installChromeMock(opts);
   await import('../src/background/index');
   await mock.ready();
+  await flush();
   return mock;
 }
 
@@ -216,5 +219,210 @@ describe('presence lock', () => {
     clearFromTab(mock, 1);
 
     expect(clears(mock)).toBe(1);
+  });
+});
+
+describe('activity injection', () => {
+  const YT = 'https://www.youtube.com/watch?v=abcdefghijk';
+
+  it('injects the matching activity on a completed navigation', async () => {
+    const mock = await boot();
+    await navigate(mock, 1, YT);
+
+    expect(mock.injected.map((i) => i.files)).toEqual([
+      ['activities/youtube/index.js'],
+    ]);
+  });
+
+  it('injects nothing for a URL no activity claims', async () => {
+    const mock = await boot();
+    await navigate(mock, 1, 'https://example.com/');
+
+    expect(mock.injected).toHaveLength(0);
+  });
+
+  it('skips injecting when a live script is already running', async () => {
+    // Chrome reports status:'complete' for an SPA's history navigations too,
+    // where the page context and the running script both survive. Re-injecting
+    // there resets the activity's module state for nothing.
+    const mock = await boot();
+    await navigate(mock, 1, YT);
+    expect(mock.injected).toHaveLength(1);
+
+    mock.setScriptAlive(true);
+    await navigate(mock, 1, YT);
+
+    expect(mock.injected, 'a live script must not be replaced').toHaveLength(1);
+  });
+
+  it('injects again once the script is gone', async () => {
+    // A real document load leaves nothing running, and the probe reports that.
+    const mock = await boot();
+    mock.setScriptAlive(true);
+    await navigate(mock, 1, YT);
+    const afterAlive = mock.injected.length;
+
+    mock.setScriptAlive(false);
+    await navigate(mock, 1, YT);
+
+    expect(mock.injected.length).toBeGreaterThan(afterAlive);
+  });
+
+  it('injects nothing for a site the user has turned off', async () => {
+    const mock = await boot();
+    mock.runtimeMessage.emit(
+      { type: 'SET_SITE_ENABLED', siteId: 'youtube', enabled: false },
+      { id: 'test-extension' },
+      () => {},
+    );
+    await flush();
+
+    await navigate(mock, 1, YT);
+
+    expect(mock.injected).toHaveLength(0);
+  });
+});
+
+describe('site toggles and pause', () => {
+  const YT = 'https://www.youtube.com/watch?v=abcdefghijk';
+
+  function setSite(mock: ChromeMock, siteId: string, enabled: boolean): void {
+    mock.runtimeMessage.emit(
+      { type: 'SET_SITE_ENABLED', siteId, enabled },
+      { id: 'test-extension' },
+      () => {},
+    );
+  }
+
+  it('clears presence when the site holding the lock is turned off', async () => {
+    const mock = await boot();
+    mock.port().fromHost(STATUS(true));
+    await navigate(mock, 1, YT);
+    fromTab(mock, track('First'), 1);
+
+    setSite(mock, 'youtube', false);
+    await flush();
+
+    expect(clears(mock)).toBe(1);
+  });
+
+  it('leaves presence alone when a different site is turned off', async () => {
+    // Turning off a site that is not reporting must not evict one that is.
+    const mock = await boot();
+    mock.port().fromHost(STATUS(true));
+    await navigate(mock, 1, YT);
+    fromTab(mock, track('First'), 1);
+
+    setSite(mock, 'tidal', false);
+    await flush();
+
+    expect(clears(mock)).toBe(0);
+  });
+
+  it('rejects activity from a site that is turned off', async () => {
+    const mock = await boot();
+    mock.port().fromHost(STATUS(true));
+    await navigate(mock, 1, YT);
+    setSite(mock, 'youtube', false);
+    await flush();
+
+    fromTab(mock, track('First'), 1);
+
+    expect(mock.port().sentActivities()).toHaveLength(0);
+  });
+
+  it('clears presence and refuses further updates while paused', async () => {
+    const mock = await boot();
+    mock.port().fromHost(STATUS(true));
+    await navigate(mock, 1, YT);
+    fromTab(mock, track('First'), 1);
+    expect(mock.port().sentActivities()).toHaveLength(1);
+
+    mock.runtimeMessage.emit(
+      { type: 'SET_PAUSED', value: true },
+      { id: 'test-extension' },
+      () => {},
+    );
+    await flush();
+
+    expect(clears(mock), 'pausing drops what is showing').toBe(1);
+
+    fromTab(mock, track('Second'), 1);
+    expect(
+      mock.port().sentActivities(),
+      'nothing reports while paused',
+    ).toHaveLength(1);
+  });
+
+  it('ignores a message from outside the extension', async () => {
+    // Every handler is gated on the sender id; a page cannot drive presence.
+    const mock = await boot();
+    mock.port().fromHost(STATUS(true));
+    await navigate(mock, 1, YT);
+
+    mock.runtimeMessage.emit(
+      { type: 'FREEMID_SET_ACTIVITY', data: track('Injected') },
+      { id: 'some-other-extension', tab: { id: 1 } },
+      () => {},
+    );
+
+    expect(mock.port().sentActivities()).toHaveLength(0);
+  });
+});
+
+describe('optional host permissions', () => {
+  const ENABLED = 'enabledSites';
+
+  it('turns off a stored site whose origins are no longer held', async () => {
+    // A revocation while the worker is asleep produces no event it can react
+    // to, so the stored toggle would otherwise stay on with nothing granted
+    // and injection would fail silently.
+    const mock = await boot({
+      storage: { [ENABLED]: { youtube: true, soundcloud: true } },
+      hasOrigins: false,
+    });
+
+    expect(
+      (mock.local[ENABLED] as Record<string, boolean>).soundcloud,
+      'reconciled against what Chrome actually holds',
+    ).toBe(false);
+  });
+
+  it('leaves a site on when its origins are held', async () => {
+    const mock = await boot({
+      storage: { [ENABLED]: { youtube: true, soundcloud: true } },
+      hasOrigins: true,
+    });
+
+    expect(
+      (mock.local[ENABLED] as Record<string, boolean> | undefined)?.soundcloud,
+    ).not.toBe(false);
+  });
+
+  it('never disturbs a site whose access is required at install', async () => {
+    // Only optional sites are probed; a required one has nothing to reconcile.
+    const mock = await boot({
+      storage: { [ENABLED]: { youtube: true, soundcloud: false } },
+      hasOrigins: false,
+    });
+
+    expect(
+      (mock.local[ENABLED] as Record<string, boolean> | undefined)?.youtube,
+    ).not.toBe(false);
+  });
+
+  it('turns a site off when its permission is revoked while running', async () => {
+    const mock = await boot({
+      storage: { [ENABLED]: { youtube: true, soundcloud: true } },
+      hasOrigins: true,
+    });
+
+    mock.permissionsContains.mockResolvedValue(false);
+    mock.permissionsRemoved.emit({ origins: ['*://soundcloud.com/*'] });
+    await flush();
+
+    expect((mock.local[ENABLED] as Record<string, boolean>).soundcloud).toBe(
+      false,
+    );
   });
 });

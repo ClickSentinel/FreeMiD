@@ -1481,6 +1481,12 @@ void Promise.all([
   debugLog('bg', 'worker-start', {
     version: chrome.runtime.getManifest().version,
   });
+  // Reconcile the toggles against what Chrome actually holds. The onRemoved
+  // listener covers a revocation the worker is awake to see, but an MV3 worker
+  // is torn down constantly, and an event missed once leaves a site enabled
+  // with nothing granted — injection then fails silently, which is the state
+  // that listener exists to prevent. Verify at boot rather than trust the event.
+  void disableUngrantedOptionalSites();
   connectNativeHost();
   // Restore a pending post-update reconnect if the SW was suspended before
   // the reconnect timer fired. startApplyVerification will send PINGs and

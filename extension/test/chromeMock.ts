@@ -61,12 +61,24 @@ export interface ChromeMock {
   local: Record<string, unknown>;
   /** Resolves once the worker has opened its native port. */
   ready(): Promise<FakePort>;
+  /** Activity bundles the worker has injected, oldest first. */
+  injected: { tabId: number; files: string[] }[];
+  /** Control what the liveness probe reports for the next navigation. */
+  setScriptAlive(alive: boolean): void;
+  permissionsContains: ReturnType<typeof vi.fn>;
 }
 
 export function installChromeMock(
-  opts: { storage?: Record<string, unknown> } = {},
+  opts: {
+    storage?: Record<string, unknown>;
+    /** What permissions.contains() reports. Everything is held by default. */
+    hasOrigins?: boolean;
+  } = {},
 ): ChromeMock {
   const ports: FakePort[] = [];
+  const injected: { tabId: number; files: string[] }[] = [];
+  // What the liveness probe reports. Default dead, so a navigation injects.
+  let scriptAlive = false;
   const local: Record<string, unknown> = { ...opts.storage };
   const session: Record<string, unknown> = {};
   const runtimeMessage = new FakeEvent();
@@ -138,10 +150,20 @@ export function installChromeMock(
       onRemoved: new FakeEvent(),
     },
     scripting: {
-      executeScript: vi.fn(() => Promise.resolve([{ result: false }])),
+      // The worker uses executeScript two ways: `func` probes whether a live
+      // activity is already running in the tab, `files` performs the actual
+      // injection. Tests need to tell them apart.
+      executeScript: vi.fn((opts: { func?: unknown; files?: string[] }) => {
+        if (opts.func) return Promise.resolve([{ result: scriptAlive }]);
+        injected.push({
+          tabId: 0,
+          files: opts.files ?? [],
+        });
+        return Promise.resolve([{ result: undefined }]);
+      }),
     },
     permissions: {
-      contains: vi.fn(() => Promise.resolve(true)),
+      contains: vi.fn(() => Promise.resolve(opts.hasOrigins ?? true)),
       request: vi.fn(() => Promise.resolve(true)),
       onRemoved: permissionsRemoved,
     },
@@ -169,6 +191,11 @@ export function installChromeMock(
     alarm,
     permissionsRemoved,
     local,
+    injected,
+    setScriptAlive(alive: boolean) {
+      scriptAlive = alive;
+    },
+    permissionsContains: chrome.permissions.contains,
     async ready() {
       // The worker opens its port inside a promise chain over storage reads.
       for (let i = 0; i < 50 && ports.length === 0; i += 1) {
