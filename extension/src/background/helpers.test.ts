@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   compareVersions,
+  discordConnectEvent,
   isHostSelfUpdateSupported,
   isUpdateAvailable,
   isUpdateAvailableForHost,
@@ -352,5 +353,32 @@ describe('lookupArtworkUrl', () => {
     const decoded = decodeURIComponent(mbUrl);
     // Backslash must be doubled so the Lucene parser sees a literal backslash.
     expect(decoded).toContain('artist:"AC\\\\DC"');
+  });
+});
+
+describe('discordConnectEvent', () => {
+  it('names a first connection apart from a reconnection', () => {
+    expect(discordConnectEvent(false, true, false)).toBe('discord-connected');
+    expect(discordConnectEvent(false, true, true)).toBe(
+      'discord-reconnected-resend',
+    );
+  });
+
+  it('reports nothing when the connection did not rise', () => {
+    // Already connected, still connected — a STATUS arrives on every keepalive,
+    // and only the edge means anything.
+    expect(discordConnectEvent(true, true, true)).toBeNull();
+    // Dropping is handled elsewhere; there is no presence to restore.
+    expect(discordConnectEvent(true, false, true)).toBeNull();
+    expect(discordConnectEvent(false, false, false)).toBeNull();
+  });
+
+  it('does not infer a reconnection from having connected before dropping', () => {
+    // The guard this encodes: discordConnectedSince is cleared on disconnect,
+    // so it reads the same on a first connection and on a return. Only a
+    // separately tracked flag can tell them apart.
+    expect(discordConnectEvent(false, true, false)).not.toBe(
+      'discord-reconnected-resend',
+    );
   });
 });
