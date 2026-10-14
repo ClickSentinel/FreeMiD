@@ -102,7 +102,7 @@ jobs:
       - name: Package
         run: cd extension/dist && zip -r ../../freemid-extension.zip .
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: freemid-extension
           path: freemid-extension.zip
@@ -164,18 +164,18 @@ jobs:
         run: copy target\release\freemid-apply.exe freemid-apply-windows-x86_64.exe
         if: runner.os == 'Windows'
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: runner.os == 'Windows'
         with:
           name: freemid-setup.exe
           path: freemid-setup.exe
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: runner.os == 'Windows'
         with:
           name: freemid-apply-windows-x86_64.exe
